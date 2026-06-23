@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+REPO="https://github.com/Kevin-Cuevas/dotfiles.git"
+DEST="${DOTFILES_DIR:-$HOME/dotfiles}"
+
+RED='\e[38;2;191;97;106m'
+GRN='\e[38;2;163;190;140m'
+BLU='\e[38;2;136;192;208m'
+YLW='\e[38;2;235;203;139m'
+BLD='\e[1m'
+RST='\e[0m'
+
+info() { printf "${BLU}[INFO]${RST}  %s\n" "$*"; }
+ok()   { printf "${GRN}[OK]${RST}    %s\n" "$*"; }
+err()  { printf "${RED}[ERR]${RST}   %s\n" "$*" >&2; }
+die()  { err "$*"; exit 1; }
+
+command -v git &>/dev/null || die "git is not installed. Run: sudo apt-get install -y git"
+
+if [[ -d "$DEST/.git" ]]; then
+  info "Repo already present at $DEST — pulling latest..."
+  git -C "$DEST" pull --ff-only || die "git pull failed in $DEST"
+  ok "Up to date."
+elif [[ -d "$DEST" ]]; then
+  die "$DEST exists but is not a git repo. Remove it or set DOTFILES_DIR to a different path."
+else
+  info "Cloning $REPO -> $DEST"
+  git clone "$REPO" "$DEST" || die "git clone failed"
+  ok "Cloned."
+fi
+
+NONINTERACTIVE=false
+for arg in "$@"; do
+  [[ "$arg" == "--all" ]] && NONINTERACTIVE=true
+done
+
+chmod +x "$DEST/bootstrap"
+printf "\n${GRN}${BLD}Launching bootstrap...${RST}\n\n"
+
+if [[ "$NONINTERACTIVE" == "true" ]]; then
+  exec "$DEST/bootstrap" "$@"
+else
+  # Reconnect stdin to the terminal — when invoked via `curl | bash` the pipe
+  # holds stdin open (as EOF), which breaks dialog checklists and read prompts.
+  exec "$DEST/bootstrap" "$@" </dev/tty
+fi

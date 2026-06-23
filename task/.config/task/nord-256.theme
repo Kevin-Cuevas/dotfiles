@@ -1,0 +1,78 @@
+# Nord Theme for Taskwarrior
+# Based on Nord color palette: https://www.nordtheme.com/
+
+# Nord Theme for Taskwarrior - MEJORADO
+# Based on Nord color palette: https://www.nordtheme.com/
+# Optimizado para terminales con tema Nord
+
+# Nord Theme for Taskwarrior - ALTO CONTRASTE
+# Optimizado para terminales con fondo Nord oscuro
+# Usa colores más vibrantes y contrastantes
+
+# Nord Theme for Taskwarrior - ELEGANTE NORD AZUL
+# Diseño elegante con énfasis en azules Nord y subrayados
+# Optimizado para máxima belleza y funcionalidad
+
+# Base colors - elegante y minimalista
+color.header=bold color4            # Azul Nord intenso para headers
+color.footnote=color8               # Gris Nord medio
+color.error=bold color1             # Rojo Nord para errores
+color.debug=color4                  # Azul Nord para debug
+
+# Task states - paleta azul Nord elegante
+color.completed=bold color2         # Verde Nord - completadas
+color.deleted=color8                # Gris Nord - eliminadas
+color.active=bold color8 on color2            # NORD -  Tareas activas
+color.recurring=underline color5    # Púrpura Nord subrayado - recurrentes
+color.scheduled=color4              # Azul Nord - programadas
+color.until=color3                  # Naranja Nord - hasta fecha
+color.blocked=color1                # Rojo Nord - bloqueadas
+color.blocking=bold color1          # Rojo Nord intenso - bloqueantes
+
+# Due dates - gradación Nord natural pero visible
+color.due.today=bold underline color3    # Naranja subrayado para HOY
+color.due=color3                         # Naranja Nord para próximas
+color.overdue=bold color1                # Rojo Nord para vencidas
+
+# Projects - tonos azules Nord
+color.project.none=color7           # Gris claro Nord
+
+# Tags - azules Nord elegantes
+color.tag.none=color7               # Gris claro Nord
+color.tagged=underline color4       # Azul Nord subrayado para etiquetadas
+
+# Priorities - jerarquía visual Nord elegante
+color.uda.priority.H=bold underline color1  # Rojo subrayado - CRÍTICO
+color.uda.priority.M=bold color3            # Naranja intenso - MEDIO
+color.uda.priority.L=color7                 # Gris claro - BAJO
+color.uda.priority.none=color8              # Gris medio - SIN PRIORIDAD
+
+# Labels - headers azul Nord elegantes
+color.label=bold color4             # Azul Nord intenso
+color.label.sort=bold underline color6 # Cian subrayado para ordenadas
+
+# Calendar - paleta azul Nord hermosa
+color.calendar.due.today=bold white on color3     # Blanco sobre naranja
+color.calendar.due=bold color1 on color8          # Rojo sobre gris
+color.calendar.holiday=bold color2                # Verde Nord
+color.calendar.overdue=bold white on color1       # Blanco sobre rojo
+color.calendar.today=bold underline color6        # Cian subrayado para hoy
+color.calendar.weekend=color7                     # Gris claro
+color.calendar.weeknumber=color4                  # Azul Nord
+
+# Burndown - progreso azul Nord elegante
+color.burndown.done=bold white on color2      # Blanco sobre verde
+color.burndown.pending=bold black on color3   # Negro sobre naranja
+color.burndown.started=bold white on color4   # Blanco sobre azul Nord
+
+# History - colores Nord semánticos
+color.history.add=bold color2       # Verde Nord - agregado
+color.history.delete=bold color1    # Rojo Nord - eliminado
+color.history.done=bold color4      # Azul Nord - completado
+
+# Summary - elegante azul Nord
+color.summary.background=bold color4 on color8  # Azul sobre gris
+color.summary.bar=bold white on color4          # Blanco sobre azul
+
+# Alternating rows - azul Norte muy sutil
+color.alternate=on color0           # Azul Nord muy oscuro alternante

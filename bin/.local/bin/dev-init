@@ -1,0 +1,46 @@
+
+#!/usr/bin/env bash
+
+# Uso: newproj <NombreProyecto> <tipo: frontend|backend> [--git]
+PROJECT_NAME="$1"
+PROJECT_TYPE="$2"
+GIT_FLAG="$3"
+TEMPLATES="$HOME/.templates/nvim"
+DEST="$PWD/$PROJECT_NAME"
+
+if [ -z "$PROJECT_NAME" ] || [ -z "$PROJECT_TYPE" ]; then
+  echo "Uso: newproj <NombreProyecto> <tipo: frontend|backend> [--git]"
+  exit 1
+fi
+
+mkdir -p "$DEST"
+
+if [ "$PROJECT_TYPE" = "frontend" ]; then
+  mkdir -p "$DEST/css" "$DEST/js"
+  cp -r "$TEMPLATES/frontend/." "$DEST/"
+elif [ "$PROJECT_TYPE" = "backend" ]; then
+  cp -r "$TEMPLATES/backend/." "$DEST/"
+else
+  echo "Tipo de proyecto desconocido: frontend | backend"
+  exit 1
+fi
+
+find "$DEST" -type f | while read f; do
+  sed -i "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" "$f"
+done
+
+cd "$DEST" || exit
+if [ "$GIT_FLAG" = "--git" ]; then
+  if git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "Ya estás dentro de un repositorio Git. Se omitió git init."
+  else
+    git init
+    echo "Repositorio Git inicializado."
+  fi
+else
+  echo "Git no inicializado (para inicializar usa la flag --git)."
+fi
+
+echo "Proyecto '$PROJECT_NAME' ($PROJECT_TYPE) creado en $DEST"
+
+nvim "$DEST"

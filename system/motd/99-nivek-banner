@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+# ── Colores Nord ──
+C_BANNER="\e[38;2;136;192;208m"
+C_SEP="\e[38;2;94;129;172m"
+C_ICON="\e[38;2;129;161;193m"
+C_VAL="\e[38;2;216;222;233m"
+C_DATE="\e[38;2;143;188;187m"
+RESET="\e[0m"
+
+PAD="  "
+
+HOST=$(hostname)
+
+SEP="─────────────────────────────────────────────────────"
+MAX=30
+
+cutv() {
+  local v="$1"
+  [ ${#v} -gt $MAX ] && echo "${v:0:$((MAX - 1))}…" || echo "$v"
+}
+
+if command -v toilet >/dev/null 2>&1; then
+  ASCII=$(toilet -f pagga "$HOST" 2>/dev/null)
+  [ -z "$ASCII" ] && ASCII="$HOST"
+else
+  ASCII="$HOST"
+fi
+
+p() { echo -e "${PAD}$*${RESET}"; }
+
+echo
+echo "$ASCII" | sed "s/^/${PAD}/" | while IFS= read -r line; do
+  echo -e "${C_BANNER}${line}${RESET}"
+done
+
+p "${C_SEP}${SEP}"
+
+p "${C_ICON}󰒋${RESET}  ${C_ICON}Host      ${RESET} ${C_VAL}$(cutv "$(hostname)")"
+p "${C_ICON}󰌢${RESET}  ${C_ICON}Kernel    ${RESET} ${C_VAL}$(cutv "$(uname -r)")"
+p "${C_ICON}󰅐${RESET}  ${C_ICON}Uptime    ${RESET} ${C_VAL}$(cutv "$(uptime -p | sed 's/up //')")"
+p "${C_ICON}󰍛${RESET}  ${C_ICON}CPU       ${RESET} ${C_VAL}$(cutv "$(grep 'model name' /proc/cpuinfo | head -1 | cut -d: -f2 | xargs)")"
+p "${C_ICON}󰘚${RESET}  ${C_ICON}Memory    ${RESET} ${C_VAL}$(cutv "$(free -h | awk '/Mem:/ {print $3 " / " $2}')")"
+p "${C_ICON}󰓅${RESET}  ${C_ICON}Load      ${RESET} ${C_VAL}$(cutv "$(uptime | awk -F'load average:' '{print $2}')")"
+p "${C_ICON}󰖟${RESET}  ${C_ICON}IP        ${RESET} ${C_VAL}$(cutv "$(hostname -I | awk '{print $1}')")"
+
+echo
+p "${C_DATE}󰃭  $(date +"%A %d %B %Y  %H:%M")"
+p "${C_SEP}${SEP}"

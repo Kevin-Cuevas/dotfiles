@@ -1,0 +1,37 @@
+# ====================================
+# Dotfiles gitignore
+# ====================================
+
+# Archivos temporales
+.DS_Store
+Thumbs.db
+
+# ====================================
+# SSH (por-máquina, nunca trackeado)
+# ====================================
+# Historial de usernames por (tailnet, nodo). Se comparte a mano vía scp, no por git.
+.ssh_user_history
+
+# Sesiones y cache
+*.swp
+*.swo
+*.bak
+*.tmp
+*.log
+
+# ====================================
+# Neovim
+# ====================================
+nvim/.config/nvim/spell/
+nvim/.config/nvim/tt.*
+nvim/.config/nvim/.tests
+nvim/.config/nvim/doc/tags
+nvim/.config/nvim/debug
+nvim/.config/nvim/.repro
+nvim/.config/nvim/foo.*
+nvim/.config/nvim/*.log
+nvim/.config/nvim/data
+nvim/.config/nvim/.stfolder/
+nvim/.config/nvim/.stignore
+# lazy-lock.json: estado por máquina (nvim lo reescribe) — no se trackea
+nvim/.config/nvim/lazy-lock.json

@@ -1,0 +1,166 @@
+# default config
+#
+# The config file in the config directory must be named 'config'.
+# It is a plain text file that can contain any of the commands listed
+# in the 'Commands' section of the '--help' output.
+# Each command must be on its own line.
+# Lines that begin with the '#' character are treated as comments.
+#
+# For more information, refer to the 'Configuration' and 'Commands'
+# sections of the programs help output with '--help' or '-h'.
+
+# -----------------------------------------------------------------------------
+# general
+# -----------------------------------------------------------------------------
+
+# set the x y block size, the width and height of an individual block composing
+# the clock
+block 2 1
+# block-x 2
+# block-y 1
+
+# set the x y padding size, the width and height of the space between each
+# individual block composing the clock
+padding 0 0
+# padding-x 0
+# padding-y 0
+
+# set the x y margin size, the space around the outside of the clock from the
+# edge of the terminal
+margin 0 0
+# margin-x 0
+# margin-y 0
+
+# set the x y ratio size, auto adjust the clock to conform to a specific
+# aspect ratio, keep in mind that a square ratio would be '2 1' due to a
+# terminal character cell having a height around twice the size of its width
+ratio 2 1
+# ratio-x 2
+# ratio-y 1
+
+# set the padding size between the date and the clock
+date-padding 1
+
+# set the string value used to fill the active, inactive, and colon blocks of
+# the clock, an empty string clears the value
+fill ''
+# fill-active ''
+# fill-inactive ''
+# fill-colon ''
+
+# set the locale, for example 'en_CA.utf8', an empty string clears the value
+locale ''
+
+# set the timezone, for example 'America/Vancouver', an empty string clears the
+# value
+timezone ''
+
+# set the date format string, an empty string clears the value
+date '%a %b %d'
+
+# set the mode type
+# select one of:
+# clock, timer, or stopwatch
+mode clock
+
+# set the view type
+# select one of:
+# date, ascii, digital, binary, or icon
+view digital
+
+# set the value to adjust with the hjkl;' keys
+# select one of:
+# block, padding, margin, ratio, active-fg, inactive-fg, colon-fg,
+# active-bg, inactive-bg, colon-bg, background, or date
+toggle active-bg
+
+# set the stopwatch to start
+# clear, stop, start, 00h:00m:00s
+stopwatch start
+
+# set the timers initial value
+# clear, stop, start, 00h:00m:00s
+timer 10m:0s
+
+# set the string value to be executed by a shell upon timer completion,
+# an empty string clears the value
+timer-exec 'notify-send -a peaclock "timer complete"'
+
+# set the duration in milliseconds between reading user input
+rate-input 50
+
+# set the duration in milliseconds between redrawing the output
+rate-refresh 1000
+
+# set the duration in milliseconds to display status messages
+rate-status 5000
+
+# -----------------------------------------------------------------------------
+# toggles
+#
+# set <value> <on|off>
+# -----------------------------------------------------------------------------
+
+# use 24 hour time
+set hour-24 off
+
+# display seconds
+set seconds on
+
+# display the date
+set date on
+
+# auto size the clock to fill the screen, overrides the current x y block size
+set auto-size on
+
+# auto size the clock to use the aspect ratio set by the command 'ratio',
+# overrides the current x y block size and auto-size
+set auto-ratio on
+
+# -----------------------------------------------------------------------------
+# styles - NORD THEME
+#
+# style <value> <#000-#fff|#000000-#ffffff|0-255|Colour|reverse|clear>
+#
+# Colores Nord principales:
+# Nord0 (Polar Night): #2e3440, #3b4252, #434c5e, #4c566a
+# Nord1 (Snow Storm): #d8dee9, #e5e9f0, #eceff4
+# Nord2 (Frost): #8fbcbb, #88c0d0, #81a1c1, #5e81ac
+# Nord3 (Aurora): #bf616a, #d08770, #ebcb8b, #a3be8c, #b48ead
+# -----------------------------------------------------------------------------
+
+# Texto activo (números del reloj) - Nord Frost (verde-agua principal)
+style active-fg #8fbcbb
+
+# Texto inactivo (bloques apagados) - Nord Frost (verde-agua atenuado)
+style inactive-fg #88c0d0
+
+# Texto de los dos puntos (:) - Nord Frost (verde-agua brillante)
+style colon-fg #8fbcbb
+
+# Fondo activo (bloques encendidos) - Nord Frost (azul-verde para contraste)
+style active-bg #88c0d0
+
+# Fondo inactivo - transparente/claro
+style inactive-bg clear
+
+# Fondo de los dos puntos - transparente/claro
+style colon-bg clear
+
+# Fecha - Nord Frost (verde-agua suave)
+style date #8fbcbb
+
+# Fondo general - no establecer (usar el de kitty)
+style background clear
+
+# Texto general - Nord Frost (verde-agua)
+style text #8fbcbb
+
+# Símbolo del prompt - Nord Frost (verde-agua brillante)
+style prompt #8fbcbb
+
+# Estado de éxito - Nord Frost (verde-agua)
+style success #8fbcbb
+
+# Estado de error - Nord Frost (azul para contraste)
+style error #88c0d0

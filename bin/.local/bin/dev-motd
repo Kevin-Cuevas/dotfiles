@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ------------------------------------------------------------------------------
+
+# Config
+
+# ------------------------------------------------------------------------------
+
+DOTFILES_DIR="${HOME}/dotfiles"
+MOTD_DIR="${DOTFILES_DIR}/system/motd"
+TARGET_DIR="/etc/update-motd.d"
+
+DEFAULT_MOTD="99-nivek-banner"
+
+# ------------------------------------------------------------------------------
+
+# Helpers
+
+# ------------------------------------------------------------------------------
+
+info() { echo "[INFO] $*"; }
+ok()   { echo "[OK]   $*"; }
+err()  { echo "[ERR]  $*" >&2; }
+
+# ------------------------------------------------------------------------------
+
+# Resolve MOTD name
+
+# ------------------------------------------------------------------------------
+
+ACTION="${1:-install}"
+NAME="${2:-$DEFAULT_MOTD}"
+
+SRC="${MOTD_DIR}/${NAME}"
+DST="${TARGET_DIR}/${NAME}"
+
+# ------------------------------------------------------------------------------
+
+# Remove
+
+# ------------------------------------------------------------------------------
+
+if [[ "$ACTION" == "remove" ]]; then
+info "Removing MOTD: ${NAME}"
+
+if [[ -e "$DST" ]]; then
+sudo rm -f "$DST"
+ok "Removed ${DST}"
+else
+err "MOTD not found: ${DST}"
+fi
+
+exit 0
+fi
+
+# ------------------------------------------------------------------------------
+
+# Install
+
+# ------------------------------------------------------------------------------
+
+if [[ ! -f "$SRC" ]]; then
+err "Source not found: ${SRC}"
+exit 1
+fi
+
+info "Installing MOTD: ${NAME}"
+info "Source: ${SRC}"
+info "Target: ${DST}"
+
+sudo rm -f "$DST"
+sudo cp "$SRC" "$DST"
+sudo chmod 755 "$DST"
+sudo chown root:root "$DST"
+
+ok "Installed successfully"
+
+# ------------------------------------------------------------------------------
+
+# Optional: disable other MOTDs (comment if you don't want this)
+
+# ------------------------------------------------------------------------------
+
+# info "Disabling other MOTD scripts..."
+
+# sudo find "$TARGET_DIR" -type f ! -name "$NAME" -exec chmod -x {} ;
+
+# ok "Only ${NAME} is active"
+

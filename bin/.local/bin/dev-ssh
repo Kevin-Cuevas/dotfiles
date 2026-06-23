@@ -141,20 +141,24 @@ ensure_config_local() {
 # preserves everything outside the markers.
 ssh_upsert_hosts() {
   local gid="${1:-}"
+  local replace="${2:-}"   # "replace" = remove existing hosts in gid not in new set
   ensure_config_local
   local cfg="$TARGET/.ssh/config.local"
 
   local newblocks; newblocks="$(cat)"
   if [[ -z "${newblocks//[$' \t\n']/}" ]]; then
-    warn "Nothing to add."
-    return
+    if [[ "$replace" != "replace" ]]; then
+      warn "Nothing to add."
+      return
+    fi
+    # replace mode with empty set: remove all hosts in the group
   fi
 
   local newfile tmp
   newfile="$(mktemp)"; tmp="$(mktemp)"
   printf '%s\n' "$newblocks" >"$newfile"
 
-  awk -v B="$SSH_MARK_BEGIN" -v E="$SSH_MARK_END" -v G="$gid" '
+  awk -v B="$SSH_MARK_BEGIN" -v E="$SSH_MARK_END" -v G="$gid" -v REPL="$replace" '
     # Phase 1: new blocks (FNR==NR -> first file). All go into group G.
     FNR==NR {
       if ($0 ~ /^[[:space:]]*$/) next
@@ -171,7 +175,8 @@ ssh_upsert_hosts() {
         if ($0 ~ /^#@ group:/) { cg=substr($0, length("#@ group:") + 1); next }
         if ($0 ~ /^Host /) {
           a=$2
-          if (a in blk) { cur2="" }                  # already in the new set: drop the old one
+          if (a in blk) { cur2="" }                                    # in new set: use new entry
+          else if (REPL=="replace" && G!="" && cg==G) { cur2="" }     # same group, not selected: remove
           else { cur2=a; ord[++n]=a; blk[a]=$0 ORS; group[a]=cg }
           next
         }
@@ -249,26 +254,55 @@ ssh_tailscale_fix_operator() {
 # Username history per (tailnet, node)
 # ------------------------------------------------------------------------------
 # Hidden, per-machine, NOT tracked file. Share it across your own nodes manually
-# (scp). TSV per line: tailnet \t node \t username \t epoch. Append-only; queries
-# dedup and order by recency. Tailscale flow only.
+# (scp). TSV per line: tailnet \t node \t username \t port \t epoch. Append-only;
+# queries dedup and order by recency. Tailscale flow only.
+# (Legacy 4-field lines without port are handled transparently.)
 ssh_hist_file() { printf '%s\n' "$TARGET/.ssh/.ssh_user_history"; }
 
 # Distinct usernames for (tailnet, node), most recent first.
+# Handles both 4-field (old: no port) and 5-field (new: with port) formats.
 ssh_hist_users() { # $1=tailnet  $2=node
   local f; f="$(ssh_hist_file)"
   [[ -f "$f" ]] || return 0
-  awk -F'\t' -v t="$1" -v n="$2" '$1==t && $2==n {print $4"\t"NR"\t"$3}' "$f" \
+  awk -F'\t' -v t="$1" -v n="$2" \
+    '$1==t && $2==n { epoch=(NF>=5)?$5:$4; print epoch"\t"NR"\t"$3 }' "$f" \
     | sort -t"$(printf '\t')" -k1,1nr -k2,2nr \
     | awk -F'\t' '!seen[$3]++ { print $3 }'
 }
 
-# Record the use of a username for (tailnet, node) with a timestamp.
-ssh_hist_record() { # $1=tailnet  $2=node  $3=username
+# Record the use of a username+port for (tailnet, node) with a timestamp.
+# Format (5 fields): tailnet \t node \t username \t port \t epoch
+ssh_hist_record() { # $1=tailnet  $2=node  $3=username  $4=port
   [[ -z "$3" ]] && return 0
   local f; f="$(ssh_hist_file)"
   mkdir -p "$(dirname "$f")"
-  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$(date +%s)" >>"$f"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-22}" "$(date +%s)" >>"$f"
   chmod 600 "$f" 2>/dev/null || true
+}
+
+# Most recent port for (tailnet, node); "22" if no record exists.
+# Only reads 5-field entries; 4-field (old format) entries have no port → falls back to 22.
+ssh_hist_port() { # $1=tailnet  $2=node
+  local f; f="$(ssh_hist_file)"
+  [[ -f "$f" ]] || { printf '22'; return 0; }
+  local p
+  p=$(awk -F'\t' -v t="$1" -v n="$2" \
+    '$1==t && $2==n && NF>=5 { print $5"\t"NR"\t"$4 }' "$f" \
+    | sort -t"$(printf '\t')" -k1,1nr -k2,2nr \
+    | awk -F'\t' 'NR==1 { print $3; exit }')
+  printf '%s' "${p:-22}"
+}
+
+# Hostnames currently saved in config.local for the given group.
+ssh_group_hosts() { # $1=group
+  local cfg="$TARGET/.ssh/config.local"
+  [[ -f "$cfg" ]] || return 0
+  awk -v B="$SSH_MARK_BEGIN" -v E="$SSH_MARK_END" -v G="$1" '
+    $0==B { inman=1; cg=""; next }
+    $0==E { inman=0; next }
+    inman && /^#@ group:/ { cg=substr($0, length("#@ group:")+1); next }
+    inman && /^Host / && cg==G { print $2 }
+  ' "$cfg"
 }
 
 # ------------------------------------------------------------------------------
@@ -400,10 +434,17 @@ ssh_add_tailscale() {
     return
   fi
 
+  local -a saved_hosts=()
+  local _sh
+  while IFS= read -r _sh; do [[ -n "$_sh" ]] && saved_hosts+=("$_sh"); done \
+    < <(ssh_group_hosts "tailnet:$tailnet_name")
+
   local items=() name state
   while IFS=$'\t' read -r name state; do
     [[ -z "$name" ]] && continue
-    items+=("$name" "$state" "off")
+    local check="off"
+    for _sh in "${saved_hosts[@]}"; do [[ "$_sh" == "$name" ]] && check="on" && break; done
+    items+=("$name" "$state" "$check")
   done <<<"$peers"
 
   local count=$((${#items[@]} / 3))
@@ -420,7 +461,7 @@ ssh_add_tailscale() {
     --title " SSH · Tailscale " \
     --separate-output \
     --checklist \
-    "Select the nodes to add  [SPACE=toggle  ENTER=confirm]\n\nYou'll then set the User for each node (with carry-over)." \
+    "Select the nodes to add  [SPACE=toggle  ENTER=confirm]\n\nYou'll then set the User and Port for each node (with carry-over)." \
     "$win_height" 64 "$list_height" \
     "${items[@]}" \
     3>&1 1>&2 2>&3) || { clear; skip "Cancelled."; return; }
@@ -431,11 +472,16 @@ ssh_add_tailscale() {
     [[ -n "$name" ]] && chosen+=("$name")
   done <<<"$raw"
   if [[ ${#chosen[@]} -eq 0 ]]; then
-    warn "No nodes selected."
+    if [[ ${#saved_hosts[@]} -gt 0 ]]; then
+      printf '' | ssh_upsert_hosts "tailnet:$tailnet_name" "replace"
+      ok "${#saved_hosts[@]} host(s) from '$tailnet_name' removed from config.local"
+    else
+      warn "No nodes selected."
+    fi
     return
   fi
 
-  # User per node. Default priority: node history (most recent) > session carry
+  # User+Port per node. Default priority: node history (most recent) > session carry
   # ($last_user, starts at $USER). If the node has history, a selector of the
   # usernames used before is shown + "type another". Every choice is recorded.
   local total=${#chosen[@]} last_user="$USER" blocks="" n u idx=0
@@ -495,11 +541,28 @@ ssh_add_tailscale() {
     u="$(trim "$u")"
     [[ -z "$u" ]] && u="${recent:-$last_user}"
     last_user="$u"
-    ssh_hist_record "$tailnet_name" "$n" "$u"
+
+    # Port prompt — pre-filled with history value or 22
+    local hist_port; hist_port="$(ssh_hist_port "$tailnet_name" "$n")"
+    local p
+    p=$(dialog \
+      --clear --colors \
+      --backtitle "$BACKTITLE" \
+      --title " SSH · Tailscale " \
+      --inputbox "Port for '$n'   ($idx/$total)\n\n(SSH port · Enter = '${hist_port}')" \
+      9 64 "$hist_port" \
+      3>&1 1>&2 2>&3) || { clear; skip "Cancelled."; return; }
+    clear
+    p="$(trim "$p")"
+    [[ -z "$p" ]] && p="$hist_port"
+    [[ "$p" =~ ^[0-9]+$ ]] || p="22"
+
+    ssh_hist_record "$tailnet_name" "$n" "$u" "$p"
     blocks+="Host $n"$'\n'"    HostName $n"$'\n'"    User $u"$'\n'
+    [[ "$p" != "22" ]] && blocks+="    Port $p"$'\n'
   done
 
-  printf '%s' "$blocks" | ssh_upsert_hosts "tailnet:$tailnet_name"
+  printf '%s' "$blocks" | ssh_upsert_hosts "tailnet:$tailnet_name" "replace"
   ok "$total host(s) from '$tailnet_name' saved"
 }
 

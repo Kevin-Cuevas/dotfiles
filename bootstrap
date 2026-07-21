@@ -96,6 +96,7 @@ APT_PKGS=(
   tmuxp
   unzip
   kitty-terminfo
+  yakuake
 )
 
 # Lenguajes/runtimes que NO vienen por apt. Para agregar uno: añade su clave a

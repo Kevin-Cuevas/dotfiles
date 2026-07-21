@@ -40,6 +40,7 @@ dotfiles/
 ├── cava/         -> ~/.config/cava
 ├── icons/        -> ~/.local/share/...    cursor and icon themes
 ├── kitty/        -> ~/.config/kitty
+├── konsole/      -> ~/.local/share/konsole yakuake profile + colorscheme
 ├── nvim/         -> ~/.config/nvim        LazyVim config
 ├── peaclock/     -> ~/.config/peaclock
 ├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local
@@ -183,7 +184,7 @@ manual ones.
 ```
 git stow zsh wget curl tmux fzf ripgrep fd-find bat zoxide
 taskwarrior timewarrior build-essential figlet wl-clipboard
-direnv eza tmuxp unzip
+direnv eza tmuxp unzip yakuake
 ```
 
 ---
@@ -194,7 +195,7 @@ If you prefer to skip the TUI and stow packages by hand:
 
 ```bash
 cd ~/dotfiles
-stow bin cava icons kitty nvim peaclock ssh task templates tmux zsh
+stow bin cava icons kitty konsole nvim peaclock ssh task templates tmux zsh
 ```
 
 ---

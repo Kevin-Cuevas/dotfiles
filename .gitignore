@@ -12,6 +12,17 @@ Thumbs.db
 # Historial de usernames por (tailnet, nodo). Se comparte a mano vía scp, no por git.
 .ssh_user_history
 
+# Todo dentro de ssh/.ssh es material por-máquina (claves, known_hosts,
+# config.local, control masters, etc.); solo "config" (base compartida) se trackea.
+ssh/.ssh/*
+!ssh/.ssh/config
+
+# ====================================
+# Binarios/symlinks gestionados por instaladores nativos (no son dotfiles)
+# ====================================
+# El instalador de Claude Code escribe aquí un symlink versionado; no se trackea.
+bin/.local/bin/claude
+
 # Sesiones y cache
 *.swp
 *.swo

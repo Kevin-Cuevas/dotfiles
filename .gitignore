@@ -22,6 +22,7 @@ ssh/.ssh/*
 # ====================================
 # El instalador de Claude Code escribe aquí un symlink versionado; no se trackea.
 bin/.local/bin/claude
+bin/.local/bin/aws*
 
 # Sesiones y cache
 *.swp

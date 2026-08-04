@@ -192,7 +192,7 @@
 
   #################################[ os_icon: os identifier ]##################################
   # OS identifier color.
-  typeset -g POWERLEVEL9K_OS_ICON_FOREGROUND=232
+  typeset -g POWERLEVEL9K_OS_ICON_FOREGROUND=0
   typeset -g POWERLEVEL9K_OS_ICON_BACKGROUND=7
   # Custom icon.
   # typeset -g POWERLEVEL9K_OS_ICON_CONTENT_EXPANSION='⭐'
@@ -398,10 +398,14 @@
     fi
 
     # Styling for different parts of Git status.
+    # clean/modified/untracked sit on fixed pale backgrounds (229/230/223/228,
+    # set below), so their text uses a fixed dark gray (236) for strong,
+    # theme-independent contrast rather than relying on "%0F" tracking
+    # whatever color0 happens to be in the active kitty theme.
     local       meta='%7F' # white foreground
-    local      clean='%0F' # black foreground
-    local   modified='%0F' # black foreground
-    local  untracked='%0F' # black foreground
+    local      clean='%236F' # fixed dark gray foreground
+    local   modified='%236F' # fixed dark gray foreground
+    local  untracked='%236F' # fixed dark gray foreground
     local conflicted='%1F' # red foreground
 
     local res
@@ -558,8 +562,11 @@
 
   ###################[ command_execution_time: duration of the last command ]###################
   # Execution time color.
+  # Fixed hex instead of the shared color3 slot: color3 is tuned dark for
+  # text contrast in the light kitty theme, which turns this chip an ugly
+  # brown. A fixed hex keeps the original Nord dark yellow chip in both.
   typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_FOREGROUND=0
-  typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_BACKGROUND=3
+  typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_BACKGROUND='#EBCB8B'
   # Show duration of the last command if takes at least this many seconds.
   typeset -g POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD=3
   # Show this many fractional digits. Zero means round to seconds.

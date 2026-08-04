@@ -313,32 +313,42 @@ install_yazi() {
     err "Could not create temp dir for yazi download"
     return 1
   }
-  trap 'rm -rf "$tmp"' RETURN
+  # Nota: NO usar `trap ... RETURN` aquí. En bash, un trap RETURN puesto
+  # dentro de esta función no se limpia solo al retornar: queda armado y
+  # vuelve a dispararse cuando la función QUE LLAMÓ a esta (p.ej.
+  # install_extra_packages, y de ahí run_all) también retorna — en ese
+  # punto "$tmp" ya no existe y, bajo `set -u`, referenciarla mata TODO el
+  # script con "tmp: unbound variable". Por eso limpiamos "$tmp" a mano en
+  # cada punto de salida.
 
   local asset="yazi-${triple}.zip"
   local url="https://github.com/sxyazi/yazi/releases/latest/download/${asset}"
 
   info "Downloading $url ..."
-  curl -fL --progress-bar -o "$tmp/$asset" "$url" || {
+  if ! curl -fL --progress-bar -o "$tmp/$asset" "$url"; then
     err "Failed to download $asset"
+    rm -rf "$tmp"
     return 1
-  }
+  fi
 
   info "Extracting..."
-  unzip -q -o "$tmp/$asset" -d "$tmp" || {
+  if ! unzip -q -o "$tmp/$asset" -d "$tmp"; then
     err "Failed to extract $asset"
+    rm -rf "$tmp"
     return 1
-  }
+  fi
 
   local extracted_dir="$tmp/yazi-${triple}"
-  [[ -x "$extracted_dir/yazi" && -x "$extracted_dir/ya" ]] || {
+  if [[ ! -x "$extracted_dir/yazi" || ! -x "$extracted_dir/ya" ]]; then
     err "Expected yazi/ya binaries not found in $extracted_dir"
+    rm -rf "$tmp"
     return 1
-  }
+  fi
 
   mkdir -p "$HOME/.local/bin"
   install -m 755 "$extracted_dir/yazi" "$HOME/.local/bin/yazi"
   install -m 755 "$extracted_dir/ya" "$HOME/.local/bin/ya"
+  rm -rf "$tmp"
 
   ok "Installed yazi + ya -> $HOME/.local/bin"
   info "New yazi version: $("$HOME/.local/bin/yazi" --version 2>/dev/null || echo unknown)"

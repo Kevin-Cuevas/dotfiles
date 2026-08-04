@@ -70,7 +70,7 @@ automatically if they are missing.
 | #   | Action                                       |
 | --- | -------------------------------------------- |
 | 1   | Run everything (2 through 12)                |
-| 2   | Install apt packages                         |
+| 2   | Install apt packages & extra packages        |
 | 3   | Set permissions on `dev-*` scripts           |
 | 4   | Stow packages into `$HOME`                   |
 | 5   | Install Neovim via `dev-nvim`                |

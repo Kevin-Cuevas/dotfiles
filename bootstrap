@@ -40,6 +40,56 @@ die() {
 }
 sep() { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
 
+# checklist_select_or_all <title> <prompt> <win_h> <win_w> <list_h> \
+#                          <out_array_name> <keys_array_name> [labels_assoc_name]
+#
+# Checklist compartido con semántica "instalar algunos / todos / ninguno":
+#   - Todos los items empiezan desmarcados, más una fila extra "__skip__".
+#   - Si se marca __skip__          -> el array de salida queda vacío.
+#   - Si no se marca nada (ENTER)   -> el array de salida = la lista completa.
+#   - Si se marcan items concretos  -> el array de salida = solo esos.
+#   - Devuelve 1 si el diálogo se cancela (ESC/Cancel).
+checklist_select_or_all() {
+  local _title="$1" _prompt="$2" _wh="$3" _ww="$4" _lh="$5"
+  local -n _out_ref="$6"
+  local -n _keys_ref="$7"
+  local _has_labels=0
+  if [[ -n "${8:-}" ]]; then
+    local -n _labels_ref="$8"
+    _has_labels=1
+  fi
+
+  _out_ref=()
+
+  local _items=() _key _label
+  for _key in "${_keys_ref[@]}"; do
+    [[ $_has_labels -eq 1 ]] && _label="${_labels_ref[$_key]}" || _label="$_key"
+    _items+=("$_key" "$_label" "off")
+  done
+  _items+=("__skip__" "Skip -- install none of the above" "off")
+
+  local _raw
+  _raw=$(dialog --clear --colors --backtitle "$BACKTITLE" \
+    --title " $_title " --separate-output --checklist \
+    "$_prompt" "$_wh" "$_ww" "$_lh" "${_items[@]}" \
+    3>&1 1>&2 2>&3) || return 1
+
+  clear
+
+  local _raw_chosen=() _line
+  while IFS= read -r _line; do [[ -n "$_line" ]] && _raw_chosen+=("$_line"); done <<< "$_raw"
+
+  for _line in "${_raw_chosen[@]}"; do
+    [[ "$_line" == "__skip__" ]] && { _out_ref=(); return 0; }
+  done
+
+  if [[ ${#_raw_chosen[@]} -eq 0 ]]; then
+    _out_ref=("${_keys_ref[@]}")
+  else
+    _out_ref=("${_raw_chosen[@]}")
+  fi
+}
+
 preflight() {
   if [[ "$NONINTERACTIVE" == "false" ]] && ! command -v dialog &>/dev/null; then
     info "dialog not found — installing..."
@@ -115,6 +165,20 @@ declare -A RUNTIME_FN=(
   [bun]="install_bun"
 )
 
+# Paquetes "extra" que no vienen por apt (checklist justo después del de apt
+# packages). Para agregar uno: añade su clave a EXTRA_KEYS y su etiqueta +
+# función en los mapas, y define install_<algo>() (o reutiliza una función
+# existente como run_dev_nvim).
+EXTRA_KEYS=(nvim yazi)
+declare -A EXTRA_LABEL=(
+  [nvim]="Neovim (dev-nvim)"
+  [yazi]="Yazi (file manager)"
+)
+declare -A EXTRA_FN=(
+  [nvim]="run_dev_nvim"
+  [yazi]="install_yazi"
+)
+
 # Paquetes npm globales que se ofrecen tras instalar Node (checklist).
 # Para agregar uno: añade su clave aquí y su etiqueta + spec npm en los mapas.
 NPM_GLOBAL_KEYS=(live-server commitizen angular)
@@ -125,40 +189,159 @@ declare -A NPM_GLOBAL_LABEL=(
 )
 declare -A NPM_GLOBAL_PKG=(
   [live-server]="live-server"
-  [commitizen]="commitizen"
+  [commitizen]="commitizen cz-conventional-changelog"
   [angular]="@angular/cli"
 )
 
 install_packages() {
   sep
-  info "Updating package index..."
-  sudo apt-get update -qq 2>/dev/null || warn "apt-get update failed — continuing anyway"
+  local chosen=()
 
-  local installed=0 skipped=0 failed=()
-
-  for pkg in "${APT_PKGS[@]}"; do
-    if dpkg -s "$pkg" &>/dev/null; then
-      skip "$pkg"
-      ((skipped++)) || true
-    else
-      info "Installing $pkg..."
-      if sudo apt-get install -y "$pkg" &>/dev/null; then
-        ok "$pkg"
-        ((installed++)) || true
-      else
-        warn "Could not install $pkg (not available or dependency error)"
-        failed+=("$pkg")
-      fi
+  if [[ "$NONINTERACTIVE" == "true" ]]; then
+    chosen=("${APT_PKGS[@]}")
+    info "Non-interactive mode — installing all ${#chosen[@]} apt package(s)"
+  else
+    local list_h=$((${#APT_PKGS[@]} + 1))
+    [[ $list_h -gt 12 ]] && list_h=12
+    local win_h=$((list_h + 9))
+    if ! checklist_select_or_all "apt packages" \
+      "Select apt packages to install  [SPACE=toggle  ENTER=confirm]\n\nLeave everything unchecked and press ENTER to install ALL packages.\nCheck 'Skip' to install none." \
+      "$win_h" 64 "$list_h" chosen APT_PKGS; then
+      warn "apt packages dialog cancelled — installing nothing."
+      chosen=()
     fi
-  done
-
-  sep
-  ok "Done — installed: $installed  skipped: $skipped  failed: ${#failed[@]}"
-
-  if [[ ${#failed[@]} -gt 0 ]]; then
-    warn "Packages that could not be installed: ${failed[*]}"
-    warn "You may need to add extra apt repos or install them manually."
   fi
+
+  if [[ ${#chosen[@]} -eq 0 ]]; then
+    skip "No apt packages selected — skipping apt install."
+  else
+    sep
+    info "Updating package index..."
+    sudo apt-get update -qq 2>/dev/null || warn "apt-get update failed — continuing anyway"
+
+    local installed=0 skipped=0 failed=()
+
+    for pkg in "${chosen[@]}"; do
+      if dpkg -s "$pkg" &>/dev/null; then
+        skip "$pkg"
+        ((skipped++)) || true
+      else
+        info "Installing $pkg..."
+        if sudo apt-get install -y "$pkg" &>/dev/null; then
+          ok "$pkg"
+          ((installed++)) || true
+        else
+          warn "Could not install $pkg (not available or dependency error)"
+          failed+=("$pkg")
+        fi
+      fi
+    done
+
+    sep
+    ok "Done — installed: $installed  skipped: $skipped  failed: ${#failed[@]}"
+
+    if [[ ${#failed[@]} -gt 0 ]]; then
+      warn "Packages that could not be installed: ${failed[*]}"
+      warn "You may need to add extra apt repos or install them manually."
+    fi
+  fi
+
+  install_extra_packages
+}
+
+# Checklist de paquetes "extra" que no vienen por apt (nvim, yazi, ...). Se
+# ejecuta siempre justo después de install_packages, como parte del mismo
+# flujo de la opción 2 del menú.
+install_extra_packages() {
+  sep
+  local chosen=()
+
+  if [[ "$NONINTERACTIVE" == "true" ]]; then
+    chosen=("${EXTRA_KEYS[@]}")
+    info "Non-interactive mode — installing all ${#chosen[@]} extra package(s)"
+  else
+    local list_h=$((${#EXTRA_KEYS[@]} + 1))
+    [[ $list_h -lt 6 ]] && list_h=6
+    local win_h=$((list_h + 9))
+    if ! checklist_select_or_all "extra packages" \
+      "Select extra (non-apt) packages to install  [SPACE=toggle  ENTER=confirm]\n\nLeave everything unchecked and press ENTER to install ALL.\nCheck 'Skip' to install none." \
+      "$win_h" 64 "$list_h" chosen EXTRA_KEYS EXTRA_LABEL; then
+      warn "Extra packages dialog cancelled — installing nothing."
+      chosen=()
+    fi
+  fi
+
+  if [[ ${#chosen[@]} -eq 0 ]]; then
+    skip "No extra packages selected."
+    return
+  fi
+
+  local key
+  for key in "${chosen[@]}"; do
+    "${EXTRA_FN[$key]}" || warn "Install failed: ${EXTRA_LABEL[$key]}"
+  done
+}
+
+# Instala/actualiza yazi (file manager de terminal) descargando el binario
+# oficial precompilado — nunca compila desde fuente. Reinstalar simplemente
+# sobrescribe el binario anterior con el más reciente; yazi no tiene un
+# mecanismo tipo "apt upgrade", así que no hay nada más que comparar.
+install_yazi() {
+  sep
+  local arch triple
+  arch="$(uname -m)"
+  case "$arch" in
+  x86_64) triple="x86_64-unknown-linux-gnu" ;;
+  aarch64) triple="aarch64-unknown-linux-gnu" ;;
+  *)
+    warn "No official yazi binary for architecture '$arch' — skipping."
+    return 1
+    ;;
+  esac
+
+  command -v unzip &>/dev/null || {
+    err "unzip not found — select it in the apt packages step or install it manually first."
+    return 1
+  }
+
+  if command -v yazi &>/dev/null; then
+    info "Current yazi version: $(yazi --version 2>/dev/null || echo unknown)"
+  fi
+
+  local tmp
+  tmp="$(mktemp -d)" || {
+    err "Could not create temp dir for yazi download"
+    return 1
+  }
+  trap 'rm -rf "$tmp"' RETURN
+
+  local asset="yazi-${triple}.zip"
+  local url="https://github.com/sxyazi/yazi/releases/latest/download/${asset}"
+
+  info "Downloading $url ..."
+  curl -fL --progress-bar -o "$tmp/$asset" "$url" || {
+    err "Failed to download $asset"
+    return 1
+  }
+
+  info "Extracting..."
+  unzip -q -o "$tmp/$asset" -d "$tmp" || {
+    err "Failed to extract $asset"
+    return 1
+  }
+
+  local extracted_dir="$tmp/yazi-${triple}"
+  [[ -x "$extracted_dir/yazi" && -x "$extracted_dir/ya" ]] || {
+    err "Expected yazi/ya binaries not found in $extracted_dir"
+    return 1
+  }
+
+  mkdir -p "$HOME/.local/bin"
+  install -m 755 "$extracted_dir/yazi" "$HOME/.local/bin/yazi"
+  install -m 755 "$extracted_dir/ya" "$HOME/.local/bin/ya"
+
+  ok "Installed yazi + ya -> $HOME/.local/bin"
+  info "New yazi version: $("$HOME/.local/bin/yazi" --version 2>/dev/null || echo unknown)"
 }
 
 set_default_shell() {
@@ -541,20 +724,36 @@ install_node_globals() {
     fi
   fi
 
-  local key pkg
+  local key pkg sub all_present
   for key in "${chosen[@]}"; do
     pkg="${NPM_GLOBAL_PKG[$key]}"
-    if fnm exec --using="$using" npm ls -g --depth=0 "$pkg" &>/dev/null; then
+
+    all_present=true
+    for sub in $pkg; do
+      fnm exec --using="$using" npm ls -g --depth=0 "$sub" &>/dev/null || all_present=false
+    done
+
+    if [[ "$all_present" == true ]]; then
       skip "$pkg already installed globally"
-      continue
-    fi
-    info "npm install -g $pkg ..."
-    if fnm exec --using="$using" npm install -g "$pkg" &>/dev/null; then
-      ok "Installed global: $pkg"
     else
-      warn "Failed to install global: $pkg"
+      info "npm install -g $pkg ..."
+      if fnm exec --using="$using" npm install -g $pkg &>/dev/null; then
+        ok "Installed global: $pkg"
+      else
+        warn "Failed to install global: $pkg"
+      fi
     fi
+
+    [[ "$key" == "commitizen" ]] && write_czrc
   done
+}
+
+# Escribe ~/.czrc para que 'git cz' use cz-conventional-changelog. Se llama
+# siempre que el usuario elija instalar commitizen, sin importar si el
+# 'npm install -g' de arriba se ejecutó, falló, o se saltó por ya-instalado.
+write_czrc() {
+  echo '{ "path": "cz-conventional-changelog" }' > "$HOME/.czrc"
+  ok "Wrote $HOME/.czrc"
 }
 
 install_rust() {
@@ -678,10 +877,9 @@ install_runtimes() {
 }
 
 run_all() {
-  install_packages
+  install_packages # también dispara install_extra_packages -> nvim + yazi
   set_permissions
   stow_packages
-  run_dev_nvim  || warn "dev-nvim encountered errors — check output above"
   run_dev_motd  || warn "dev-motd encountered errors — check output above"
   install_fonts
   setup_tw_hook || warn "Timewarrior hook setup failed — check output above"
@@ -709,7 +907,7 @@ main_menu() {
       --menu "\ZbSelect an action:\ZB" \
       26 64 14 \
       "1" "Run everything  (2 through 12)" \
-      "2" "Install apt packages" \
+      "2" "Install apt packages & extra packages" \
       "3" "Set permissions on dev-* scripts" \
       "4" "$stow_label" \
       "5" "Install Neovim      (dev-nvim)" \

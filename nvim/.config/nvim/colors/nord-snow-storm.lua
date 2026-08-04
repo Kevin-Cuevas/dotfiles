@@ -1,7 +1,13 @@
 -- Nord "Snow Storm" (light ambiance), companion to nord.nvim for dark mode.
--- Nord has no official light variant; the Frost/Aurora accents here are the
--- same hues darkened to keep ~4.5:1 contrast on a light bg (mirrors the
--- same palette used in kitty's light-theme.auto.conf for consistency).
+-- Nord has no official light variant. The UI/syntax accents below are the
+-- same raw Aurora/Frost hues used in kitty's light-theme.auto.conf, darkened
+-- in HSL (same hue+saturation, lower lightness) to hold ~4.5:1 contrast on a
+-- light bg — the raw hex values are washed out as body text on #eceff4 (e.g.
+-- raw yellow #ebcb8b is ~1.3:1, unreadable). Values below target ~4.6:1,
+-- matching kitty's own pre-edit design ratio.
+-- terminal_color_* is the one place that mirrors kitty's raw hex exactly
+-- (see below) so nvim's embedded :terminal (prompt included) looks identical
+-- to a real kitty window, ANSI chips included.
 
 vim.cmd("highlight clear")
 if vim.fn.exists("syntax_on") then
@@ -19,15 +25,18 @@ local c = {
   comment = "#4c566a",
   border = "#d8dee9",
 
-  red = "#bb404c",
-  orange = "#b04e2f",
-  yellow = "#8e640f",
-  green = "#56743c",
-  teal = "#407473",
-  cyan = "#2d7488",
-  blue = "#436f9a",
-  blue2 = "#486d9c",
-  magenta = "#905986",
+  -- Darkened for ~4.6:1 text contrast; same hue/saturation as kitty's raw
+  -- Aurora colors (bf616a, d08770, ebcb8b, a3be8c, 88c0d0, 8fbcbb, 81a1c1,
+  -- 5e81ac, b48ead).
+  red = "#b24852",
+  orange = "#a95337",
+  yellow = "#8b6518",
+  green = "#587341",
+  teal = "#457372",
+  cyan = "#357385",
+  blue = "#496e94",
+  blue2 = "#4d6d95",
+  magenta = "#8b5c82",
 
   diff_add_bg = "#dde5df",
   diff_delete_bg = "#e3d3d8",
@@ -39,25 +48,27 @@ local c = {
 -- Neovim's embedded :terminal has its own ANSI palette, separate from
 -- kitty's — without this, terminal buffers (e.g. the prompt shown inside
 -- nvim's own terminal) fall back to Neovim's generic default colors instead
--- of matching kitty's light-theme.auto.conf. Same mapping, same hex values.
+-- of matching kitty's light-theme.auto.conf. Raw hex, mirrored 1:1 from
+-- light-theme.auto.conf (not the darkened `c.*` above — this is ANSI output
+-- meant to sit on p10k's own chip backgrounds, same as in a real terminal).
 vim.g.terminal_color_background = c.bg
 vim.g.terminal_color_foreground = c.fg
-vim.g.terminal_color_0 = c.fg
-vim.g.terminal_color_8 = c.comment
-vim.g.terminal_color_1 = c.red
-vim.g.terminal_color_9 = c.red
-vim.g.terminal_color_2 = c.green
-vim.g.terminal_color_10 = c.green
-vim.g.terminal_color_3 = c.yellow
-vim.g.terminal_color_11 = c.orange
-vim.g.terminal_color_4 = c.blue
-vim.g.terminal_color_12 = c.blue2
-vim.g.terminal_color_5 = c.magenta
-vim.g.terminal_color_13 = c.magenta
-vim.g.terminal_color_6 = c.cyan
-vim.g.terminal_color_14 = c.teal
-vim.g.terminal_color_7 = c.border
-vim.g.terminal_color_15 = "#f5f7fa"
+vim.g.terminal_color_0 = "#3b4252"
+vim.g.terminal_color_8 = "#4c566a"
+vim.g.terminal_color_1 = "#bf616a"
+vim.g.terminal_color_9 = "#bf616a"
+vim.g.terminal_color_2 = "#a3be8c"
+vim.g.terminal_color_10 = "#a3be8c"
+vim.g.terminal_color_3 = "#d08770"
+vim.g.terminal_color_11 = "#ebcb8b"
+vim.g.terminal_color_4 = "#81a1c1"
+vim.g.terminal_color_12 = "#5e81ac"
+vim.g.terminal_color_5 = "#b48ead"
+vim.g.terminal_color_13 = "#b48ead"
+vim.g.terminal_color_6 = "#88c0d0"
+vim.g.terminal_color_14 = "#8fbcbb"
+vim.g.terminal_color_7 = "#d8dee9"
+vim.g.terminal_color_15 = "#eceff4"
 
 local hl = vim.api.nvim_set_hl
 

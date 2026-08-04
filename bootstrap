@@ -486,7 +486,13 @@ stow_packages() {
 
   for pkg in "${chosen[@]}"; do
     local stow_err
-    if stow_err=$(stow --target="$TARGET" --dir="$DOTFILES_DIR" --restow "$pkg" 2>&1); then
+    # --no-folding: sin esto, cuando el destino (p.ej. ~/.local/bin) no existe
+    # todavía, stow enlaza LA CARPETA COMPLETA como un solo symlink en vez de
+    # un symlink por archivo. Cualquier instalador que luego escriba ahí
+    # (pipx, curl, etc.) termina escribiendo dentro del repo sin que git lo
+    # note. Con --no-folding siempre se crea la carpeta real y un symlink por
+    # archivo, así bin/ solo contiene lo que nosotros pusimos ahí.
+    if stow_err=$(stow --no-folding --target="$TARGET" --dir="$DOTFILES_DIR" --restow "$pkg" 2>&1); then
       ok "Stowed: $pkg"
       ((stowed++)) || true
     else
@@ -499,6 +505,70 @@ stow_packages() {
 
   sep
   ok "Stow done — OK: $stowed  conflicts: $conflicts"
+
+  link_systemd_units
+}
+
+# Enlaza las unidades systemd --user de system/services/ (servicios que
+# corren de forma persistente) y system/timers/ (pares oneshot .service +
+# .timer) hacia ~/.config/systemd/user, y las habilita. system/ está excluido
+# de los paquetes de stow (ver stow_packages), así que este es el mecanismo
+# que las pone a funcionar. Nomenclatura: todo archivo se llama infra-*.
+link_systemd_units() {
+  sep
+
+  if [[ "$TEST_MODE" == true ]]; then
+    skip "TEST MODE — no se tocan las unidades systemd reales"
+    return
+  fi
+
+  if ! command -v systemctl &>/dev/null || ! systemctl --user show-environment &>/dev/null 2>&1; then
+    skip "systemd --user no disponible — omitiendo unidades systemd"
+    return
+  fi
+
+  local unit_dir="$TARGET/.config/systemd/user"
+  mkdir -p "$unit_dir"
+
+  local linked=0 f name
+  for f in "$DOTFILES_DIR"/system/services/infra-*.service \
+           "$DOTFILES_DIR"/system/timers/infra-*.service \
+           "$DOTFILES_DIR"/system/timers/infra-*.timer; do
+    [[ -e "$f" ]] || continue
+    name="$(basename "$f")"
+    ln -sf "$f" "$unit_dir/$name"
+    ok "Linked $name"
+    ((linked++)) || true
+  done
+
+  if [[ $linked -eq 0 ]]; then
+    skip "No hay unidades infra-* en system/services o system/timers."
+    return
+  fi
+
+  systemctl --user daemon-reload
+
+  # Servicios persistentes: se habilitan y arrancan directamente.
+  for f in "$DOTFILES_DIR"/system/services/infra-*.service; do
+    [[ -e "$f" ]] || continue
+    name="$(basename "$f")"
+    if systemctl --user enable --now "$name" &>/dev/null; then
+      ok "Enabled $name"
+    else
+      warn "No se pudo habilitar $name"
+    fi
+  done
+
+  # Pares oneshot + timer: solo se habilita el .timer (él dispara al .service).
+  for f in "$DOTFILES_DIR"/system/timers/infra-*.timer; do
+    [[ -e "$f" ]] || continue
+    name="$(basename "$f")"
+    if systemctl --user enable --now "$name" &>/dev/null; then
+      ok "Enabled $name"
+    else
+      warn "No se pudo habilitar $name"
+    fi
+  done
 }
 
 run_dev_nvim() {

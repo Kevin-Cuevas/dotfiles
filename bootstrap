@@ -137,6 +137,8 @@ APT_PKGS=(
   taskwarrior
   timewarrior
   build-essential
+  cmake
+  libicu-dev
   golang
   figlet
   toilet
@@ -361,8 +363,9 @@ install_yazi() {
 }
 
 # Compila peaclock (reloj estético de terminal) desde fuente. No hay binario
-# oficial precompilado; el build es rápido (make plano, sin dependencias raras
-# más allá de build-essential).
+# oficial precompilado. El repo NO tiene Makefile en la raíz — usa CMake a
+# través de su propio wrapper ./RUNME.sh (build/install), y requiere ICU
+# (libicu-dev) además de cmake/build-essential.
 install_peaclock() {
   sep
   if command -v peaclock &>/dev/null; then
@@ -372,6 +375,14 @@ install_peaclock() {
 
   command -v git &>/dev/null || {
     err "git no encontrado — selecciónalo en apt packages o instálalo manualmente."
+    return 1
+  }
+  command -v cmake &>/dev/null || {
+    err "cmake no encontrado — selecciónalo en apt packages o instálalo manualmente (sudo apt install cmake)."
+    return 1
+  }
+  dpkg -s libicu-dev &>/dev/null || {
+    err "Falta ICU — selecciona libicu-dev en apt packages o instálalo manualmente (sudo apt install libicu-dev)."
     return 1
   }
 
@@ -388,16 +399,16 @@ install_peaclock() {
     return 1
   fi
 
-  info "Compilando peaclock (make)..."
-  if ! (cd "$tmp/peaclock" && make) &>/dev/null; then
+  info "Compilando peaclock (RUNME.sh build)..."
+  if ! (cd "$tmp/peaclock" && ./RUNME.sh build --release) &>/dev/null; then
     err "Falló la compilación de peaclock"
     rm -rf "$tmp"
     return 1
   fi
 
-  info "Instalando peaclock (sudo make install)..."
-  if ! (cd "$tmp/peaclock" && sudo make install) &>/dev/null; then
-    err "Falló 'sudo make install' de peaclock"
+  info "Instalando peaclock (RUNME.sh install)..."
+  if ! (cd "$tmp/peaclock" && ./RUNME.sh install --release); then
+    err "Falló la instalación de peaclock"
     rm -rf "$tmp"
     return 1
   fi

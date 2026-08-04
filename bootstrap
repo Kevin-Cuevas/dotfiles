@@ -143,7 +143,7 @@ APT_PKGS=(
   wl-clipboard
   direnv
   eza
-  tmuxp
+  pipx
   unzip
   kitty-terminfo
   yakuake
@@ -169,14 +169,20 @@ declare -A RUNTIME_FN=(
 # packages). Para agregar uno: añade su clave a EXTRA_KEYS y su etiqueta +
 # función en los mapas, y define install_<algo>() (o reutiliza una función
 # existente como run_dev_nvim).
-EXTRA_KEYS=(nvim yazi)
+EXTRA_KEYS=(nvim yazi peaclock tmuxp lavat)
 declare -A EXTRA_LABEL=(
   [nvim]="Neovim (dev-nvim)"
   [yazi]="Yazi (file manager)"
+  [peaclock]="Peaclock (terminal clock)"
+  [tmuxp]="tmuxp (tmux session manager, via pipx)"
+  [lavat]="lavat (terminal lava lamp)"
 )
 declare -A EXTRA_FN=(
   [nvim]="run_dev_nvim"
   [yazi]="install_yazi"
+  [peaclock]="install_peaclock"
+  [tmuxp]="install_tmuxp"
+  [lavat]="install_lavat"
 )
 
 # Paquetes npm globales que se ofrecen tras instalar Node (checklist).
@@ -352,6 +358,121 @@ install_yazi() {
 
   ok "Installed yazi + ya -> $HOME/.local/bin"
   info "New yazi version: $("$HOME/.local/bin/yazi" --version 2>/dev/null || echo unknown)"
+}
+
+# Compila peaclock (reloj estético de terminal) desde fuente. No hay binario
+# oficial precompilado; el build es rápido (make plano, sin dependencias raras
+# más allá de build-essential).
+install_peaclock() {
+  sep
+  if command -v peaclock &>/dev/null; then
+    skip "peaclock ya está instalado ($(command -v peaclock))"
+    return
+  fi
+
+  command -v git &>/dev/null || {
+    err "git no encontrado — selecciónalo en apt packages o instálalo manualmente."
+    return 1
+  }
+
+  local tmp
+  tmp="$(mktemp -d)" || {
+    err "No se pudo crear directorio temporal para peaclock"
+    return 1
+  }
+
+  info "Clonando peaclock..."
+  if ! git clone --depth=1 https://github.com/octobanana/peaclock "$tmp/peaclock" &>/dev/null; then
+    err "Falló el clone de peaclock"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  info "Compilando peaclock (make)..."
+  if ! (cd "$tmp/peaclock" && make) &>/dev/null; then
+    err "Falló la compilación de peaclock"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  info "Instalando peaclock (sudo make install)..."
+  if ! (cd "$tmp/peaclock" && sudo make install) &>/dev/null; then
+    err "Falló 'sudo make install' de peaclock"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  rm -rf "$tmp"
+  ok "peaclock instalado -> $(command -v peaclock)"
+}
+
+# Instala tmuxp (session manager de tmux) vía pipx, aislado en su propio venv
+# en vez de vía apt/pip global — mismo criterio que usamos para herramientas
+# de dev en Python.
+install_tmuxp() {
+  sep
+  if command -v tmuxp &>/dev/null; then
+    skip "tmuxp ya está instalado ($(command -v tmuxp))"
+    return
+  fi
+
+  command -v pipx &>/dev/null || {
+    err "pipx no encontrado — selecciónalo en apt packages o instálalo manualmente."
+    return 1
+  }
+
+  info "Instalando tmuxp vía pipx..."
+  if ! pipx install tmuxp &>/dev/null; then
+    err "Falló 'pipx install tmuxp'"
+    return 1
+  fi
+
+  ok "tmuxp instalado vía pipx -> $HOME/.local/bin/tmuxp"
+}
+
+# Compila lavat (lava lamp de terminal) desde fuente — no publica binarios
+# precompilados, solo "git clone && make && sudo make install".
+install_lavat() {
+  sep
+  if command -v lavat &>/dev/null; then
+    skip "lavat ya está instalado ($(command -v lavat))"
+    return
+  fi
+
+  command -v git &>/dev/null || {
+    err "git no encontrado — selecciónalo en apt packages o instálalo manualmente."
+    return 1
+  }
+
+  local tmp
+  tmp="$(mktemp -d)" || {
+    err "No se pudo crear directorio temporal para lavat"
+    return 1
+  }
+
+  info "Clonando lavat..."
+  if ! git clone --depth=1 https://github.com/AngelJumbo/lavat "$tmp/lavat" &>/dev/null; then
+    err "Falló el clone de lavat"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  info "Compilando lavat (make)..."
+  if ! (cd "$tmp/lavat" && make) &>/dev/null; then
+    err "Falló la compilación de lavat"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  info "Instalando lavat (sudo make install)..."
+  if ! (cd "$tmp/lavat" && sudo make install) &>/dev/null; then
+    err "Falló 'sudo make install' de lavat"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  rm -rf "$tmp"
+  ok "lavat instalado -> $(command -v lavat)"
 }
 
 set_default_shell() {

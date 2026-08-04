@@ -44,7 +44,10 @@ dotfiles/
 ├── nvim/         -> ~/.config/nvim        LazyVim config
 ├── peaclock/     -> ~/.config/peaclock
 ├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local
-├── system/                                MOTD and system-level scripts (not stowed)
+├── system/                                MOTD + systemd --user units (not stowed)
+│   ├── motd/                              root-run MOTD scripts
+│   ├── services/     -> ~/.config/systemd/user  persistent infra-*.service units
+│   └── timers/       -> ~/.config/systemd/user  infra-*.service + .timer oneshot pairs
 ├── task/         -> ~/.config/task
 ├── templates/    -> ~/templates
 ├── tmux/         -> ~/.config/tmux
@@ -184,7 +187,7 @@ manual ones.
 ```
 git stow zsh wget curl tmux fzf ripgrep fd-find bat zoxide
 taskwarrior timewarrior build-essential figlet wl-clipboard
-direnv eza tmuxp unzip yakuake
+direnv eza pipx unzip yakuake
 ```
 
 ---
@@ -214,8 +217,19 @@ stow bin cava icons kitty konsole nvim peaclock ssh task templates tmux zsh
 
 - Optimized for Debian-based machines.
 - `stow` works best when each app lives in its own directory.
-- `system/` is intentionally excluded from stow — it contains MOTD scripts run
-  as root that do not belong in `$HOME`.
+- `system/` is intentionally excluded from stow (MOTD scripts run as root, and
+  systemd --user units use a different linking mechanism — see below).
+- `bin/` only ever holds tools we actually maintain as dotfiles (`dev-*`,
+  `tmux-theme-*`). Everything installed by a native installer (pipx, curl
+  releases, the Claude Code / aws-cli installers, ...) lands in the *real*
+  `~/.local/bin` and is invisible to git — `stow_packages()` always runs with
+  `--no-folding` so `~/.local/bin` is a real directory, never a single symlink
+  to the repo.
+- systemd --user units live in `system/services/` (persistent daemons) and
+  `system/timers/` (oneshot `.service` + matching `.timer` pairs), always
+  named `infra-*`. `link_systemd_units()` (run at the end of `stow_packages`)
+  symlinks them into `~/.config/systemd/user`, reloads the daemon, and enables
+  services / timers.
 - Neovim is managed via `dev-nvim` to stay on the upstream binary release
   rather than the distro package.
 - The Timewarrior hook (`on-modify.timewarrior`) must be installed once per

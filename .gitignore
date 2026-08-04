@@ -23,6 +23,9 @@ ssh/.ssh/*
 # El instalador de Claude Code escribe aquí un symlink versionado; no se trackea.
 bin/.local/bin/claude
 bin/.local/bin/aws*
+# install_yazi (bootstrap) descarga el binario oficial aquí; no se trackea.
+bin/.local/bin/yazi
+bin/.local/bin/ya
 
 # Sesiones y cache
 *.swp

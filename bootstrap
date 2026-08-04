@@ -61,12 +61,12 @@ checklist_select_or_all() {
 
   _out_ref=()
 
-  local _items=() _key _label
+  local _items=("__skip__" "Skip -- install none of the above" "off")
+  local _key _label
   for _key in "${_keys_ref[@]}"; do
     [[ $_has_labels -eq 1 ]] && _label="${_labels_ref[$_key]}" || _label="$_key"
     _items+=("$_key" "$_label" "off")
   done
-  _items+=("__skip__" "Skip -- install none of the above" "off")
 
   local _raw
   _raw=$(dialog --clear --colors --backtitle "$BACKTITLE" \

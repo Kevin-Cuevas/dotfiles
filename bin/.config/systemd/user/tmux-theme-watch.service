@@ -1,0 +1,11 @@
+[Unit]
+Description=Sync tmux status bar theme with the system light/dark preference
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/tmux-theme-watch
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -43,28 +43,7 @@ if [[ -f "${ZINIT_HOME}/zinit.zsh" ]]; then
   zinit light romkatv/powerlevel10k
 
   zinit ice wait lucid; zinit light zsh-users/zsh-completions
-
-  # fzf-tab's group-header colors are hardcoded in the plugin itself (mix of
-  # basic ANSI + fixed 256-color codes), so they don't follow our theme at
-  # all. Override with Nord Snow Storm accents, but only in light mode —
-  # the plugin's own defaults already look fine against Nord dark.
-  _fzf_tab_light_colors() {
-    if [[ "$(gdbus call --session --dest org.freedesktop.portal.Desktop \
-        --object-path /org/freedesktop/portal/desktop \
-        --method org.freedesktop.portal.Settings.Read \
-        org.freedesktop.appearance color-scheme 2>/dev/null |
-        grep -oP 'uint32\s+\K[0-9]+')" == "2" ]]; then
-      _ftb_group_colors=(
-        $'\x1b[38;2;67;111;154m' $'\x1b[38;2;86;116;60m' $'\x1b[38;2;142;100;15m'
-        $'\x1b[38;2;144;89;134m' $'\x1b[38;2;187;64;76m' $'\x1b[38;2;72;109;156m'
-        $'\x1b[38;2;45;116;136m' $'\x1b[38;2;64;116;115m' $'\x1b[38;2;176;78;47m'
-        $'\x1b[38;2;67;111;154m' $'\x1b[38;2;86;116;60m' $'\x1b[38;2;142;100;15m'
-        $'\x1b[38;2;144;89;134m' $'\x1b[38;2;187;64;76m' $'\x1b[38;2;45;116;136m'
-        $'\x1b[38;2;64;116;115m'
-      )
-    fi
-  }
-  zinit ice wait lucid atload"_fzf_tab_light_colors"; zinit light Aloxaf/fzf-tab
+  zinit ice wait lucid; zinit light Aloxaf/fzf-tab
   zinit ice wait lucid atload"_zsh_autosuggest_start"; zinit light zsh-users/zsh-autosuggestions
   zinit ice wait lucid; zinit light zsh-users/zsh-syntax-highlighting
 
@@ -378,17 +357,6 @@ alias lavat="lavat -c cyan -k black -R 3"
 # ===============================================================================
 # INTEGRATIONS
 # ===============================================================================
-
-# fzf colors: only override for the light system theme — dark already looks
-# good with fzf's own defaults, so it's left untouched. Same Nord Snow Storm
-# accents used by kitty/nvim for the light theme.
-if [[ "$(gdbus call --session --dest org.freedesktop.portal.Desktop \
-    --object-path /org/freedesktop/portal/desktop \
-    --method org.freedesktop.portal.Settings.Read \
-    org.freedesktop.appearance color-scheme 2>/dev/null |
-    grep -oP 'uint32\s+\K[0-9]+')" == "2" ]]; then
-  export FZF_DEFAULT_OPTS="--color=bg:#eceff4,fg:#2e3440,bg+:#d8dee9,fg+:#2e3440,hl:#436f9a,hl+:#2d7488,info:#905986,prompt:#486d9c,pointer:#bb404c,marker:#56743c,spinner:#8e640f,header:#2d7488,border:#d8dee9"
-fi
 
 [[ -f ~/.fzf.zsh ]] && source ~/.fzf.zsh
 command -v zoxide &>/dev/null && eval "$(zoxide init zsh)"

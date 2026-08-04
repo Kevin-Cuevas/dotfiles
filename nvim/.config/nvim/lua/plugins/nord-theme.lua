@@ -5,6 +5,7 @@ return {
     priority = 1000,
     config = function()
       require("nord").setup({
+        terminal_colors = true,
         styles = {
           comments = { italic = true },
         },
@@ -30,8 +31,6 @@ return {
           }
         end,
       })
-
-      vim.cmd.colorscheme("nord")
     end,
   },
 }

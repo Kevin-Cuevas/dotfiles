@@ -36,25 +36,64 @@ all at once.
 
 ```
 dotfiles/
-├── bin/          -> ~/.local/bin          personal CLI tools and dev-* helpers
+├── bin/          -> ~/.local/bin          personal CLI tools and dev-* helpers  [per-file]
 ├── cava/         -> ~/.config/cava
-├── icons/        -> ~/.local/share/...    cursor and icon themes
+├── icons/        -> ~/.icons              cursor and icon themes
 ├── kitty/        -> ~/.config/kitty
-├── konsole/      -> ~/.local/share/konsole yakuake profile + colorscheme
+├── konsole/      -> ~/.local/share/konsole yakuake profile + colorscheme        [per-file]
 ├── nvim/         -> ~/.config/nvim        LazyVim config
-├── peaclock/     -> ~/.config/peaclock
-├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local
+├── peaclock/     -> ~/.peaclock
+├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local [per-file]
 ├── system/                                MOTD + systemd --user units (not stowed)
 │   ├── motd/                              root-run MOTD scripts
 │   ├── services/     -> ~/.config/systemd/user  persistent infra-*.service units
 │   └── timers/       -> ~/.config/systemd/user  infra-*.service + .timer oneshot pairs
 ├── task/         -> ~/.config/task
-├── templates/    -> ~/templates
-├── tmux/         -> ~/.config/tmux
-├── zsh/          -> ~/                    .zshrc, .zshenv, and shell helpers
+├── templates/    -> ~/.templates
+├── tmux/         -> ~/.tmux.conf, ~/.tmux-theme.conf
+├── zsh/          -> ~/                    .zshrc, .p10k.zsh
 ├── bootstrap                              interactive setup script
 └── README.md
 ```
+
+`[per-file]` marks the three packages stowed one-symlink-per-file instead of
+one symlink for the whole directory — see **Stow strategy** below.
+
+---
+
+## Stow strategy
+
+Every top-level directory is a Stow package, but not all of them get stowed
+the same way — `bootstrap`'s `stow_packages()` splits them into two groups
+(`STOW_PER_FILE_PACKAGES` in `bootstrap`, right above the function):
+
+**Whole-folder** (`cava, icons, kitty, nvim, peaclock, task, templates, tmux,
+zsh`) — the target directory is 100% owned by the repo, so stow links it as
+a single symlink (e.g. `~/.config/nvim -> dotfiles/nvim/.config/nvim`).
+Simplest option, and correct here because nothing else ever needs to write
+into these directories.
+
+**Per-file** (`bin, ssh, konsole`) — their target directories also receive
+files we don't track: new SSH keys, `ControlMaster` sockets in `~/.ssh`,
+binaries dropped by `pipx`/`curl` in `~/.local/bin`, new profiles saved from
+the Konsole GUI. Folding these into one symlink would mean anything written
+there later lands physically inside `~/dotfiles` instead of the real
+directory. So `stow_packages()` runs these three with `--no-folding`,
+creating a **real** target directory plus one symlink per tracked file —
+only what we explicitly put in the package is managed by stow. Add a new
+file to one of these packages and re-run the stow step: it links just that
+new file, it never re-folds the directory into a single symlink.
+
+**`system/`** — excluded from stow entirely (`stow_packages()` skips it by
+name). It needs two different non-stow mechanisms instead:
+
+- MOTD (`system/motd/`) is installed with a root `cp` into
+  `/etc/update-motd.d` via `dev-motd` (bootstrap menu option 6) — it can't be
+  a user symlink since that directory is root-owned.
+- systemd `--user` units (`system/services/`, persistent daemons, and
+  `system/timers/`, oneshot `.service` + `.timer` pairs), always named
+  `infra-*`, are linked individually with `ln -sf` by `link_systemd_units()`
+  (called automatically at the end of `stow_packages()`), then enabled.
 
 ---
 
@@ -198,7 +237,10 @@ If you prefer to skip the TUI and stow packages by hand:
 
 ```bash
 cd ~/dotfiles
-stow bin cava icons kitty konsole nvim peaclock ssh task templates tmux zsh
+# Whole-folder packages (one symlink per package)
+stow cava icons kitty nvim peaclock task templates tmux zsh
+# Per-file packages (--no-folding: real directory + one symlink per file)
+stow --no-folding bin ssh konsole
 ```
 
 ---
@@ -217,20 +259,16 @@ stow bin cava icons kitty konsole nvim peaclock ssh task templates tmux zsh
 
 - Optimized for Debian-based machines.
 - `stow` works best when each app lives in its own directory.
-- `system/` is intentionally excluded from stow (MOTD scripts run as root, and
-  systemd --user units use a different linking mechanism — see below).
+- Per-package stow strategy (whole-folder vs per-file) and how `system/` is
+  handled outside of stow is documented in **Stow strategy** above.
 - `bin/` only ever holds tools we actually maintain as dotfiles (`dev-*`,
   `tmux-theme-*`). Everything installed by a native installer (pipx, curl
   releases, the Claude Code / aws-cli installers, ...) lands in the *real*
-  `~/.local/bin` and is invisible to git — `stow_packages()` always runs with
-  `--no-folding` so `~/.local/bin` is a real directory, never a single symlink
-  to the repo.
-- systemd --user units live in `system/services/` (persistent daemons) and
-  `system/timers/` (oneshot `.service` + matching `.timer` pairs), always
-  named `infra-*`. `link_systemd_units()` (run at the end of `stow_packages`)
-  symlinks them into `~/.config/systemd/user`, reloads the daemon, and enables
-  services / timers.
+  `~/.local/bin` and is invisible to git.
 - Neovim is managed via `dev-nvim` to stay on the upstream binary release
   rather than the distro package.
+- yazi is reinstalled from the latest GitHub release binary; if the same
+  version is already installed, bootstrap asks (like Neovim) whether to
+  reinstall anyway or skip.
 - The Timewarrior hook (`on-modify.timewarrior`) must be installed once per
   machine; the bootstrap handles it via option 7.

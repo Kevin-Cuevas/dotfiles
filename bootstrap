@@ -290,10 +290,12 @@ install_extra_packages() {
   done
 }
 
-# Instala/actualiza yazi (file manager de terminal) descargando el binario
-# oficial precompilado — nunca compila desde fuente. Reinstalar simplemente
-# sobrescribe el binario anterior con el más reciente; yazi no tiene un
-# mecanismo tipo "apt upgrade", así que no hay nada más que comparar.
+# Installs/updates yazi (terminal file manager) from the official
+# precompiled binary release — never builds from source. Downloads and
+# extracts first so the new version can be read straight from the binary,
+# then compares it against whatever's currently installed before touching
+# ~/.local/bin: if it's the exact same version, ask before reinstalling
+# (same UX as dev-nvim's version check), otherwise install right away.
 install_yazi() {
   sep
   local arch triple
@@ -312,8 +314,12 @@ install_yazi() {
     return 1
   }
 
+  local current_version=""
   if command -v yazi &>/dev/null; then
-    info "Current yazi version: $(yazi --version 2>/dev/null || echo unknown)"
+    current_version="$(yazi --version 2>/dev/null | head -1)"
+    info "Current yazi version: ${current_version:-unknown}"
+  else
+    info "yazi is not currently installed."
   fi
 
   local tmp
@@ -321,13 +327,13 @@ install_yazi() {
     err "Could not create temp dir for yazi download"
     return 1
   }
-  # Nota: NO usar `trap ... RETURN` aquí. En bash, un trap RETURN puesto
-  # dentro de esta función no se limpia solo al retornar: queda armado y
-  # vuelve a dispararse cuando la función QUE LLAMÓ a esta (p.ej.
-  # install_extra_packages, y de ahí run_all) también retorna — en ese
-  # punto "$tmp" ya no existe y, bajo `set -u`, referenciarla mata TODO el
-  # script con "tmp: unbound variable". Por eso limpiamos "$tmp" a mano en
-  # cada punto de salida.
+  # Note: do NOT use `trap ... RETURN` here. In bash, a RETURN trap set
+  # inside this function isn't cleared just by returning: it stays armed
+  # and fires again when the function that CALLED this one (e.g.
+  # install_extra_packages, and from there run_all) also returns — at that
+  # point "$tmp" no longer exists and, under `set -u`, referencing it kills
+  # the ENTIRE script with "tmp: unbound variable". That's why "$tmp" is
+  # cleaned up by hand at every exit point instead.
 
   local asset="yazi-${triple}.zip"
   local url="https://github.com/sxyazi/yazi/releases/latest/download/${asset}"
@@ -353,13 +359,38 @@ install_yazi() {
     return 1
   fi
 
+  local new_version
+  new_version="$("$extracted_dir/yazi" --version 2>/dev/null | head -1)"
+
+  if [[ -n "$current_version" && "$current_version" == "$new_version" ]]; then
+    if [[ "$NONINTERACTIVE" == "true" ]]; then
+      info "Non-interactive — reinstalling the same version ($new_version)."
+    else
+      if dialog \
+          --clear --colors \
+          --backtitle "$BACKTITLE" \
+          --title " yazi " \
+          --defaultno \
+          --yesno "You already have $new_version installed.\n\nDownload and reinstall it anyway?" \
+          9 64; then
+        clear
+      else
+        clear
+        skip "yazi reinstall skipped — already on $new_version"
+        rm -rf "$tmp"
+        return 0
+      fi
+    fi
+  else
+    info "Updating: ${current_version:-<none>} -> ${new_version:-<unknown>}"
+  fi
+
   mkdir -p "$HOME/.local/bin"
   install -m 755 "$extracted_dir/yazi" "$HOME/.local/bin/yazi"
   install -m 755 "$extracted_dir/ya" "$HOME/.local/bin/ya"
   rm -rf "$tmp"
 
-  ok "Installed yazi + ya -> $HOME/.local/bin"
-  info "New yazi version: $("$HOME/.local/bin/yazi" --version 2>/dev/null || echo unknown)"
+  ok "Installed yazi + ya -> $HOME/.local/bin ($new_version)"
 }
 
 # Compila peaclock (reloj estético de terminal) desde fuente. No hay binario

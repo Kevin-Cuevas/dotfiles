@@ -52,7 +52,8 @@ dotfiles/
 ├── templates/    -> ~/.templates
 ├── tmux/         -> ~/.tmux.conf, ~/.tmux-theme.conf
 ├── zsh/          -> ~/                    .zshrc, .p10k.zsh
-├── bootstrap                              interactive setup script
+├── bootstrap                              interactive setup script (entrypoint)
+├── bootstrap.d/                           bootstrap's implementation, one file per concern
 └── README.md
 ```
 
@@ -64,8 +65,9 @@ one symlink for the whole directory — see **Stow strategy** below.
 ## Stow strategy
 
 Every top-level directory is a Stow package, but not all of them get stowed
-the same way — `bootstrap`'s `stow_packages()` splits them into two groups
-(`STOW_PER_FILE_PACKAGES` in `bootstrap`, right above the function):
+the same way — `stow_packages()` splits them into two groups
+(`STOW_PER_FILE_PACKAGES` in `bootstrap.d/30-stow.sh`, right above the
+function):
 
 **Whole-folder** (`cava, icons, kitty, nvim, peaclock, task, templates, tmux,
 zsh`) — the target directory is 100% owned by the repo, so stow links it as
@@ -106,6 +108,28 @@ automatically if they are missing.
 ```bash
 ~/dotfiles/bootstrap
 ```
+
+`bootstrap` itself is a thin entrypoint: parse args, source every
+`bootstrap.d/*.sh` module, define the menu, run it. Each module owns one
+concern and is just a library of functions/data — nothing in `bootstrap.d/`
+runs on its own:
+
+| Module | Concern |
+| --- | --- |
+| `00-core.sh` | logging, dialog checklist helper, preflight, header — loads first, everything else depends on it |
+| `10-packages.sh` | apt packages + non-apt "extra" packages (menu option 2) |
+| `20-runtimes.sh` | language runtimes: rust, node, deno, bun (menu option 12) |
+| `30-stow.sh` | stow strategy (menu option 4) + systemd `--user` unit linking |
+| `40-misc.sh` | default shell, `dev-*` permissions, `dev-nvim`/`dev-motd`/`dev-ssh` launchers, fonts, TPM, Timewarrior hook |
+
+Modules are sourced in lexical order (`NN-` prefixes, stepped by 10 so a new
+one can slot in without renumbering) purely to guarantee `00-core.sh` loads
+first — beyond that, load order doesn't matter, since nothing in
+`bootstrap.d/` calls a function at source time. **To add a new installer**:
+add a function to the relevant module (or drop a new `bootstrap.d/NN-name.sh`
+file — it's picked up automatically, nothing to register), then wire it into
+`EXTRA_FN`/`RUNTIME_FN` or the menu in `bootstrap` if it needs to be reachable
+from there.
 
 **Menu options:**
 

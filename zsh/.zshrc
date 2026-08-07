@@ -178,6 +178,33 @@ _ssh_hosts_fast() {
 }
 compdef _ssh_hosts_fast ssh
 
+# Snapshot the desktop's current light/dark preference into $NVIM_THEME right
+# before connecting, forwarded to the remote via SendEnv (~/.ssh/config) +
+# AcceptEnv on the remote sshd. nvim on the remote reads it directly to pick
+# nord/nord-snow-storm at startup — deliberately NOT relying on an OSC 11
+# terminal query for this: tmux intercepts those, caches the answer per
+# client, and (per tmux issue #3582) doesn't reliably forward/refresh it, so
+# it never actually reflects the live theme over SSH. A plain env var
+# sidesteps all of that. Trade-off: it's a snapshot taken at connect time,
+# not a live follow — reconnect after switching themes to pick up the change.
+# Only wraps interactive zsh usage of the literal `ssh` command; other tools
+# (git, scp, rsync -e ssh) call the real binary directly and are unaffected.
+ssh() {
+  if (( $+commands[dbus-send] )); then
+    local scheme
+    scheme=$(dbus-send --session --print-reply=literal --reply-timeout=200 \
+      --dest=org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop \
+      org.freedesktop.portal.Settings.Read \
+      string:org.freedesktop.appearance string:color-scheme 2>/dev/null)
+    if [[ "$scheme" == *"uint32 1"* ]]; then
+      export NVIM_THEME=dark
+    elif [[ "$scheme" == *"uint32 0"* || "$scheme" == *"uint32 2"* ]]; then
+      export NVIM_THEME=light
+    fi
+  fi
+  command ssh "$@"
+}
+
 # scp: offer host: targets + local files
 _scp_fast() {
   local -a hosts

@@ -17,10 +17,17 @@ set -uo pipefail
 REMOTE_HOSTS=(nivek-lab nivek-core)
 
 push_theme() {
+  # Sequential, not backgrounded: spawning jobs from inside the `while
+  # read` loop below (piping dbus-monitor) has hit a known bash bug where
+  # job-control bookkeeping leaves the pipe non-blocking, so the next
+  # `read` dies with "Resource temporarily unavailable" and the whole
+  # watcher silently stops reacting to further theme changes. Two hosts at
+  # ConnectTimeout=3 is at most ~6s worst case, fine for a background
+  # daemon reacting to occasional theme toggles.
   local theme="$1" host
   for host in "${REMOTE_HOSTS[@]}"; do
     ssh -o ConnectTimeout=3 -o BatchMode=yes "$host" \
-      "tmux set-environment -g NVIM_THEME $theme 2>/dev/null" &>/dev/null &
+      "tmux set-environment -g NVIM_THEME $theme 2>/dev/null" &>/dev/null
   done
 }
 
@@ -40,10 +47,11 @@ current_theme() {
 
 push_theme "$(current_theme)"
 
-dbus-monitor --session \
-  "type=signal,interface=org.freedesktop.portal.Settings,member=SettingChanged,path=/org/freedesktop/portal/desktop,arg0='org.freedesktop.appearance',arg1='color-scheme'" |
+# Process substitution instead of `dbus-monitor | while read` — same class
+# of fix as above, belt-and-suspenders against the same bash pipe bug.
 while read -r line; do
   case "$line" in
   *member=SettingChanged*) push_theme "$(current_theme)" ;;
   esac
-done
+done < <(dbus-monitor --session \
+  "type=signal,interface=org.freedesktop.portal.Settings,member=SettingChanged,path=/org/freedesktop/portal/desktop,arg0='org.freedesktop.appearance',arg1='color-scheme'")

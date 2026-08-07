@@ -5,7 +5,10 @@ Wants=graphical-session.target
 
 [Service]
 ExecStart=%h/.local/bin/dev-theme-push
-Restart=on-failure
+# always, not on-failure: this is a monitor loop, so it stopping for ANY
+# reason (even a clean exit from some future bug) means it silently stops
+# reacting to theme changes — worth an automatic restart either way.
+Restart=always
 RestartSec=2
 
 [Install]

@@ -13,10 +13,14 @@
 -- Instead, $NVIM_THEME is set by the ssh() wrapper in zsh/.zshrc right
 -- before connecting — it queries the SAME D-Bus portal, but locally, where
 -- it actually works — and forwarded over SSH via SendEnv (ssh/.ssh/config)
--- + AcceptEnv on the remote sshd. Deliberately a snapshot taken at connect
--- time, not a live follow like the local D-Bus polling: switching your
--- desktop theme mid-session won't retroactively update an already-open
--- remote nvim, you have to reconnect.
+-- + Tailscale SSH's acceptEnv (see the tailnet's SSH access rule). That
+-- alone only gives a snapshot at connect time. To also follow live changes
+-- without reconnecting, dev-theme-push (a --user systemd service on the
+-- LOCAL machine, system/services/infra-theme-push.service) pushes updated
+-- NVIM_THEME values into the remote tmux server's environment whenever the
+-- desktop theme changes; below, we poll for that (tmux has no way to push
+-- a notification into nvim directly) every few seconds, same interval as
+-- auto-dark-mode.nvim's own local D-Bus polling.
 local in_ssh = vim.env.SSH_TTY ~= nil
 
 local function set_dark()
@@ -27,6 +31,34 @@ end
 local function set_light()
   vim.o.background = "light"
   vim.cmd.colorscheme("nord-snow-storm")
+end
+
+local function apply(theme)
+  if theme == "light" then
+    set_light()
+  else
+    set_dark()
+  end
+end
+
+if in_ssh and vim.env.TMUX then
+  local current = vim.env.NVIM_THEME
+  local timer = assert(vim.uv.new_timer())
+  timer:start(
+    3000,
+    3000,
+    vim.schedule_wrap(function()
+      vim.system({ "tmux", "show-environment", "-g", "NVIM_THEME" }, { text = true }, function(res)
+        local value = res.stdout and res.stdout:match("NVIM_THEME=(%S+)")
+        if value and value ~= current then
+          current = value
+          vim.schedule(function()
+            apply(value)
+          end)
+        end
+      end)
+    end)
+  )
 end
 
 return {
@@ -40,11 +72,7 @@ return {
     "LazyVim/LazyVim",
     opts = {
       colorscheme = function()
-        if in_ssh and vim.env.NVIM_THEME == "light" then
-          set_light()
-        else
-          set_dark()
-        end
+        apply(in_ssh and vim.env.NVIM_THEME or nil)
       end,
     },
   },

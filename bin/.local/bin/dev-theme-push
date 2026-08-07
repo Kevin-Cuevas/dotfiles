@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Keeps nvim's colorscheme in sync with the system light/dark preference on
+# remote hosts, for the lifetime of the login session. $NVIM_THEME (set by
+# the ssh() wrapper in zsh/.zshrc and forwarded over SSH) only gives nvim a
+# snapshot at connect time — this pushes live updates into each remote
+# tmux server's environment so an already-open nvim (which polls
+# `tmux show-environment NVIM_THEME`, see
+# nvim/.config/nvim/lua/plugins/auto-dark-mode.lua) picks up the change
+# without reconnecting.
+#
+# Only targets the hosts listed below — not every alias in
+# ~/.ssh/config.local, since that also has non-terminal devices (phone,
+# Windows laptop) and unrelated third-party servers a personal theme
+# watcher has no business connecting to. Add a hostname here to extend it.
+set -uo pipefail
+
+REMOTE_HOSTS=(nivek-lab nivek-core)
+
+push_theme() {
+  local theme="$1" host
+  for host in "${REMOTE_HOSTS[@]}"; do
+    ssh -o ConnectTimeout=3 -o BatchMode=yes "$host" \
+      "tmux set-environment -g NVIM_THEME $theme 2>/dev/null" &>/dev/null &
+  done
+}
+
+# Same appearance-signal parsing as dev-motd/auto-dark-mode.nvim: uint32 1
+# = dark, 0 (no preference) or 2 = light.
+current_theme() {
+  local reply
+  reply=$(dbus-send --session --print-reply=literal --reply-timeout=1000 \
+    --dest=org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop \
+    org.freedesktop.portal.Settings.Read \
+    string:org.freedesktop.appearance string:color-scheme 2>/dev/null)
+  case "$reply" in
+  *"uint32 1"*) echo dark ;;
+  *) echo light ;;
+  esac
+}
+
+push_theme "$(current_theme)"
+
+dbus-monitor --session \
+  "type=signal,interface=org.freedesktop.portal.Settings,member=SettingChanged,path=/org/freedesktop/portal/desktop,arg0='org.freedesktop.appearance',arg1='color-scheme'" |
+while read -r line; do
+  case "$line" in
+  *member=SettingChanged*) push_theme "$(current_theme)" ;;
+  esac
+done

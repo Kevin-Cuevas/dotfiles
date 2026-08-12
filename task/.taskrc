@@ -40,7 +40,7 @@ data.location=/home/nivek/.task
 #include no-color.theme
 include ~/.config/task/nord-256.theme
 
-news.version=2.6.0
+news.version=3.4.2
 rule.precedence.color=deleted,completed,active,keyword.,tag.,project.,overdue,scheduled,due.today,due,blocked,blocking,recurring,tagged,uda.
 uda.reviewed.type=date
 uda.reviewed.label=Reviewed

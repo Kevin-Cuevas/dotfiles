@@ -352,7 +352,7 @@ alias fvim="nvim -u NONE"
 alias bat="batcat"
 alias fd="fdfind"
 alias cmatrix="cmatrix -C blue"
-alias lavat="lavat -c cyan -k black -R 3"
+alias lavat="lavat -c cyan -k magenta -R 3"
 
 # ===============================================================================
 # INTEGRATIONS

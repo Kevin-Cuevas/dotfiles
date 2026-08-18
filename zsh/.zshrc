@@ -288,6 +288,34 @@ if [[ ":$FPATH:" != *":/home/nivek/.zsh/completions:"* ]]; then export FPATH="/h
 # BUN completions
 [ -s "/home/nivek/.bun/_bun" ] && source "/home/nivek/.bun/_bun"
 
+# mycli: native completion for DSN aliases (the stock `mycli --completions zsh`
+# shells out to the mycli/python interpreter twice per TAB — ~0.5s each just to
+# import its deps — which freezes the prompt; parse ~/.myclirc directly instead)
+_mycli_dsn_aliases_fast() {
+  local -a aliases
+  [[ -f ~/.myclirc ]] && aliases=(${(f)"$(awk -F' = ' '
+    /^\[alias_dsn\]/ { insec=1; next }
+    /^\[/            { insec=0 }
+    insec && NF>=2 && $1 !~ /^[[:space:]]*[;#]/ { print $1 }
+  ' ~/.myclirc)"})
+  compadd -a aliases
+}
+_mycli_fast() {
+  _arguments -s \
+    '(-h --host --hostname)'{-h,--host,--hostname}'[host address]:host:' \
+    '(-P --port)'{-P,--port}'[port number]:port:' \
+    '(-u --user --username)'{-u,--user,--username}'[user name]:user:' \
+    '(-S --socket)'{-S,--socket}'[socket file]:socket:_files' \
+    '(-p --pass --password)'{-p,--pass,--password}'[password]:password:' \
+    '(-D --database)'{-D,--database}'[database or DSN]:dsn alias:_mycli_dsn_aliases_fast' \
+    '(-d --dsn)'{-d,--dsn}'[DSN alias]:dsn alias:_mycli_dsn_aliases_fast' \
+    '--list-dsn[list configured DSN aliases]' \
+    '(-v --verbose)'{-v,--verbose}'[verbose output]' \
+    '(-q --quiet)'{-q,--quiet}'[quiet output]' \
+    '*:database or DSN alias:_mycli_dsn_aliases_fast'
+}
+compdef _mycli_fast mycli
+
 # ===============================================================================
 # FUNCTIONS
 # ===============================================================================

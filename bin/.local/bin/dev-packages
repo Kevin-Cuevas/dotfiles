@@ -1,0 +1,436 @@
+#!/usr/bin/env bash
+# dev-packages — front door para todas las herramientas no-apt (nvim, kitty,
+# yazi, peaclock, tmuxp, lavat): un único checklist `dialog` que instala o
+# actualiza lo que el usuario marque. Standalone, igual que dev-nvim/dev-ssh:
+# no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR, así que también corre
+# suelto una vez stow-eado a ~/.local/bin.
+#
+# Cada instalador decide "¿ya está al día?" con lo mejor disponible para esa
+# herramienta:
+#   - nvim    -> delega TODO en dev-nvim (build/tarball + versión), que ya
+#                vive en este mismo bin/ tras el stow.
+#   - yazi    -> compara versión contra el binario recién descargado.
+#   - kitty   -> siempre re-corre el instalador oficial (in-place, seguro).
+#   - tmuxp   -> pipx install / pipx upgrade.
+#   - peaclock/lavat -> no publican versiones (solo git+build), así que se
+#                compara el SHA remoto del HEAD contra uno guardado en
+#                ~/.local/share/dev-packages/<tool>.sha tras el último build.
+#
+# Uso:
+#   dev-packages                 checklist interactivo (dialog)
+#   dev-packages --all           instala/actualiza todo, sin diálogo
+#   dev-packages --only=a,b,c    instala/actualiza solo esas keys, sin diálogo
+set -uo pipefail
+
+# ─── helpers (mismo estilo que bootstrap.d/00-core.sh) ───────────────────────
+RED='\e[38;2;191;97;106m'
+GRN='\e[38;2;163;190;140m'
+YLW='\e[38;2;235;203;139m'
+BLU='\e[38;2;136;192;208m'
+CYN='\e[38;2;143;188;187m'
+DIM='\e[38;2;94;129;172m'
+BLD='\e[1m'
+RST='\e[0m'
+
+info() { printf "${BLU}[INFO]${RST}  %s\n" "$*"; }
+ok() { printf "${GRN}[OK]${RST}    %s\n" "$*"; }
+err() { printf "${RED}[ERR]${RST}   %s\n" "$*" >&2; }
+warn() { printf "${YLW}[WARN]${RST}  %s\n" "$*"; }
+skip() { printf "${CYN}[SKIP]${RST}  %s\n" "$*"; }
+sep() { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
+
+NONINTERACTIVE="${NONINTERACTIVE:-false}"
+BACKTITLE="${DEV_PACKAGES_BACKTITLE:-dev-packages · $(hostname) · $(date '+%Y-%m-%d %H:%M')}"
+STATE_DIR="$HOME/.local/share/dev-packages"
+
+# ─── registro ─────────────────────────────────────────────────────────────
+PKG_KEYS=(nvim kitty yazi peaclock tmuxp lavat)
+declare -A PKG_LABEL=(
+  [nvim]="Neovim (dev-nvim: build/tarball + versión)"
+  [kitty]="kitty (instalador oficial, actualiza in-place)"
+  [yazi]="Yazi (file manager, release de GitHub, versión-checked)"
+  [peaclock]="Peaclock (reloj de terminal, build desde fuente, sha-checked)"
+  [tmuxp]="tmuxp (tmux session manager, pipx install/upgrade)"
+  [lavat]="lavat (lava lamp de terminal, build desde fuente, sha-checked)"
+)
+declare -A PKG_FN=(
+  [nvim]="install_nvim"
+  [kitty]="install_kitty"
+  [yazi]="install_yazi"
+  [peaclock]="install_peaclock"
+  [tmuxp]="install_tmuxp"
+  [lavat]="install_lavat"
+)
+
+# ─── checklist propio (misma semántica que checklist_select_or_all) ─────────
+select_packages() {
+  local -n _out_ref="$1"
+  _out_ref=()
+
+  local _items=("__skip__" "Skip -- install none of the above" "off")
+  local _key
+  for _key in "${PKG_KEYS[@]}"; do
+    _items+=("$_key" "${PKG_LABEL[$_key]}" "off")
+  done
+
+  local _raw
+  _raw=$(dialog --clear --colors --backtitle "$BACKTITLE" \
+    --title " dev-packages " --separate-output --checklist \
+    "Select packages to install/update  [SPACE=toggle  ENTER=confirm]\n\nLeave everything unchecked and press ENTER to install/update ALL.\nCheck 'Skip' to do nothing." \
+    18 72 10 "${_items[@]}" \
+    3>&1 1>&2 2>&3) || return 1
+
+  clear
+
+  local _raw_chosen=() _line
+  while IFS= read -r _line; do [[ -n "$_line" ]] && _raw_chosen+=("$_line"); done <<< "$_raw"
+
+  for _line in "${_raw_chosen[@]}"; do
+    [[ "$_line" == "__skip__" ]] && { _out_ref=(); return 0; }
+  done
+
+  if [[ ${#_raw_chosen[@]} -eq 0 ]]; then
+    _out_ref=("${PKG_KEYS[@]}")
+  else
+    _out_ref=("${_raw_chosen[@]}")
+  fi
+}
+
+# ─── utilidad compartida: SHA remoto del HEAD de un repo git ────────────────
+remote_head_sha() {
+  git ls-remote "$1" HEAD 2>/dev/null | awk '{print $1}'
+}
+
+# ─── instaladores ────────────────────────────────────────────────────────────
+
+# Delega en dev-nvim (mismo bin/ tras el stow) — toda la lógica de
+# build-vs-tarball + detección de versión vive ahí, no se duplica aquí.
+install_nvim() {
+  sep
+  local nvim_script
+  nvim_script="$(command -v dev-nvim 2>/dev/null || true)"
+  if [[ -z "$nvim_script" ]]; then
+    local self_dir
+    self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    [[ -x "$self_dir/dev-nvim" ]] && nvim_script="$self_dir/dev-nvim"
+  fi
+  if [[ -z "$nvim_script" ]]; then
+    err "dev-nvim no encontrado (¿está el paquete bin/ stow-eado a ~/.local/bin?)"
+    return 1
+  fi
+  info "Delegando en dev-nvim..."
+  "$nvim_script"
+}
+
+# Instala/actualiza kitty vía el instalador oficial (no hay paquete apt: la
+# versión de Debian suele ir muy atrás). El propio script detecta una
+# instalación previa en ~/.local/kitty.app y la reemplaza in-place sin tocar
+# symlinks ni .desktop files, así que re-correrlo es también el mecanismo de
+# actualización — no hace falta lógica de versión propia.
+install_kitty() {
+  sep
+  info "Instalando/actualizando kitty..."
+  if ! curl -L https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin; then
+    err "Falló el instalador de kitty"
+    return 1
+  fi
+  ok "kitty instalado/actualizado -> $HOME/.local/kitty.app"
+}
+
+# Instala/actualiza yazi (terminal file manager) desde el binario precompilado
+# oficial. Descarga y extrae primero para poder leer la versión candidata
+# directamente del binario, la compara contra la instalada antes de tocar
+# ~/.local/bin: si es la misma versión, pregunta (igual que dev-nvim);
+# si no, actualiza directo.
+install_yazi() {
+  sep
+  local arch triple
+  arch="$(uname -m)"
+  case "$arch" in
+  x86_64) triple="x86_64-unknown-linux-gnu" ;;
+  aarch64) triple="aarch64-unknown-linux-gnu" ;;
+  *)
+    warn "No official yazi binary for architecture '$arch' — skipping."
+    return 1
+    ;;
+  esac
+
+  command -v unzip &>/dev/null || {
+    err "unzip not found — install it first (sudo apt install unzip)."
+    return 1
+  }
+
+  local current_version=""
+  if command -v yazi &>/dev/null; then
+    current_version="$(yazi --version 2>/dev/null | head -1)"
+    info "Current yazi version: ${current_version:-unknown}"
+  else
+    info "yazi is not currently installed."
+  fi
+
+  local tmp
+  tmp="$(mktemp -d)" || {
+    err "Could not create temp dir for yazi download"
+    return 1
+  }
+
+  local asset="yazi-${triple}.zip"
+  local url="https://github.com/sxyazi/yazi/releases/latest/download/${asset}"
+
+  info "Downloading $url ..."
+  if ! curl -fL --progress-bar -o "$tmp/$asset" "$url"; then
+    err "Failed to download $asset"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  info "Extracting..."
+  if ! unzip -q -o "$tmp/$asset" -d "$tmp"; then
+    err "Failed to extract $asset"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  local extracted_dir="$tmp/yazi-${triple}"
+  if [[ ! -x "$extracted_dir/yazi" || ! -x "$extracted_dir/ya" ]]; then
+    err "Expected yazi/ya binaries not found in $extracted_dir"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  local new_version
+  new_version="$("$extracted_dir/yazi" --version 2>/dev/null | head -1)"
+
+  if [[ -n "$current_version" && "$current_version" == "$new_version" ]]; then
+    if [[ "$NONINTERACTIVE" == "true" ]]; then
+      info "Non-interactive — reinstalling the same version ($new_version)."
+    else
+      if dialog \
+          --clear --colors \
+          --backtitle "$BACKTITLE" \
+          --title " yazi " \
+          --defaultno \
+          --yesno "You already have $new_version installed.\n\nDownload and reinstall it anyway?" \
+          9 64; then
+        clear
+      else
+        clear
+        skip "yazi reinstall skipped — already on $new_version"
+        rm -rf "$tmp"
+        return 0
+      fi
+    fi
+  else
+    info "Updating: ${current_version:-<none>} -> ${new_version:-<unknown>}"
+  fi
+
+  mkdir -p "$HOME/.local/bin"
+  install -m 755 "$extracted_dir/yazi" "$HOME/.local/bin/yazi"
+  install -m 755 "$extracted_dir/ya" "$HOME/.local/bin/ya"
+  rm -rf "$tmp"
+
+  ok "Installed yazi + ya -> $HOME/.local/bin ($new_version)"
+}
+
+# Instala/actualiza tmuxp (session manager de tmux) vía pipx, aislado en su
+# propio venv. pipx trae su propio mecanismo de actualización — lo usamos
+# directo en vez de reimplementar detección de versión.
+install_tmuxp() {
+  sep
+  command -v pipx &>/dev/null || {
+    err "pipx no encontrado — instálalo primero (sudo apt install pipx)."
+    return 1
+  }
+
+  if command -v tmuxp &>/dev/null; then
+    info "Actualizando tmuxp vía pipx..."
+    if ! pipx upgrade tmuxp; then
+      err "Falló 'pipx upgrade tmuxp'"
+      return 1
+    fi
+    ok "tmuxp actualizado -> $(command -v tmuxp)"
+  else
+    info "Instalando tmuxp vía pipx..."
+    if ! pipx install tmuxp &>/dev/null; then
+      err "Falló 'pipx install tmuxp'"
+      return 1
+    fi
+    ok "tmuxp instalado vía pipx -> $HOME/.local/bin/tmuxp"
+  fi
+}
+
+# Compila peaclock (reloj estético de terminal) desde fuente. No hay binario
+# oficial ni releases con versión, así que "¿hay actualización?" se decide
+# comparando el SHA remoto del HEAD contra el que quedó guardado tras el
+# último build exitoso — si no cambió, no vale la pena recompilar.
+install_peaclock() {
+  sep
+  local repo="https://github.com/octobanana/peaclock"
+  local state_file="$STATE_DIR/peaclock.sha"
+  local remote_sha local_sha=""
+  remote_sha="$(remote_head_sha "$repo")"
+  [[ -f "$state_file" ]] && local_sha="$(<"$state_file")"
+
+  if command -v peaclock &>/dev/null && [[ -n "$remote_sha" && "$remote_sha" == "$local_sha" ]]; then
+    skip "peaclock ya está al día ($(command -v peaclock), $remote_sha)"
+    return 0
+  fi
+
+  command -v git &>/dev/null || {
+    err "git no encontrado — instálalo primero (sudo apt install git)."
+    return 1
+  }
+  command -v cmake &>/dev/null || {
+    err "cmake no encontrado — instálalo primero (sudo apt install cmake)."
+    return 1
+  }
+  dpkg -s libicu-dev &>/dev/null || {
+    err "Falta ICU — instala libicu-dev primero (sudo apt install libicu-dev)."
+    return 1
+  }
+
+  local tmp
+  tmp="$(mktemp -d)" || {
+    err "No se pudo crear directorio temporal para peaclock"
+    return 1
+  }
+
+  info "Clonando peaclock..."
+  if ! git clone --depth=1 "$repo" "$tmp/peaclock" &>/dev/null; then
+    err "Falló el clone de peaclock"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  info "Compilando peaclock (RUNME.sh build)..."
+  if ! (cd "$tmp/peaclock" && ./RUNME.sh build --release) &>/dev/null; then
+    err "Falló la compilación de peaclock"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  info "Instalando peaclock (RUNME.sh install)..."
+  if ! (cd "$tmp/peaclock" && ./RUNME.sh install --release); then
+    err "Falló la instalación de peaclock"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  rm -rf "$tmp"
+  mkdir -p "$STATE_DIR"
+  [[ -n "$remote_sha" ]] && echo "$remote_sha" > "$state_file"
+  ok "peaclock instalado/actualizado -> $(command -v peaclock)"
+}
+
+# Compila lavat (lava lamp de terminal) desde fuente — mismo criterio que
+# peaclock: sin releases con versión, se compara el SHA remoto del HEAD.
+install_lavat() {
+  sep
+  local repo="https://github.com/AngelJumbo/lavat"
+  local state_file="$STATE_DIR/lavat.sha"
+  local remote_sha local_sha=""
+  remote_sha="$(remote_head_sha "$repo")"
+  [[ -f "$state_file" ]] && local_sha="$(<"$state_file")"
+
+  if command -v lavat &>/dev/null && [[ -n "$remote_sha" && "$remote_sha" == "$local_sha" ]]; then
+    skip "lavat ya está al día ($(command -v lavat), $remote_sha)"
+    return 0
+  fi
+
+  command -v git &>/dev/null || {
+    err "git no encontrado — instálalo primero (sudo apt install git)."
+    return 1
+  }
+
+  local tmp
+  tmp="$(mktemp -d)" || {
+    err "No se pudo crear directorio temporal para lavat"
+    return 1
+  }
+
+  info "Clonando lavat..."
+  if ! git clone --depth=1 "$repo" "$tmp/lavat" &>/dev/null; then
+    err "Falló el clone de lavat"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  info "Compilando lavat (make)..."
+  if ! (cd "$tmp/lavat" && make) &>/dev/null; then
+    err "Falló la compilación de lavat"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  info "Instalando lavat (sudo make install)..."
+  if ! (cd "$tmp/lavat" && sudo make install) &>/dev/null; then
+    err "Falló 'sudo make install' de lavat"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  rm -rf "$tmp"
+  mkdir -p "$STATE_DIR"
+  [[ -n "$remote_sha" ]] && echo "$remote_sha" > "$state_file"
+  ok "lavat instalado/actualizado -> $(command -v lavat)"
+}
+
+# ─── arg parsing ─────────────────────────────────────────────────────────────
+ONLY_KEYS=()
+for arg in "$@"; do
+  case "$arg" in
+  --all) NONINTERACTIVE=true ;;
+  --only=*)
+    IFS=',' read -ra ONLY_KEYS <<< "${arg#--only=}"
+    ;;
+  *)
+    err "Argumento desconocido: $arg"
+    exit 1
+    ;;
+  esac
+done
+
+# ─── selección de keys a procesar ────────────────────────────────────────────
+CHOSEN=()
+if [[ ${#ONLY_KEYS[@]} -gt 0 ]]; then
+  CHOSEN=("${ONLY_KEYS[@]}")
+elif [[ "$NONINTERACTIVE" == "true" ]] || ! [ -t 0 ]; then
+  info "Non-interactive mode — installing/updating all ${#PKG_KEYS[@]} package(s)"
+  CHOSEN=("${PKG_KEYS[@]}")
+else
+  if ! command -v dialog &>/dev/null; then
+    err "dialog no encontrado — instálalo primero (sudo apt install dialog) o usa --all/--only=."
+    exit 1
+  fi
+  if ! select_packages CHOSEN; then
+    warn "dev-packages cancelado."
+    exit 0
+  fi
+fi
+
+if [[ ${#CHOSEN[@]} -eq 0 ]]; then
+  skip "No packages selected — nothing to do."
+  exit 0
+fi
+
+# ─── ejecución + resumen ─────────────────────────────────────────────────────
+succeeded=0
+failed=()
+for key in "${CHOSEN[@]}"; do
+  fn="${PKG_FN[$key]:-}"
+  if [[ -z "$fn" ]]; then
+    warn "Unknown package key: $key"
+    failed+=("$key")
+    continue
+  fi
+  if "$fn"; then
+    ((succeeded++)) || true
+  else
+    warn "Install/update failed: ${PKG_LABEL[$key]:-$key}"
+    failed+=("$key")
+  fi
+done
+
+sep
+ok "Done — ok: $succeeded  failed: ${#failed[@]}"
+[[ ${#failed[@]} -gt 0 ]] && warn "Failed: ${failed[*]}"

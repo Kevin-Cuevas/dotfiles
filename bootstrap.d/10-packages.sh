@@ -33,21 +33,20 @@ APT_PKGS=(
   eza
   pipx
   unzip
-  kitty-terminfo
-  yakuake
 )
 
 # Paquetes "extra" que no vienen por apt (checklist justo después del de apt
 # packages). Para agregar uno: añade su clave a EXTRA_KEYS y su etiqueta +
 # función en los mapas, y define install_<algo>() (o reutiliza una función
 # existente como run_dev_nvim).
-EXTRA_KEYS=(nvim yazi peaclock tmuxp lavat)
+EXTRA_KEYS=(nvim yazi peaclock tmuxp lavat kitty)
 declare -A EXTRA_LABEL=(
   [nvim]="Neovim (dev-nvim)"
   [yazi]="Yazi (file manager)"
   [peaclock]="Peaclock (terminal clock)"
   [tmuxp]="tmuxp (tmux session manager, via pipx)"
   [lavat]="lavat (terminal lava lamp)"
+  [kitty]="kitty (terminal emulator)"
 )
 declare -A EXTRA_FN=(
   [nvim]="run_dev_nvim"
@@ -55,6 +54,7 @@ declare -A EXTRA_FN=(
   [peaclock]="install_peaclock"
   [tmuxp]="install_tmuxp"
   [lavat]="install_lavat"
+  [kitty]="install_kitty"
 )
 
 install_packages() {
@@ -371,4 +371,20 @@ install_lavat() {
 
   rm -rf "$tmp"
   ok "lavat instalado -> $(command -v lavat)"
+}
+
+# Instala/actualiza kitty vía el instalador oficial (no hay paquete apt: la
+# versión de Debian suele ir muy atrás). El propio script detecta una
+# instalación previa en ~/.local/kitty.app y la reemplaza in-place sin tocar
+# symlinks ni .desktop files, así que re-correrlo es también el mecanismo de
+# actualización — no hace falta lógica de versión propia como en yazi/peaclock.
+install_kitty() {
+  sep
+  info "Instalando/actualizando kitty..."
+  if ! curl -L https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin; then
+    err "Falló el instalador de kitty"
+    return 1
+  fi
+
+  ok "kitty instalado/actualizado -> $HOME/.local/kitty.app"
 }

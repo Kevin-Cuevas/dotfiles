@@ -116,10 +116,10 @@ runs on its own:
 | Module | Concern |
 | --- | --- |
 | `00-core.sh` | logging, dialog checklist helper, preflight, header — loads first, everything else depends on it |
-| `10-packages.sh` | apt packages + non-apt "extra" packages (menu option 2) |
+| `10-packages.sh` | apt packages only (menu option 2) — non-apt tools live in `dev-packages`, see below |
 | `20-runtimes.sh` | language runtimes: rust, node, deno, bun (menu option 12) |
 | `30-stow.sh` | stow strategy (menu option 4) + systemd `--user` unit linking |
-| `40-misc.sh` | default shell, `dev-*` permissions, `dev-nvim`/`dev-motd`/`dev-ssh` launchers, fonts, TPM, Timewarrior hook |
+| `40-misc.sh` | default shell, `dev-*` permissions, `dev-packages`/`dev-motd`/`dev-ssh` launchers, fonts, TPM, Timewarrior hook |
 
 Modules are sourced in lexical order (`NN-` prefixes, stepped by 10 so a new
 one can slot in without renumbering) purely to guarantee `00-core.sh` loads
@@ -127,18 +127,18 @@ first — beyond that, load order doesn't matter, since nothing in
 `bootstrap.d/` calls a function at source time. **To add a new installer**:
 add a function to the relevant module (or drop a new `bootstrap.d/NN-name.sh`
 file — it's picked up automatically, nothing to register), then wire it into
-`EXTRA_FN`/`RUNTIME_FN` or the menu in `bootstrap` if it needs to be reachable
-from there.
+`RUNTIME_FN` or the menu in `bootstrap` if it needs to be reachable from
+there. For a new non-apt tool, add it to `dev-packages` instead (see below).
 
 **Menu options:**
 
 | #   | Action                                       |
 | --- | -------------------------------------------- |
 | 1   | Run everything (2 through 12)                |
-| 2   | Install apt packages & extra packages        |
+| 2   | Install apt packages                         |
 | 3   | Set permissions on `dev-*` scripts           |
 | 4   | Stow packages into `$HOME`                   |
-| 5   | Install Neovim via `dev-nvim`                |
+| 5   | Install/update extra packages via `dev-packages` |
 | 6   | Install MOTD via `dev-motd`                  |
 | 7   | Install Nerd Fonts (FiraCode + FiraMono)     |
 | 8   | Set up Timewarrior hook for Taskwarrior      |
@@ -254,6 +254,37 @@ direnv eza pipx unzip
 
 ---
 
+## Extra (non-apt) packages
+
+Tools that don't come from apt (or whose apt version lags too far behind
+upstream) are installed and updated via a single standalone script,
+**`dev-packages`** (stowed to `~/.local/bin/dev-packages`), instead of being
+hardcoded into `bootstrap.d/`. Run it directly, or reach it from bootstrap
+menu option **5**:
+
+```bash
+dev-packages                 # interactive checklist (dialog)
+dev-packages --all           # install/update everything, no prompts
+dev-packages --only=kitty    # install/update just one, no prompts
+```
+
+It manages:
+
+| Tool       | Update mechanism                                                |
+| ---------- | ----------------------------------------------------------------- |
+| `nvim`     | delegates entirely to `dev-nvim` (build/tarball + version check) |
+| `kitty`    | re-runs the official installer script — safe, replaces in-place  |
+| `yazi`     | compares the downloaded binary's version against the installed one |
+| `tmuxp`    | `pipx install` if missing, `pipx upgrade` if already installed   |
+| `peaclock` | no upstream releases — compares the remote git HEAD sha against one saved after the last build |
+| `lavat`    | same as peaclock: remote git HEAD sha comparison                 |
+
+Same checklist semantics as the apt packages dialog: leave everything
+unchecked and press ENTER to install/update all of them, or check "Skip" to
+do nothing.
+
+---
+
 ## Manual stow
 
 If you prefer to skip the TUI and stow packages by hand:
@@ -288,15 +319,8 @@ stow --no-folding bin ssh
   `tmux-theme-*`). Everything installed by a native installer (pipx, curl
   releases, the Claude Code / aws-cli installers, ...) lands in the *real*
   `~/.local/bin` and is invisible to git.
-- Neovim is managed via `dev-nvim` to stay on the upstream binary release
-  rather than the distro package.
-- yazi is reinstalled from the latest GitHub release binary; if the same
-  version is already installed, bootstrap asks (like Neovim) whether to
-  reinstall anyway or skip.
-- kitty is installed/updated via the official installer script
-  (`curl -L https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin`),
-  not apt — Debian's apt version lags far behind upstream. Re-running the
-  same installer is also how you update: it detects the existing install and
-  replaces it in-place without touching symlinks or `.desktop` files.
+- Neovim, kitty, yazi, tmuxp, peaclock and lavat are all installed/updated
+  via **`dev-packages`**, not apt — see **Extra (non-apt) packages** above
+  for how each one detects updates.
 - The Timewarrior hook (`on-modify.timewarrior`) must be installed once per
   machine; the bootstrap handles it via option 7.

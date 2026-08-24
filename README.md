@@ -257,7 +257,7 @@ direnv eza pipx unzip
 ## Extra (non-apt) packages
 
 Tools that don't come from apt (or whose apt version lags too far behind
-upstream) are installed and updated via a single standalone script,
+upstream) are installed and updated by a single standalone script,
 **`dev-packages`** (stowed to `~/.local/bin/dev-packages`), instead of being
 hardcoded into `bootstrap.d/`. Run it directly, or reach it from bootstrap
 menu option **5**:
@@ -272,7 +272,7 @@ It manages:
 
 | Tool       | Update mechanism                                                |
 | ---------- | ----------------------------------------------------------------- |
-| `nvim`     | delegates entirely to `dev-nvim` (build/tarball + version check) |
+| `nvim`     | its own `install_nvim` function: choice of build-from-source (`-march=native`) or precompiled tarball, version-compared before reinstalling |
 | `kitty`    | re-runs the official installer script — safe, replaces in-place  |
 | `yazi`     | compares the downloaded binary's version against the installed one |
 | `tmuxp`    | `pipx install` if missing, `pipx upgrade` if already installed   |

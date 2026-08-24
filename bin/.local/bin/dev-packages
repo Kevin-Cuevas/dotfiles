@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # dev-packages — front door para todas las herramientas no-apt (nvim, kitty,
 # yazi, peaclock, tmuxp, lavat): un único checklist `dialog` que instala o
-# actualiza lo que el usuario marque. Standalone, igual que dev-nvim/dev-ssh:
+# actualiza lo que el usuario marque. Standalone, igual que dev-ssh/dev-motd:
 # no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR, así que también corre
 # suelto una vez stow-eado a ~/.local/bin.
 #
 # Cada instalador decide "¿ya está al día?" con lo mejor disponible para esa
 # herramienta:
-#   - nvim    -> delega TODO en dev-nvim (build/tarball + versión), que ya
-#                vive en este mismo bin/ tras el stow.
+#   - nvim    -> build/tarball + detección de versión (corre en su propio
+#                subshell con `set -e`, ver install_nvim más abajo).
 #   - yazi    -> compara versión contra el binario recién descargado.
 #   - kitty   -> siempre re-corre el instalador oficial (in-place, seguro).
 #   - tmuxp   -> pipx install / pipx upgrade.
@@ -46,7 +46,7 @@ STATE_DIR="$HOME/.local/share/dev-packages"
 # ─── registro ─────────────────────────────────────────────────────────────
 PKG_KEYS=(nvim kitty yazi peaclock tmuxp lavat)
 declare -A PKG_LABEL=(
-  [nvim]="Neovim (dev-nvim: build/tarball + versión)"
+  [nvim]="Neovim (build/tarball + versión)"
   [kitty]="kitty (instalador oficial, actualiza in-place)"
   [yazi]="Yazi (file manager, release de GitHub, versión-checked)"
   [peaclock]="Peaclock (reloj de terminal, build desde fuente, sha-checked)"
@@ -103,23 +103,350 @@ remote_head_sha() {
 
 # ─── instaladores ────────────────────────────────────────────────────────────
 
-# Delega en dev-nvim (mismo bin/ tras el stow) — toda la lógica de
-# build-vs-tarball + detección de versión vive ahí, no se duplica aquí.
+# Instala/actualiza Neovim eligiendo entre dos métodos:
+#   - tarball : binario precompilado oficial de los releases de GitHub
+#               (rápido, seguro, funciona en x86_64 y arm64).
+#   - build   : compila desde fuente con -march=native (solo x86_64, optimizado).
+# Ambos métodos instalan en /opt/nvim + symlink /usr/local/bin/nvim, así que
+# son INTERCAMBIABLES: reinstalar con el otro método reemplaza limpio lo
+# anterior. En modo no interactivo usa SIEMPRE el método más seguro: tarball.
+#
+# Corre en un subshell propio con `set -euo pipefail`: es la forma más simple
+# de que cualquier paso (descarga, compilación, cmake --install...) aborte
+# esta instalación en particular sin tumbar el resto de dev-packages — y deja
+# definir aquí adentro un err() que sale del subshell en vez del err() no
+# fatal del resto del archivo, sin pisar el de afuera.
 install_nvim() {
   sep
-  local nvim_script
-  nvim_script="$(command -v dev-nvim 2>/dev/null || true)"
-  if [[ -z "$nvim_script" ]]; then
-    local self_dir
-    self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    [[ -x "$self_dir/dev-nvim" ]] && nvim_script="$self_dir/dev-nvim"
-  fi
-  if [[ -z "$nvim_script" ]]; then
-    err "dev-nvim no encontrado (¿está el paquete bin/ stow-eado a ~/.local/bin?)"
-    return 1
-  fi
-  info "Delegando en dev-nvim..."
-  "$nvim_script"
+  (
+    set -euo pipefail
+
+    log() { echo "[INFO] $*"; }
+    ok() { echo "[ OK] $*"; }
+    warn() { echo "[WARN] $*"; }
+    err() {
+      echo "[ERR]  $*" >&2
+      exit 1
+    }
+
+    ARCH="$(uname -m)"
+    NVIM_PREFIX="/opt/nvim"
+    NVIM_SYMLINK="/usr/local/bin/nvim"
+    NVIM_BACKTITLE="dev-packages · nvim · $(hostname) · $(date '+%Y-%m-%d %H:%M')"
+
+    case "$ARCH" in
+    x86_64) TARBALL_ARCH="x86_64" ;;
+    aarch64) TARBALL_ARCH="arm64" ;;
+    *) TARBALL_ARCH="" ;;
+    esac
+
+    BUILD_SUPPORTED=false
+    [[ "$ARCH" == "x86_64" ]] && BUILD_SUPPORTED=true
+
+    cleanup() {
+      [[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+      [[ -n "${TMP_DIR:-}" ]] && rm -rf "$TMP_DIR" 2>/dev/null || true
+    }
+    trap cleanup EXIT
+
+    log "Se requieren permisos de administrador..."
+    sudo -v
+    (while true; do
+      sudo -n true
+      sleep 55
+    done) &
+    SUDO_KEEPALIVE_PID=$!
+
+    TMP_DIR=$(mktemp -d)
+    log "Usando directorio temporal: $TMP_DIR"
+
+    have_dialog() { command -v dialog &>/dev/null; }
+
+    ask_yes_no() {
+      local prompt="$1" rc
+      if have_dialog; then
+        if dialog --clear --backtitle "$NVIM_BACKTITLE" \
+          --title " Confirmar " --defaultno \
+          --yesno "$prompt" 8 72; then
+          rc=0
+        else
+          rc=$?
+        fi
+        clear
+        return "$rc"
+      fi
+      warn "$prompt [s/N]"
+      local reply
+      read -r reply
+      [[ "$reply" =~ ^[sS]$ ]]
+    }
+
+    CHOSEN_METHOD=""
+    choose_method() {
+      CHOSEN_METHOD=""
+      if have_dialog; then
+        local choice rc
+        if choice=$(dialog --clear --backtitle "$NVIM_BACKTITLE" \
+          --title " Instalar Neovim " \
+          --ok-label "Instalar" --cancel-label "Cancelar" \
+          --menu "\nElige el método de instalación:" \
+          13 72 2 \
+          "build" "Compilar desde fuente  (-march=native, optimizado)" \
+          "tarball" "Tarball precompilado oficial  (rápido, seguro)" \
+          3>&1 1>&2 2>&3); then
+          rc=0
+        else
+          rc=$?
+        fi
+        clear
+        if ((rc == 0)); then CHOSEN_METHOD="$choice"; fi
+        return 0
+      fi
+      echo ""
+      echo "  Método de instalación de Neovim:"
+      echo "    1) build   — compilar desde fuente (-march=native, optimizado)"
+      echo "    2) tarball — precompilado oficial (rápido, seguro)"
+      echo "    q) cancelar"
+      local choice
+      read -rp "  Opción [1/2/q]: " choice
+      case "$choice" in
+      1 | build | b) CHOSEN_METHOD="build" ;;
+      2 | tarball | t) CHOSEN_METHOD="tarball" ;;
+      q | Q | c | cancel) CHOSEN_METHOD="" ;;
+      *) CHOSEN_METHOD="tarball" ;;
+      esac
+      return 0
+    }
+
+    CURRENT_VERSION="$(nvim --version 2>/dev/null | head -1 || true)"
+    if [[ -n "$CURRENT_VERSION" ]]; then
+      log "Versión actual: $CURRENT_VERSION"
+    else
+      warn "nvim no encontrado, procediendo con instalación..."
+    fi
+
+    get_source_version() {
+      local cml="$1/CMakeLists.txt"
+      [[ -f "$cml" ]] || {
+        echo ""
+        return
+      }
+      local maj min pat pre
+      maj=$(grep -m1 -E 'set\(NVIM_VERSION_MAJOR' "$cml" | grep -oE '[0-9]+' | head -1)
+      min=$(grep -m1 -E 'set\(NVIM_VERSION_MINOR' "$cml" | grep -oE '[0-9]+' | head -1)
+      pat=$(grep -m1 -E 'set\(NVIM_VERSION_PATCH' "$cml" | grep -oE '[0-9]+' | head -1)
+      pre=$(grep -m1 -E 'set\(NVIM_VERSION_PRERELEASE' "$cml" | sed -E 's/[^"]*"([^"]*)".*/\1/')
+      [[ -n "$maj$min$pat" ]] || {
+        echo ""
+        return
+      }
+      echo "NVIM v${maj}.${min}.${pat}${pre}"
+    }
+
+    confirm_same_version() {
+      local new_version="$1"
+      if [[ -n "$new_version" && "$CURRENT_VERSION" == "$new_version" ]]; then
+        if [[ "$NONINTERACTIVE" == "true" ]]; then
+          log "Non-interactive — reinstalando misma versión ($new_version)."
+          return 0
+        fi
+        ask_yes_no "Ya tienes instalada $new_version.\n\n¿Instalar de todas formas?" || return 1
+      else
+        log "Actualizando: ${CURRENT_VERSION:-<ninguna>} → ${new_version:-<desconocida>}"
+      fi
+      return 0
+    }
+
+    remove_previous_install() {
+      log "Eliminando instalación anterior..."
+      sudo rm -f "$NVIM_SYMLINK"
+      sudo rm -rf "$NVIM_PREFIX"
+      if dpkg -s neovim &>/dev/null; then
+        log "nvim presente vía apt, desinstalando..."
+        sudo apt-get remove --purge -y neovim
+        sudo apt-get autoremove -y
+      else
+        ok "nvim no está instalado vía apt"
+      fi
+    }
+
+    finalize() {
+      sudo ln -sf "$NVIM_PREFIX/bin/nvim" "$NVIM_SYMLINK"
+      echo ""
+      ok "Instalación completa"
+      log "Versión instalada:"
+      "$NVIM_PREFIX/bin/nvim" --version | head -1
+    }
+
+    install_tarball() {
+      [[ -n "$TARBALL_ARCH" ]] || err "No hay tarball oficial para la arquitectura $ARCH"
+
+      log "Modo: instalación desde tarball precompilado (${TARBALL_ARCH})"
+      local tarball="nvim-linux-${TARBALL_ARCH}.tar.gz"
+      local extract_dir="$TMP_DIR/nvim-linux-${TARBALL_ARCH}"
+
+      log "Descargando $tarball..."
+      curl -fL --progress-bar \
+        "https://github.com/neovim/neovim/releases/download/stable/${tarball}" \
+        -o "$TMP_DIR/$tarball" || err "Falló la descarga del tarball"
+
+      log "Extrayendo..."
+      tar xzf "$TMP_DIR/$tarball" -C "$TMP_DIR"
+
+      local new_version
+      new_version=$("$extract_dir/bin/nvim" --version | head -1)
+      log "Versión a instalar: $new_version"
+
+      confirm_same_version "$new_version" || return 1
+
+      remove_previous_install
+      log "Instalando en $NVIM_PREFIX..."
+      sudo mv "$extract_dir" "$NVIM_PREFIX"
+    }
+
+    install_build_deps() {
+      log "Instalando dependencias de compilación..."
+      if ! grep -qE '^deb-src' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null; then
+        log "Habilitando deb-src en sources.list..."
+        sudo sed -i 's/^deb \(.*\)/deb \1\ndeb-src \1/' /etc/apt/sources.list
+        sudo apt-get update -qq
+      fi
+      sudo apt-get build-dep -y neovim
+      sudo apt-get install -y --no-install-recommends \
+        git ninja-build curl ca-certificates cmake \
+        libutf8proc-dev libluajit-5.1-dev
+    }
+
+    build_source() {
+      log "Modo: compilación desde fuente con flags nativos"
+
+      if ! command -v git &>/dev/null; then
+        log "git no encontrado — instalando..."
+        sudo apt-get install -y git
+      fi
+
+      local nvim_src="$TMP_DIR/neovim"
+      log "Clonando repositorio neovim (rama stable)..."
+      git clone --depth 1 --branch stable \
+        https://github.com/neovim/neovim.git "$nvim_src"
+      git -C "$nvim_src" config advice.detachedHead false
+
+      local new_version
+      new_version=$(get_source_version "$nvim_src")
+      log "Versión a compilar: ${new_version:-<desconocida>}"
+
+      confirm_same_version "$new_version" || return 1
+
+      install_build_deps
+
+      local gcc_major march_flag
+      gcc_major=$(gcc -dumpversion | cut -d. -f1)
+      if ((gcc_major >= 9)); then
+        march_flag="-march=native"
+      else
+        warn "gcc $gcc_major < 9: usando baseline -march=x86-64"
+        march_flag="-march=x86-64"
+      fi
+
+      local native_cc append_flags cc_wrapper deps_dir build_dir nproc
+      native_cc="$(command -v gcc)"
+      append_flags="$march_flag -mtune=native -g -pipe"
+      cc_wrapper="$TMP_DIR/cc-native"
+      cat >"$cc_wrapper" <<EOF
+#!/usr/bin/env bash
+exec "$native_cc" "\$@" $append_flags
+EOF
+      chmod +x "$cc_wrapper"
+      deps_dir="$nvim_src/.deps"
+      build_dir="$nvim_src/build"
+      nproc=$(nproc)
+
+      log "Compilador: $native_cc ($(gcc --version | head -1))"
+      log "Flags nativos (append): $append_flags"
+
+      log "Compilando dependencias bundled (treesitter, luajit, luv...)..."
+      cmake -S "$nvim_src/cmake.deps" -B "$deps_dir" \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER="$cc_wrapper" \
+        -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG" \
+        -DUSE_BUNDLED=ON \
+        -DUSE_BUNDLED_TS=ON \
+        -DUSE_BUNDLED_LUAJIT=ON \
+        -DUSE_BUNDLED_LUV=ON
+      cmake --build "$deps_dir" --parallel "$nproc"
+
+      log "Configurando build principal..."
+      cmake -S "$nvim_src" -B "$build_dir" \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER="$cc_wrapper" \
+        -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG" \
+        -DCMAKE_INSTALL_PREFIX="$NVIM_PREFIX" \
+        -DCMAKE_PREFIX_PATH="$deps_dir/usr"
+
+      log "Compilando con $nproc núcleos..."
+      cmake --build "$build_dir" --parallel "$nproc"
+
+      remove_previous_install
+      log "Instalando en $NVIM_PREFIX..."
+      sudo cmake --install "$build_dir"
+
+      log "Verificando flags del binario instalado..."
+      local producer detected_march ymm
+      producer=$(readelf -wi "$NVIM_PREFIX/bin/nvim" 2>/dev/null |
+        grep -am1 "DW_AT_producer" | sed -E 's/.*\): //')
+      detected_march=$(grep -oE -- '-march=[^ ]+' <<<"$producer" | head -1)
+      ymm=$(objdump -d "$NVIM_PREFIX/bin/nvim" 2>/dev/null | grep -c "ymm")
+      case "$detected_march" in
+      "" | "-march=x86-64")
+        warn "El binario no quedó optimizado (${detected_march:-sin -march}): ${producer:-<sin DWARF>}"
+        ;;
+      *)
+        ok "DWARF producer: ${detected_march} confirmado"
+        ;;
+      esac
+      log "Instrucciones AVX2 (ymm): $ymm"
+    }
+
+    if [[ "$NONINTERACTIVE" == "true" ]] || ! [ -t 0 ]; then
+      log "Modo no interactivo — usando tarball (método seguro)."
+      METHOD="tarball"
+    else
+      choose_method
+      METHOD="$CHOSEN_METHOD"
+    fi
+
+    if [[ -z "$METHOD" ]]; then
+      log "Instalación cancelada."
+      exit 0
+    fi
+
+    if [[ "$METHOD" == "build" && "$BUILD_SUPPORTED" != "true" ]]; then
+      warn "Compilación no soportada en $ARCH — usando tarball precompilado."
+      METHOD="tarball"
+    fi
+
+    case "$METHOD" in
+    build)
+      if build_source; then
+        finalize
+      else
+        log "Instalación cancelada."
+      fi
+      ;;
+    tarball)
+      if install_tarball; then
+        finalize
+      else
+        log "Instalación cancelada."
+      fi
+      ;;
+    *)
+      err "Método desconocido: $METHOD"
+      ;;
+    esac
+  )
 }
 
 # Instala/actualiza kitty vía el instalador oficial (no hay paquete apt: la
@@ -140,7 +467,7 @@ install_kitty() {
 # Instala/actualiza yazi (terminal file manager) desde el binario precompilado
 # oficial. Descarga y extrae primero para poder leer la versión candidata
 # directamente del binario, la compara contra la instalada antes de tocar
-# ~/.local/bin: si es la misma versión, pregunta (igual que dev-nvim);
+# ~/.local/bin: si es la misma versión, pregunta (igual que install_nvim);
 # si no, actualiza directo.
 install_yazi() {
   sep

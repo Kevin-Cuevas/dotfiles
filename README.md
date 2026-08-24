@@ -40,7 +40,6 @@ dotfiles/
 ├── cava/         -> ~/.config/cava
 ├── icons/        -> ~/.icons              cursor and icon themes
 ├── kitty/        -> ~/.config/kitty
-├── konsole/      -> ~/.local/share/konsole yakuake profile + colorscheme        [per-file]
 ├── nvim/         -> ~/.config/nvim        LazyVim config
 ├── peaclock/     -> ~/.peaclock
 ├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local [per-file]
@@ -57,7 +56,7 @@ dotfiles/
 └── README.md
 ```
 
-`[per-file]` marks the three packages stowed one-symlink-per-file instead of
+`[per-file]` marks the packages stowed one-symlink-per-file instead of
 one symlink for the whole directory — see **Stow strategy** below.
 
 ---
@@ -75,16 +74,16 @@ a single symlink (e.g. `~/.config/nvim -> dotfiles/nvim/.config/nvim`).
 Simplest option, and correct here because nothing else ever needs to write
 into these directories.
 
-**Per-file** (`bin, ssh, konsole`) — their target directories also receive
+**Per-file** (`bin, ssh`) — their target directories also receive
 files we don't track: new SSH keys, `ControlMaster` sockets in `~/.ssh`,
-binaries dropped by `pipx`/`curl` in `~/.local/bin`, new profiles saved from
-the Konsole GUI. Folding these into one symlink would mean anything written
-there later lands physically inside `~/dotfiles` instead of the real
-directory. So `stow_packages()` runs these three with `--no-folding`,
-creating a **real** target directory plus one symlink per tracked file —
-only what we explicitly put in the package is managed by stow. Add a new
-file to one of these packages and re-run the stow step: it links just that
-new file, it never re-folds the directory into a single symlink.
+binaries dropped by `pipx`/`curl` in `~/.local/bin`. Folding these into one
+symlink would mean anything written there later lands physically inside
+`~/dotfiles` instead of the real directory. So `stow_packages()` runs these
+with `--no-folding`, creating a **real** target directory plus one symlink
+per tracked file — only what we explicitly put in the package is managed by
+stow. Add a new file to one of these packages and re-run the stow step: it
+links just that new file, it never re-folds the directory into a single
+symlink.
 
 **`system/`** — excluded from stow entirely (`stow_packages()` skips it by
 name). It needs two different non-stow mechanisms instead:
@@ -250,7 +249,7 @@ manual ones.
 ```
 git stow zsh wget curl tmux fzf ripgrep fd-find bat zoxide
 taskwarrior timewarrior build-essential figlet wl-clipboard
-direnv eza pipx unzip yakuake
+direnv eza pipx unzip
 ```
 
 ---
@@ -264,7 +263,7 @@ cd ~/dotfiles
 # Whole-folder packages (one symlink per package)
 stow cava icons kitty nvim peaclock task templates tmux zsh
 # Per-file packages (--no-folding: real directory + one symlink per file)
-stow --no-folding bin ssh konsole
+stow --no-folding bin ssh
 ```
 
 ---
@@ -294,5 +293,10 @@ stow --no-folding bin ssh konsole
 - yazi is reinstalled from the latest GitHub release binary; if the same
   version is already installed, bootstrap asks (like Neovim) whether to
   reinstall anyway or skip.
+- kitty is installed/updated via the official installer script
+  (`curl -L https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin`),
+  not apt — Debian's apt version lags far behind upstream. Re-running the
+  same installer is also how you update: it detects the existing install and
+  replaces it in-place without touching symlinks or `.desktop` files.
 - The Timewarrior hook (`on-modify.timewarrior`) must be installed once per
   machine; the bootstrap handles it via option 7.

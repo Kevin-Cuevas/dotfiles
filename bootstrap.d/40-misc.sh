@@ -2,8 +2,8 @@
 # ==============================================================================
 # Small, mostly-independent menu-option implementations that don't warrant
 # their own file: default-shell + dev-* script permissions, thin launchers
-# for the standalone bin/.local/bin/dev-{nvim,motd,ssh} scripts, Nerd Fonts,
-# the Timewarrior hook, and TPM. Named "misc", not "system", to avoid
+# for the standalone bin/.local/bin/dev-{packages,motd,ssh} scripts, Nerd
+# Fonts, the Timewarrior hook, and TPM. Named "misc", not "system", to avoid
 # clashing with the repo's own system/ directory (MOTD + systemd units),
 # which is a different, unrelated thing.
 # ==============================================================================
@@ -74,16 +74,16 @@ set_permissions() {
   fi
 }
 
-run_dev_nvim() {
+run_dev_packages() {
   sep
-  local nvim_script="$DOTFILES_DIR/bin/.local/bin/dev-nvim"
-  [[ -f "$nvim_script" ]] || {
-    err "dev-nvim not found at $nvim_script"
+  local pkg_script="$DOTFILES_DIR/bin/.local/bin/dev-packages"
+  [[ -f "$pkg_script" ]] || {
+    err "dev-packages not found at $pkg_script"
     return 1
   }
-  [[ -x "$nvim_script" ]] || chmod +x "$nvim_script"
-  info "Launching dev-nvim..."
-  "$nvim_script"
+  [[ -x "$pkg_script" ]] || chmod +x "$pkg_script"
+  info "Launching dev-packages..."
+  DEV_PACKAGES_BACKTITLE="$BACKTITLE" "$pkg_script"
 }
 
 run_dev_motd() {

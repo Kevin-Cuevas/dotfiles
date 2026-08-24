@@ -29,15 +29,15 @@ BACKTITLE="DOTFILES BOOTSTRAP · $(hostname) · $(date '+%Y-%m-%d %H:%M')"
 # helpers. Beyond that, load order genuinely doesn't matter — no module
 # calls a function at source time, they only define functions/data tables
 # that run later, from run_all()/main_menu() below. So a cross-file
-# reference like EXTRA_FN[nvim]="run_dev_nvim" (defined in 10-packages.sh,
-# pointing at a function defined in 40-misc.sh) resolves fine regardless of
-# load order, as long as both load before `main "$@"` runs.
+# reference like RUNTIME_FN[node]="install_node" (defined in
+# 20-runtimes.sh, pointing at a function in the same file) resolves fine
+# regardless of load order, as long as both load before `main "$@"` runs.
 #
 # To add a new module: drop a bootstrap.d/NN-name.sh file next to the
 # others (pick a number with room around it — steps of 10 — so later
 # modules can slot in without renumbering). Nothing else to wire up here;
-# wire it into EXTRA_FN/RUNTIME_FN/the menu below only if it needs to be
-# reachable from there.
+# wire it into RUNTIME_FN/the menu below only if it needs to be reachable
+# from there.
 for _module in "$DOTFILES_DIR"/bootstrap.d/*.sh; do
   # shellcheck source=/dev/null
   source "$_module" || { echo "Failed to load $_module" >&2; exit 1; }
@@ -45,7 +45,8 @@ done
 unset _module
 
 run_all() {
-  install_packages # también dispara install_extra_packages -> nvim + yazi
+  install_packages
+  run_dev_packages || warn "dev-packages encountered errors — check output above"
   set_permissions
   stow_packages
   run_dev_motd  || warn "dev-motd encountered errors — check output above"
@@ -75,10 +76,10 @@ main_menu() {
       --menu "\ZbSelect an action:\ZB" \
       26 64 14 \
       "1" "Run everything  (2 through 12)" \
-      "2" "Install apt packages & extra packages" \
+      "2" "Install apt packages" \
       "3" "Set permissions on dev-* scripts" \
       "4" "$stow_label" \
-      "5" "Install Neovim      (dev-nvim)" \
+      "5" "Install/update extra packages (dev-packages)" \
       "6" "Install MOTD        (dev-motd)" \
       "7" "Install Nerd Fonts  (FiraCode + FiraMono)" \
       "8" "Setup Timewarrior hook" \
@@ -95,7 +96,7 @@ main_menu() {
     2) (install_packages) || true ;;
     3) (set_permissions) || true ;;
     4) (stow_packages) || true ;;
-    5) (run_dev_nvim) || true ;;
+    5) (run_dev_packages) || true ;;
     6) (run_dev_motd) || true ;;
     7) (install_fonts) || true ;;
     8) (setup_tw_hook) || true ;;

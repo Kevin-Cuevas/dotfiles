@@ -11,7 +11,7 @@ UseFontLineChararacters=false
 WordMode=true
 
 [General]
-Name=nivek-yakuake
+Name=nivek-yakuake-dark
 Parent=FALLBACK/
 TerminalMargin=2
 

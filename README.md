@@ -74,9 +74,10 @@ a single symlink (e.g. `~/.config/nvim -> dotfiles/nvim/.config/nvim`).
 Simplest option, and correct here because nothing else ever needs to write
 into these directories.
 
-**Per-file** (`bin, ssh`) — their target directories also receive
+**Per-file** (`bin, konsole, ssh`) — their target directories also receive
 files we don't track: new SSH keys, `ControlMaster` sockets in `~/.ssh`,
-binaries dropped by `pipx`/`curl` in `~/.local/bin`. Folding these into one
+binaries dropped by `pipx`/`curl` in `~/.local/bin`, new profiles/colorschemes
+Konsole creates from its GUI in `~/.local/share/konsole`. Folding these into one
 symlink would mean anything written there later lands physically inside
 `~/dotfiles` instead of the real directory. So `stow_packages()` runs these
 with `--no-folding`, creating a **real** target directory plus one symlink

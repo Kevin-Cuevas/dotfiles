@@ -13,6 +13,7 @@ APT_PKGS=(
   stow
   zsh
   wget
+  kitty-terminfo
   curl
   tmux
   fzf

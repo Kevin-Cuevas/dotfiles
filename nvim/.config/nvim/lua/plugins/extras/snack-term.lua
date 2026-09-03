@@ -101,11 +101,34 @@ end
 -- # SNACKS TERMINAL CONFIG
 -- # ==========================================================
 
+-- CTRL+/ terminal ==> bottom split like the LazyVim original. A split can't have
+-- a real float border/title, so its "header" is the winbar: we replace the
+-- default "1: term://.../zsh" with "󰆍 Terminal". Edit it here:
+--   left  -> "  󰆍 Terminal"      right -> "%=󰆍 Terminal"      center -> "%=󰆍 Terminal%="
+local function bottom_terminal()
+  Snacks.terminal.toggle(nil, {
+    count = 1,
+    cwd = LazyVim.root(),
+    win = {
+      style = "terminal",
+      position = "bottom",
+      height = 0.4,
+      wo = { winbar = "%=󰆍 Terminal%=" },
+    },
+    interactive = true,
+    auto_close = true,
+  })
+end
+
 return {
   {
     "folke/snacks.nvim",
-    opts = { terminal = { win = { style = "terminal" } } },
     keys = {
+      -- CTRL+/ TERMINAL ==> bottom split (overrides the LazyVim default only to
+      -- give it a clean winbar; still a split, not a float).
+      { "<C-/>", bottom_terminal, mode = { "n", "t" }, desc = "Terminal (bottom)" },
+      { "<C-_>", bottom_terminal, mode = { "n", "t" }, desc = "which_key_ignore" },
+
       -- SMART TOGGLE ==> Prioritize active run buffer over scratch
       {
         "<C-\\>",

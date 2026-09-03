@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# dev-packages — front door para todas las herramientas no-apt (nvim, kitty,
-# yazi, peaclock, tmuxp, lavat): un único checklist `dialog` que instala o
-# actualiza lo que el usuario marque. Standalone, igual que dev-ssh/dev-motd:
+# dev-packages — front door para todas las herramientas no-apt (nvim, tmux,
+# kitty, yazi, peaclock, tmuxp, lavat): un único checklist `dialog` que instala
+# o actualiza lo que el usuario marque. Standalone, igual que dev-ssh/dev-motd:
 # no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR, así que también corre
 # suelto una vez stow-eado a ~/.local/bin.
 #
@@ -9,6 +9,8 @@
 # herramienta:
 #   - nvim    -> build/tarball + detección de versión (corre en su propio
 #                subshell con `set -e`, ver install_nvim más abajo).
+#   - tmux    -> build desde fuente + último tag de git vs. versión instalada
+#                (mismo patrón que nvim, ver install_tmux más abajo).
 #   - yazi    -> compara versión contra el binario recién descargado.
 #   - kitty   -> siempre re-corre el instalador oficial (in-place, seguro).
 #   - tmuxp   -> pipx install / pipx upgrade.
@@ -16,10 +18,16 @@
 #                compara el SHA remoto del HEAD contra uno guardado en
 #                ~/.local/share/dev-packages/<tool>.sha tras el último build.
 #
+# nvim y tmux también tienen paquete apt con el mismo nombre: por defecto,
+# instalarlos vía dev-packages remueve la versión apt (ver KEEP_APT_PKGS /
+# --keep-apt más abajo) para que solo quede una versión en el PATH.
+#
 # Uso:
 #   dev-packages                 checklist interactivo (dialog)
 #   dev-packages --all           instala/actualiza todo, sin diálogo
 #   dev-packages --only=a,b,c    instala/actualiza solo esas keys, sin diálogo
+#   dev-packages --keep-apt      no purga el paquete apt si existe uno con el
+#                                 mismo nombre (nvim/tmux) — deja ambos instalados
 set -uo pipefail
 
 # ─── helpers (mismo estilo que bootstrap.d/00-core.sh) ───────────────────────
@@ -44,9 +52,10 @@ BACKTITLE="${DEV_PACKAGES_BACKTITLE:-dev-packages · $(hostname) · $(date '+%Y-
 STATE_DIR="$HOME/.local/share/dev-packages"
 
 # ─── registro ─────────────────────────────────────────────────────────────
-PKG_KEYS=(nvim kitty yazi peaclock tmuxp lavat)
+PKG_KEYS=(nvim tmux kitty yazi peaclock tmuxp lavat)
 declare -A PKG_LABEL=(
   [nvim]="Neovim (build/tarball + versión)"
+  [tmux]="tmux (terminal multiplexer, build desde fuente, versión-checked)"
   [kitty]="kitty (instalador oficial, actualiza in-place)"
   [yazi]="Yazi (file manager, release de GitHub, versión-checked)"
   [peaclock]="Peaclock (reloj de terminal, build desde fuente, sha-checked)"
@@ -55,6 +64,7 @@ declare -A PKG_LABEL=(
 )
 declare -A PKG_FN=(
   [nvim]="install_nvim"
+  [tmux]="install_tmux"
   [kitty]="install_kitty"
   [yazi]="install_yazi"
   [peaclock]="install_peaclock"
@@ -99,6 +109,28 @@ select_packages() {
 # ─── utilidad compartida: SHA remoto del HEAD de un repo git ────────────────
 remote_head_sha() {
   git ls-remote "$1" HEAD 2>/dev/null | awk '{print $1}'
+}
+
+# ─── utilidad compartida: remover paquete apt homónimo (nvim/tmux) ──────────
+# Por defecto purga el paquete apt si existe uno con el mismo nombre, para
+# que solo quede la versión de dev-packages en el PATH. KEEP_APT_PKGS=true
+# (o --keep-apt) lo deja instalado en vez de purgarlo. log/warn/ok resuelven
+# dinámicamente a lo que tenga definido el subshell que llame a esta función
+# (igual que hoy hace install_nvim con sus funciones locales).
+KEEP_APT_PKGS="${KEEP_APT_PKGS:-false}"
+remove_apt_if_present() {
+  local pkg="$1"
+  if dpkg -s "$pkg" &>/dev/null; then
+    if [[ "$KEEP_APT_PKGS" == "true" ]]; then
+      warn "$pkg sigue instalado vía apt (KEEP_APT_PKGS=true) — puede haber dos binarios en PATH."
+      return 0
+    fi
+    log "Removiendo $pkg instalado vía apt..."
+    sudo apt-get remove --purge -y "$pkg"
+    sudo apt-get autoremove -y
+  else
+    ok "$pkg no está instalado vía apt"
+  fi
 }
 
 # ─── instaladores ────────────────────────────────────────────────────────────
@@ -261,13 +293,7 @@ install_nvim() {
       log "Eliminando instalación anterior..."
       sudo rm -f "$NVIM_SYMLINK"
       sudo rm -rf "$NVIM_PREFIX"
-      if dpkg -s neovim &>/dev/null; then
-        log "nvim presente vía apt, desinstalando..."
-        sudo apt-get remove --purge -y neovim
-        sudo apt-get autoremove -y
-      else
-        ok "nvim no está instalado vía apt"
-      fi
+      remove_apt_if_present neovim
     }
 
     finalize() {
@@ -446,6 +472,133 @@ EOF
       err "Método desconocido: $METHOD"
       ;;
     esac
+  )
+}
+
+# Instala/actualiza tmux compilando desde fuente. tmux no publica binarios
+# precompilados en sus releases de GitHub (solo tarballs de código), así que,
+# a diferencia de nvim, aquí solo hay un método: build. La versión objetivo
+# se obtiene barato (sin clonar) con `git ls-remote --tags`, se compara contra
+# `tmux -V` y solo si hace falta se clona/compila/instala.
+#
+# Mismo patrón que install_nvim: prefix /opt/tmux + symlink
+# /usr/local/bin/tmux, subshell propio con `set -euo pipefail`, y
+# remove_previous_install purga el paquete apt homónimo por defecto (ver
+# remove_apt_if_present / KEEP_APT_PKGS arriba).
+install_tmux() {
+  sep
+  (
+    set -euo pipefail
+
+    log() { echo "[INFO] $*"; }
+    ok() { echo "[ OK] $*"; }
+    warn() { echo "[WARN] $*"; }
+    err() {
+      echo "[ERR]  $*" >&2
+      exit 1
+    }
+
+    TMUX_PREFIX="/opt/tmux"
+    TMUX_SYMLINK="/usr/local/bin/tmux"
+    TMUX_BACKTITLE="dev-packages · tmux · $(hostname) · $(date '+%Y-%m-%d %H:%M')"
+    TMUX_REPO="https://github.com/tmux/tmux.git"
+
+    cleanup() {
+      [[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+      [[ -n "${TMP_DIR:-}" ]] && rm -rf "$TMP_DIR" 2>/dev/null || true
+    }
+    trap cleanup EXIT
+
+    have_dialog() { command -v dialog &>/dev/null; }
+
+    ask_yes_no() {
+      local prompt="$1" rc
+      if have_dialog; then
+        if dialog --clear --backtitle "$TMUX_BACKTITLE" \
+          --title " Confirmar " --defaultno \
+          --yesno "$prompt" 8 72; then
+          rc=0
+        else
+          rc=$?
+        fi
+        clear
+        return "$rc"
+      fi
+      warn "$prompt [s/N]"
+      local reply
+      read -r reply
+      [[ "$reply" =~ ^[sS]$ ]]
+    }
+
+    CURRENT_VERSION="$(tmux -V 2>/dev/null || true)"
+    if [[ -n "$CURRENT_VERSION" ]]; then
+      log "Versión actual: $CURRENT_VERSION"
+    else
+      warn "tmux no encontrado, procediendo con instalación..."
+    fi
+
+    log "Consultando último tag de tmux upstream..."
+    LATEST_TAG=$(git ls-remote --tags --refs "$TMUX_REPO" 2>/dev/null |
+      awk -F/ '{print $NF}' | grep -E '^[0-9]+\.[0-9]+[a-z]?$' | sort -V | tail -1)
+    [[ -n "$LATEST_TAG" ]] || err "No se pudo determinar el último tag de tmux"
+    NEW_VERSION="tmux $LATEST_TAG"
+    log "Última versión upstream: $NEW_VERSION"
+
+    if [[ -n "$CURRENT_VERSION" && "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
+      if [[ "$NONINTERACTIVE" == "true" ]]; then
+        log "Non-interactive — reinstalando misma versión ($NEW_VERSION)."
+      else
+        ask_yes_no "Ya tienes instalada $NEW_VERSION.\n\n¿Instalar de todas formas?" || {
+          log "Instalación cancelada."
+          exit 0
+        }
+      fi
+    else
+      log "Actualizando: ${CURRENT_VERSION:-<ninguna>} → $NEW_VERSION"
+    fi
+
+    log "Se requieren permisos de administrador..."
+    sudo -v
+    (while true; do
+      sudo -n true
+      sleep 55
+    done) &
+    SUDO_KEEPALIVE_PID=$!
+
+    TMP_DIR=$(mktemp -d)
+    log "Usando directorio temporal: $TMP_DIR"
+
+    log "Instalando dependencias de compilación..."
+    sudo apt-get install -y --no-install-recommends \
+      build-essential libevent-dev libncurses-dev bison pkg-config \
+      autoconf automake git
+
+    log "Clonando tmux $LATEST_TAG..."
+    git clone --depth 1 --branch "$LATEST_TAG" "$TMUX_REPO" "$TMP_DIR/tmux"
+
+    log "Generando configure (autogen.sh)..."
+    (cd "$TMP_DIR/tmux" && sh autogen.sh)
+
+    log "Configurando build (prefix: $TMUX_PREFIX)..."
+    (cd "$TMP_DIR/tmux" && ./configure --prefix="$TMUX_PREFIX")
+
+    nproc_count=$(nproc)
+    log "Compilando con $nproc_count núcleos..."
+    (cd "$TMP_DIR/tmux" && make -j"$nproc_count")
+
+    log "Eliminando instalación anterior..."
+    sudo rm -f "$TMUX_SYMLINK"
+    sudo rm -rf "$TMUX_PREFIX"
+    remove_apt_if_present tmux
+
+    log "Instalando en $TMUX_PREFIX..."
+    (cd "$TMP_DIR/tmux" && sudo make install)
+
+    sudo ln -sf "$TMUX_PREFIX/bin/tmux" "$TMUX_SYMLINK"
+    echo ""
+    ok "Instalación completa"
+    log "Versión instalada:"
+    "$TMUX_PREFIX/bin/tmux" -V
   )
 }
 
@@ -710,6 +863,7 @@ for arg in "$@"; do
   --only=*)
     IFS=',' read -ra ONLY_KEYS <<< "${arg#--only=}"
     ;;
+  --keep-apt) KEEP_APT_PKGS=true ;;
   *)
     err "Argumento desconocido: $arg"
     exit 1

@@ -248,7 +248,7 @@ manual ones.
 ## Packages installed by bootstrap
 
 ```
-git stow zsh wget curl tmux fzf ripgrep fd-find bat zoxide
+git stow zsh wget curl fzf ripgrep fd-find bat zoxide
 taskwarrior timewarrior build-essential figlet wl-clipboard
 direnv eza pipx unzip
 ```
@@ -267,6 +267,7 @@ menu option **5**:
 dev-packages                 # interactive checklist (dialog)
 dev-packages --all           # install/update everything, no prompts
 dev-packages --only=kitty    # install/update just one, no prompts
+dev-packages --keep-apt      # don't purge a same-named apt package (nvim/tmux)
 ```
 
 It manages:
@@ -274,11 +275,17 @@ It manages:
 | Tool       | Update mechanism                                                |
 | ---------- | ----------------------------------------------------------------- |
 | `nvim`     | its own `install_nvim` function: choice of build-from-source (`-march=native`) or precompiled tarball, version-compared before reinstalling |
+| `tmux`     | build-from-source only (no upstream precompiled binaries) — latest git tag compared against the installed version |
 | `kitty`    | re-runs the official installer script — safe, replaces in-place  |
 | `yazi`     | compares the downloaded binary's version against the installed one |
 | `tmuxp`    | `pipx install` if missing, `pipx upgrade` if already installed   |
 | `peaclock` | no upstream releases — compares the remote git HEAD sha against one saved after the last build |
 | `lavat`    | same as peaclock: remote git HEAD sha comparison                 |
+
+`nvim` and `tmux` also have a same-named apt package: by default, installing
+them via `dev-packages` purges the apt version afterward so only one binary
+ends up on the `PATH` — pass `--keep-apt` (or set `KEEP_APT_PKGS=true`) to
+leave the apt package installed alongside it instead.
 
 Same checklist semantics as the apt packages dialog: leave everything
 unchecked and press ENTER to install/update all of them, or check "Skip" to
@@ -320,7 +327,7 @@ stow --no-folding bin ssh
   `tmux-theme-*`). Everything installed by a native installer (pipx, curl
   releases, the Claude Code / aws-cli installers, ...) lands in the *real*
   `~/.local/bin` and is invisible to git.
-- Neovim, kitty, yazi, tmuxp, peaclock and lavat are all installed/updated
+- Neovim, tmux, kitty, yazi, tmuxp, peaclock and lavat are all installed/updated
   via **`dev-packages`**, not apt — see **Extra (non-apt) packages** above
   for how each one detects updates.
 - The Timewarrior hook (`on-modify.timewarrior`) must be installed once per

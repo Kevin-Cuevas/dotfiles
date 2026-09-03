@@ -227,6 +227,7 @@ path=(
   "$HOME/.fzf/bin"
   "$HOME/.opencode/bin"
   "/opt/nvim/bin"
+  "/opt/tmux/bin"
   "/sbin"
   "/usr/sbin"
   $path

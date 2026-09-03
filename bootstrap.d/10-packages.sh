@@ -1,8 +1,8 @@
 # bootstrap.d/10-packages.sh — apt packages (menu option 2)
 # ==============================================================================
 # APT_PKGS + install_packages() handle menu option 2 — plain apt packages
-# only. Non-apt tools (nvim, kitty, yazi, peaclock, tmuxp, lavat) live in the
-# standalone bin/.local/bin/dev-packages script (menu option 5, see
+# only. Non-apt tools (nvim, tmux, kitty, yazi, peaclock, tmuxp, lavat) live in
+# the standalone bin/.local/bin/dev-packages script (menu option 5, see
 # run_dev_packages in 40-misc.sh) instead of being hardcoded here — see
 # README.md's "Extra (non-apt) packages" section. To add an apt package, add
 # it to APT_PKGS; to add a non-apt one, edit dev-packages directly.
@@ -15,7 +15,6 @@ APT_PKGS=(
   wget
   kitty-terminfo
   curl
-  tmux
   fzf
   ripgrep
   fd-find

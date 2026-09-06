@@ -129,7 +129,7 @@ stow_packages() {
   # (~/.config/nvim, ~/.config/kitty, ...), nunca en la raíz compartida.
   mkdir -p "$HOME/.config"
 
-  local stowed=0 conflicts=0 zsh_completions_stowed=false
+  local stowed=0 conflicts=0
 
   for pkg in "${chosen[@]}"; do
     local stow_err
@@ -141,7 +141,6 @@ stow_packages() {
     if [[ $? -eq 0 ]]; then
       ok "Stowed: $pkg"
       ((stowed++)) || true
-      [[ "$pkg" == "zsh-completions" ]] && zsh_completions_stowed=true
     else
       warn "Conflict stowing $pkg:"
       echo "$stow_err" | sed 's/^/         /' >&2
@@ -153,15 +152,9 @@ stow_packages() {
   sep
   ok "Stow done — OK: $stowed  conflicts: $conflicts"
 
-  # zsh caches the fpath scan in ~/.zcompdump and, per zsh/.zshrc, skips
-  # rescanning it (compinit -C) if that dump was already rebuilt today — so
-  # a completion file that just got linked here wouldn't be picked up until
-  # tomorrow otherwise. Clearing it makes the very next shell start do a
-  # full compinit rescan and see it immediately.
-  if [[ "$zsh_completions_stowed" == true ]]; then
-    rm -f "$TARGET/.zcompdump"*
-    ok "Cleared cached zsh completions dump — next shell rebuilds it"
-  fi
+  # No need to touch ~/.zcompdump here: zsh/.zshrc only takes the compinit -C
+  # fast path when the dump is newer than every file in ~/.zsh/completions, so
+  # a completion just linked here is picked up on the next shell on its own.
 
   link_systemd_units
 }

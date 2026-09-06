@@ -1,0 +1,17 @@
+#compdef tailscale
+
+# tailscale: native completion (sudo delegates automatically via zsh's _sudo)
+local -a subcmds
+subcmds=(
+  up down set login logout switch status
+  ping nc ssh serve funnel cert
+  netcheck ip lock licenses exit-node
+  update whois drive configure debug version
+)
+if (( CURRENT == 2 )); then
+  compadd -a subcmds
+elif (( CURRENT == 3 )) && [[ "${words[2]}" == switch ]]; then
+  local -a profiles
+  profiles=(${(f)"$(tailscale switch --list 2>/dev/null | awk 'NR>1 {print $2}')"})
+  compadd -a profiles
+fi

@@ -22,14 +22,16 @@
 # Per-file packages: their target directory also receives files we do NOT
 # track (new SSH keys, ControlMaster sockets in ~/.ssh, binaries dropped by
 # pipx/curl in ~/.local/bin..., new Konsole profiles/colorschemes created
-# from the GUI in ~/.local/share/konsole...). Folding these into one symlink
-# would mean anything written there later lands physically inside
-# ~/dotfiles instead of the real directory. These get --no-folding: a REAL
-# target directory plus one symlink per tracked file, so only what we
-# explicitly put in the package is managed — adding a new file to the
-# package and re-running the stow step links just that file, it never
-# re-folds the directory.
-STOW_PER_FILE_PACKAGES=(bin konsole ssh)
+# from the GUI in ~/.local/share/konsole..., completion files dev-* CLIs
+# generate for themselves on their own host — e.g. `dev-pagipage-domains
+# --set-autocompletions` on nivek-core writes straight into
+# ~/.zsh/completions). Folding these into one symlink would mean anything
+# written there later lands physically inside ~/dotfiles instead of the
+# real directory. These get --no-folding: a REAL target directory plus one
+# symlink per tracked file, so only what we explicitly put in the package
+# is managed — adding a new file to the package and re-running the stow
+# step links just that file, it never re-folds the directory.
+STOW_PER_FILE_PACKAGES=(bin konsole ssh zsh-completions)
 
 # Explicit target directory for each per-file package (relative to $TARGET),
 # so we can create it as a real directory ourselves before stowing — this
@@ -38,6 +40,7 @@ declare -A STOW_PER_FILE_TARGET=(
   [bin]=".local/bin"
   [konsole]=".local/share/konsole"
   [ssh]=".ssh"
+  [zsh-completions]=".zsh/completions"
 )
 
 # Whole-folder packages: one symlink for the entire package directory.

@@ -51,6 +51,7 @@ dotfiles/
 ├── templates/    -> ~/.templates
 ├── tmux/         -> ~/.tmux.conf, ~/.tmux-theme.conf
 ├── zsh/          -> ~/                    .zshrc, .p10k.zsh
+├── zsh-completions/ -> ~/.zsh/completions  zsh #compdef files (ssh, mycli, tmuxp, tailscale...)  [per-file]
 ├── bootstrap                              interactive setup script (entrypoint)
 ├── bootstrap.d/                           bootstrap's implementation, one file per concern
 └── README.md
@@ -74,17 +75,22 @@ a single symlink (e.g. `~/.config/nvim -> dotfiles/nvim/.config/nvim`).
 Simplest option, and correct here because nothing else ever needs to write
 into these directories.
 
-**Per-file** (`bin, konsole, ssh`) — their target directories also receive
-files we don't track: new SSH keys, `ControlMaster` sockets in `~/.ssh`,
-binaries dropped by `pipx`/`curl` in `~/.local/bin`, new profiles/colorschemes
-Konsole creates from its GUI in `~/.local/share/konsole`. Folding these into one
-symlink would mean anything written there later lands physically inside
-`~/dotfiles` instead of the real directory. So `stow_packages()` runs these
-with `--no-folding`, creating a **real** target directory plus one symlink
-per tracked file — only what we explicitly put in the package is managed by
-stow. Add a new file to one of these packages and re-run the stow step: it
-links just that new file, it never re-folds the directory into a single
-symlink.
+**Per-file** (`bin, konsole, ssh, zsh-completions`) — their target directories
+also receive files we don't track: new SSH keys, `ControlMaster` sockets in
+`~/.ssh`, binaries dropped by `pipx`/`curl` in `~/.local/bin`, new
+profiles/colorschemes Konsole creates from its GUI in
+`~/.local/share/konsole`, and completion files a `dev-*` CLI generates for
+itself on its own host (e.g. `dev-pagipage-domains --set-autocompletions` on
+`nivek-core` writes straight into `~/.zsh/completions/_dev-pagipage-domains`
+— that script lives only on that server, outside this repo on purpose, so its
+completion file must be able to sit next to the tracked ones without git ever
+seeing it). Folding these into one symlink would mean anything written there
+later lands physically inside `~/dotfiles` instead of the real directory. So
+`stow_packages()` runs these with `--no-folding`, creating a **real** target
+directory plus one symlink per tracked file — only what we explicitly put in
+the package is managed by stow. Add a new file to one of these packages and
+re-run the stow step: it links just that new file, it never re-folds the
+directory into a single symlink.
 
 **`system/`** — excluded from stow entirely (`stow_packages()` skips it by
 name). It needs two different non-stow mechanisms instead:
@@ -302,7 +308,7 @@ cd ~/dotfiles
 # Whole-folder packages (one symlink per package)
 stow cava icons kitty nvim peaclock task templates tmux zsh
 # Per-file packages (--no-folding: real directory + one symlink per file)
-stow --no-folding bin ssh
+stow --no-folding bin ssh zsh-completions
 ```
 
 ---

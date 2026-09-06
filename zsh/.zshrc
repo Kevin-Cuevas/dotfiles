@@ -60,39 +60,6 @@ else
 fi
 (( ${+functions[zinit]} )) && zinit cdreplay -q
 
-# tmuxp: lightweight native completion (the stock python one freezes the shell)
-compdef -d tmuxp
-_tmuxp_fast() {
-  local -a subcmds sessions
-  subcmds=(load ls kill freeze edit import convert debug info shell)
-  _arguments '1:command:compadd -a subcmds' '*:session:->sessions'
-  if [[ "$state" == sessions ]]; then
-    local dir="${TMUXP_CONFIGDIR:-$HOME/.tmuxp}"
-    [[ -d "$dir" ]] && sessions=(${dir}/*.{yaml,yml,json}(N:t:r))
-    compadd -a sessions
-  fi
-}
-compdef _tmuxp_fast tmuxp
-
-# tailscale: native completion (sudo delegates automatically via zsh's _sudo)
-_tailscale_fast() {
-  local -a subcmds
-  subcmds=(
-    up down set login logout switch status
-    ping nc ssh serve funnel cert
-    netcheck ip lock licenses exit-node
-    update whois drive configure debug version
-  )
-  if (( CURRENT == 2 )); then
-    compadd -a subcmds
-  elif (( CURRENT == 3 )) && [[ "${words[2]}" == switch ]]; then
-    local -a profiles
-    profiles=(${(f)"$(tailscale switch --list 2>/dev/null | awk 'NR>1 {print $2}')"})
-    compadd -a profiles
-  fi
-}
-compdef _tailscale_fast tailscale
-
 # ===============================================================================
 # ENVIRONMENT
 # ===============================================================================

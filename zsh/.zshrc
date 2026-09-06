@@ -64,19 +64,20 @@ if [[ " ${fpath[*]} " != *" $HOME/.zsh/completions "* ]]; then
 fi
 
 # Use the fast path (compinit -C: load the dump, no fpath rescan) only when the
-# dump is from today AND newer than every file in our own ~/.zsh/completions —
-# that second check is what picks up a freshly stowed/generated _* file in the
-# next shell instead of a day later. Anything else (dump missing, stale, or an
-# _* file touched since) forces a full rescan. Wrapped in an anon function so
-# $zcd / $newest don't leak into the interactive shell.
+# dump is from today AND newer than the ~/.zsh/completions dir itself. That
+# dir's mtime bumps whenever an entry is added/removed — a stow symlink (whose
+# repo target may have an old mtime) or a file a dev-* CLI drops in — so a new
+# completion is picked up on the next shell instead of a day later. Editing an
+# existing _* file's body needs no rescan: zsh autoloads it fresh when it fires.
+# Anything else (dump missing or stale) forces a full rescan. Wrapped in an anon
+# function so $zcd / $cdir don't leak into the interactive shell.
 autoload -Uz compinit
 () {
   local zcd="${ZDOTDIR:-$HOME}/.zcompdump"
-  # the most-recently-modified file in our completions dir (empty if none)
-  local -a newest=( "$HOME"/.zsh/completions/*(Nom[1]) )
+  local cdir="$HOME/.zsh/completions"
 
   if [[ -f $zcd && $(date +'%j') == $(date -r "$zcd" +'%j' 2>/dev/null) \
-     && ( ${#newest} -eq 0 || $zcd -nt $newest[1] ) ]]; then
+     && ( ! -d $cdir || $zcd -nt $cdir ) ]]; then
     compinit -C -d "$zcd"
   else
     compinit -d "$zcd"

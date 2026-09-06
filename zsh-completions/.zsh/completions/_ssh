@@ -1,0 +1,119 @@
+#compdef ssh scp
+
+# Lista de hosts SSH para completado, filtrada por la tailnet activa.
+# Lee ~/.ssh/config y ~/.ssh/config.local. En config.local los hosts viven en un
+# bloque gestionado por bootstrap, agrupados con cabeceras "#@ group:<gid>":
+#   - sin grupo (sueltos / escritos a mano) -> siempre se ofrecen
+#   - group:manual                          -> siempre se ofrecen
+#   - group:tailnet:<name>                  -> solo si esa tailnet es la activa
+# La tailnet activa se detecta con `tailscale switch --list` (fila con '*'); si no
+# hay tailscale o tailnet activa, solo se ofrecen sueltos + manual.
+#   With -c, emits "class<TAB>name" (class = loose | manual | tailnet) instead of
+#   just the name — used by _ssh_hosts_complete to split online/offline/manual.
+_ssh_host_list() {
+  local classified=0
+  [[ "${1:-}" == -c ]] && classified=1
+
+  local cur=""
+  (( $+commands[tailscale] )) && \
+    cur="$(tailscale switch --list 2>/dev/null | awk 'NR>1 && index($0,"*"){print $2}')"
+
+  local -a cfgs
+  [[ -f ~/.ssh/config ]]       && cfgs+=(~/.ssh/config)
+  [[ -f ~/.ssh/config.local ]] && cfgs+=(~/.ssh/config.local)
+  (( ${#cfgs} )) || return
+
+  awk -v cur="$cur" -v classified="$classified" '
+    FNR==1 { inman=0; gid="" }
+    /^# >>> dotfiles:ssh-hosts/ { inman=1; gid=""; next }
+    /^# <<< dotfiles:ssh-hosts/ { inman=0; gid=""; next }
+    inman && /^#@ group:/ { gid=substr($0, length("#@ group:")+1); next }
+    /^Host / {
+      cls = (gid=="" ? "loose" : (gid=="manual" ? "manual" : \
+            ((cur!="" && gid==("tailnet:" cur)) ? "tailnet" : "")))
+      if (cls=="") next
+      for (i=2; i<=NF; i++) if ($i !~ /[*?]/) {
+        if (classified) print cls "\t" $i; else print $i
+      }
+    }
+  ' "${cfgs[@]}" 2>/dev/null
+}
+
+# Completion action for ssh hosts: classifies the active tailnet's hosts into
+# online/offline (via `tailscale status`) and offers them as one ordered list —
+# online (alpha) first, then offline (alpha), then manual/local (alpha) — each
+# labelled. Manual/loose hosts are always shown and never reordered among groups.
+_ssh_hosts_complete() {
+  # Declare every local once (re-declaring an existing local makes zsh print it).
+  local -A online cls_of
+  local -a online_h offline_h other_h cands disp
+  local nm st cls h lbl w=0
+
+  if (( $+commands[tailscale] )); then
+    while IFS=$'\t' read -r nm st; do
+      online[$nm]=$st
+    done < <(tailscale status 2>/dev/null \
+      | awk '$1 ~ /^100\./ {print $2"\t"(index($0,"offline") ? "offline" : "online")}')
+  fi
+
+  while IFS=$'\t' read -r cls nm; do
+    [[ -z "$nm" ]] && continue
+    cls_of[$nm]=$cls
+    if [[ "$cls" == tailnet ]]; then
+      if [[ "${online[$nm]:-offline}" == online ]]; then
+        online_h+=("$nm")
+      else
+        offline_h+=("$nm")
+      fi
+    else
+      other_h+=("$nm")
+    fi
+  done < <(_ssh_host_list -c)
+
+  online_h=(${(o)online_h})
+  offline_h=(${(o)offline_h})
+  other_h=(${(o)other_h})
+
+  cands=($online_h $offline_h $other_h)
+  (( ${#cands} )) || return
+
+  # Pad names so the status column lines up in the fzf menu.
+  for h in $cands; do (( ${#h} > w )) && w=${#h}; done
+
+  for h in $online_h;  do disp+=("${(r:w:)h}   online"); done
+  for h in $offline_h; do disp+=("${(r:w:)h}   offline"); done
+  for h in $other_h; do
+    lbl=manual; [[ "${cls_of[$h]}" == loose ]] && lbl=local
+    disp+=("${(r:w:)h}   $lbl")
+  done
+
+  # -V: unsorted group -> keep our online/offline/manual order in the fzf menu.
+  compadd -V ssh-hosts -d disp -a cands
+}
+
+case "$service" in
+  ssh)
+    # ssh: flags with proper values + hosts (tailnet-aware, online/offline ordered)
+    _arguments -s \
+      '-i[identity file]:key file:_files' \
+      '-p[port]:port number:' \
+      '-l[login name]:user:' \
+      '-F[config file]:config:_files' \
+      '-o[option]:option:' \
+      '-J[jump host]:proxy host:_ssh_hosts_complete' \
+      '*:host:_ssh_hosts_complete'
+    ;;
+  scp)
+    # scp: offer host: targets + local files
+    local -a hosts
+    hosts=(${(f)"$(_ssh_host_list)"})
+    if [[ "$PREFIX" == *:* ]]; then
+      _files
+    else
+      local -a host_targets=("${hosts[@]/%/:}")
+      _alternative \
+        'files:local file:_files' \
+        'hosts:remote host:compadd -a host_targets'
+    fi
+    ;;
+esac

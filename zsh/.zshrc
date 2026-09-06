@@ -218,6 +218,7 @@ compdef _tailscale_fast tailscale
 
 export EDITOR="nvim"
 export VISUAL="$EDITOR"
+export SYSTEMD_EDITOR="$EDITOR"
 
 typeset -U path
 path=(

@@ -63,13 +63,25 @@ if [[ " ${fpath[*]} " != *" $HOME/.zsh/completions "* ]]; then
   fpath=("$HOME/.zsh/completions" $fpath)
 fi
 
+# Use the fast path (compinit -C: load the dump, no fpath rescan) only when the
+# dump is from today AND newer than every file in our own ~/.zsh/completions —
+# that second check is what picks up a freshly stowed/generated _* file in the
+# next shell instead of a day later. Anything else (dump missing, stale, or an
+# _* file touched since) forces a full rescan. Wrapped in an anon function so
+# $zcd / $newest don't leak into the interactive shell.
 autoload -Uz compinit
-if [[ -f "${ZDOTDIR:-$HOME}/.zcompdump" ]] && \
-   [[ $(date +'%j') == $(date -r "${ZDOTDIR:-$HOME}/.zcompdump" +'%j' 2>/dev/null) ]]; then
-  compinit -C
-else
-  compinit
-fi
+() {
+  local zcd="${ZDOTDIR:-$HOME}/.zcompdump"
+  # the most-recently-modified file in our completions dir (empty if none)
+  local -a newest=( "$HOME"/.zsh/completions/*(Nom[1]) )
+
+  if [[ -f $zcd && $(date +'%j') == $(date -r "$zcd" +'%j' 2>/dev/null) \
+     && ( ${#newest} -eq 0 || $zcd -nt $newest[1] ) ]]; then
+    compinit -C -d "$zcd"
+  else
+    compinit -d "$zcd"
+  fi
+}
 (( ${+functions[zinit]} )) && zinit cdreplay -q
 
 # ===============================================================================

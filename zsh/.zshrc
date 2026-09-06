@@ -51,6 +51,18 @@ if [[ -f "${ZINIT_HOME}/zinit.zsh" ]]; then
   zinit ice wait lucid; zinit snippet OMZP::sudo
 fi
 
+# Our own completions dir must be on fpath BEFORE compinit scans it. It holds
+# the zsh-completions/ package (_ssh, _mycli, _tailscale, _tmuxp) plus any file
+# a dev-* CLI drops here on its own host (e.g. `dev-pagipage-domains
+# --set-autocompletions` on nivek-core -> ~/.zsh/completions/_dev-pagipage-domains).
+# Added after compinit it only ever worked by luck: a stale ~/.zcompdump, or a
+# $FPATH inherited from an already-running zsh. On a fresh machine (first login
+# shell, dump just cleared by bootstrap) neither holds, so the completions went
+# missing until the next day's full compinit — the nivek-core symptom.
+if [[ " ${fpath[*]} " != *" $HOME/.zsh/completions "* ]]; then
+  fpath=("$HOME/.zsh/completions" $fpath)
+fi
+
 autoload -Uz compinit
 if [[ -f "${ZDOTDIR:-$HOME}/.zcompdump" ]] && \
    [[ $(date +'%j') == $(date -r "${ZDOTDIR:-$HOME}/.zcompdump" +'%j' 2>/dev/null) ]]; then
@@ -132,9 +144,8 @@ zstyle ':fzf-tab:complete:systemctl:*' disabled-on any
 zstyle ':fzf-tab:*' fzf-min-height 15
 zstyle ':fzf-tab:*' switch-group '<' '>'
 
-# dotfiles zsh-completions package (originally added by the Deno installer,
-# now the fpath entry for our own completions/ — see zsh-completions/)
-if [[ ":$FPATH:" != *":/home/nivek/.zsh/completions:"* ]]; then export FPATH="/home/nivek/.zsh/completions:$FPATH"; fi
+# (the fpath entry for our zsh-completions/ package now lives above compinit —
+# it has to be scanned before compinit runs)
 
 # BUN completions
 [ -s "/home/nivek/.bun/_bun" ] && source "/home/nivek/.bun/_bun"

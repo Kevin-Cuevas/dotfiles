@@ -25,6 +25,16 @@ ssh/.ssh/*
 *.log
 
 # ====================================
+# zsh
+# ====================================
+# Las completions viven en el paquete zsh-completions/. El paquete zsh/ solo
+# trackea .zshrc y .p10k.zsh — nada de .zsh/ ahí. Un dev-* CLI que escribe su
+# propia completion (dev-pagipage-domains -c) apunta a ~/.zsh/completions/ real,
+# no al repo; si por un symlink colgado llega a caer aquí, que git no lo trackee
+# y `stow zsh` no lo pliegue como árbol.
+zsh/.zsh/
+
+# ====================================
 # Neovim
 # ====================================
 nvim/.config/nvim/spell/

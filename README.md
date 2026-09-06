@@ -92,6 +92,13 @@ the package is managed by stow. Add a new file to one of these packages and
 re-run the stow step: it links just that new file, it never re-folds the
 directory into a single symlink.
 
+For `zsh-completions` specifically, `zsh/.zshrc` prepends `~/.zsh/completions`
+to `fpath` **before** `compinit` — that ordering is what makes the tracked
+files and any `dev-*`-generated ones actually load. After `compinit` it only
+worked by luck (a stale `~/.zcompdump`, or a `$FPATH` inherited from an
+already-running zsh); on a fresh machine both are absent, which is why the
+completions were missing on `nivek-core` until the fix.
+
 **`system/`** — excluded from stow entirely (`stow_packages()` skips it by
 name). It needs two different non-stow mechanisms instead:
 

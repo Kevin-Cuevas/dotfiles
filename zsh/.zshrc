@@ -165,7 +165,8 @@ zstyle ':fzf-tab:complete:systemctl:*' disabled-on any
 zstyle ':fzf-tab:*' fzf-min-height 15
 zstyle ':fzf-tab:*' switch-group '<' '>'
 
-# DENO completions
+# dotfiles zsh-completions package (originally added by the Deno installer,
+# now the fpath entry for our own completions/ — see zsh-completions/)
 if [[ ":$FPATH:" != *":/home/nivek/.zsh/completions:"* ]]; then export FPATH="/home/nivek/.zsh/completions:$FPATH"; fi
 
 # BUN completions

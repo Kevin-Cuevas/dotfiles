@@ -92,6 +92,7 @@ autoload -Uz compinit
 export EDITOR="nvim"
 export VISUAL="$EDITOR"
 export SYSTEMD_EDITOR="$EDITOR"
+export SUDO_EDITOR="/opt/nvim/bin/nvim"
 
 typeset -U path
 path=(

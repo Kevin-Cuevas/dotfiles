@@ -52,7 +52,7 @@ BACKTITLE="${DEV_PACKAGES_BACKTITLE:-dev-packages · $(hostname) · $(date '+%Y-
 STATE_DIR="$HOME/.local/share/dev-packages"
 
 # ─── registro ─────────────────────────────────────────────────────────────
-PKG_KEYS=(nvim tmux kitty yazi peaclock tmuxp lavat)
+PKG_KEYS=(nvim tmux kitty yazi peaclock tmuxp lavat pgcli mycli)
 declare -A PKG_LABEL=(
   [nvim]="Neovim (build/tarball + versión)"
   [tmux]="tmux (terminal multiplexer, build desde fuente, versión-checked)"
@@ -61,6 +61,8 @@ declare -A PKG_LABEL=(
   [peaclock]="Peaclock (reloj de terminal, build desde fuente, sha-checked)"
   [tmuxp]="tmuxp (tmux session manager, pipx install/upgrade)"
   [lavat]="lavat (lava lamp de terminal, build desde fuente, sha-checked)"
+  [pgcli]="pgcli (cliente Postgres, pipx install/upgrade)"
+  [mycli]="mycli (cliente MySQL/MariaDB, pipx install/upgrade)"
 )
 declare -A PKG_FN=(
   [nvim]="install_nvim"
@@ -70,6 +72,8 @@ declare -A PKG_FN=(
   [peaclock]="install_peaclock"
   [tmuxp]="install_tmuxp"
   [lavat]="install_lavat"
+  [pgcli]="install_pgcli"
+  [mycli]="install_mycli"
 )
 
 # ─── checklist propio (misma semántica que checklist_select_or_all) ─────────
@@ -739,6 +743,57 @@ install_tmuxp() {
   fi
 }
 
+# Instala/actualiza pgcli (cliente Postgres) vía pipx, mismo patrón que tmuxp.
+install_pgcli() {
+  sep
+  command -v pipx &>/dev/null || {
+    err "pipx no encontrado — instálalo primero (sudo apt install pipx)."
+    return 1
+  }
+
+  if command -v pgcli &>/dev/null; then
+    info "Actualizando pgcli vía pipx..."
+    if ! pipx upgrade pgcli; then
+      err "Falló 'pipx upgrade pgcli'"
+      return 1
+    fi
+    ok "pgcli actualizado -> $(command -v pgcli)"
+  else
+    info "Instalando pgcli vía pipx..."
+    if ! pipx install pgcli &>/dev/null; then
+      err "Falló 'pipx install pgcli'"
+      return 1
+    fi
+    ok "pgcli instalado vía pipx -> $HOME/.local/bin/pgcli"
+  fi
+}
+
+# Instala/actualiza mycli (cliente MySQL/MariaDB) vía pipx, mismo patrón que
+# tmuxp/pgcli.
+install_mycli() {
+  sep
+  command -v pipx &>/dev/null || {
+    err "pipx no encontrado — instálalo primero (sudo apt install pipx)."
+    return 1
+  }
+
+  if command -v mycli &>/dev/null; then
+    info "Actualizando mycli vía pipx..."
+    if ! pipx upgrade mycli; then
+      err "Falló 'pipx upgrade mycli'"
+      return 1
+    fi
+    ok "mycli actualizado -> $(command -v mycli)"
+  else
+    info "Instalando mycli vía pipx..."
+    if ! pipx install mycli &>/dev/null; then
+      err "Falló 'pipx install mycli'"
+      return 1
+    fi
+    ok "mycli instalado vía pipx -> $HOME/.local/bin/mycli"
+  fi
+}
+
 # Compila peaclock (reloj estético de terminal) desde fuente. No hay binario
 # oficial ni releases con versión, así que "¿hay actualización?" se decide
 # comparando el SHA remoto del HEAD contra el que quedó guardado tras el
@@ -914,4 +969,8 @@ done
 
 sep
 ok "Done — ok: $succeeded  failed: ${#failed[@]}"
-[[ ${#failed[@]} -gt 0 ]] && warn "Failed: ${failed[*]}"
+if [[ ${#failed[@]} -gt 0 ]]; then
+  warn "Failed: ${failed[*]}"
+  exit 1
+fi
+exit 0

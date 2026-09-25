@@ -1,0 +1,298 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# dev-sql-themes — aplica/actualiza el tema de colores Nord en pgcli y/o mycli,
+# tocando únicamente las claves de color conocidas (syntax_style + [colors]).
+# Nunca toca el resto del archivo: alias de conexión ([alias_dsn] en mycli),
+# historial, ni ningún otro ajuste. Standalone, igual que dev-ssh/dev-packages:
+# no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR, corre suelto una vez
+# stow-eado a ~/.local/bin.
+#
+# Motor: upsert clave por clave vía un heredoc de Python3 embebido — si la
+# clave ya existe dentro de su sección la reemplaza in-place; si no, la agrega
+# al final de esa sección (o crea la sección si no existía). Nunca toca líneas
+# fuera de la lista de claves del tema. Hace backup (<archivo>.bak.<timestamp>)
+# antes de escribir, y es idempotente: correrlo dos veces seguidas no vuelve a
+# tocar el archivo la segunda vez.
+#
+# Uso:
+#   dev-sql-themes                    pgcli y mycli, los que estén instalados
+#   dev-sql-themes --pgcli            solo pgcli
+#   dev-sql-themes --mycli            solo mycli
+#   dev-sql-themes --dry-run          muestra el diff, no escribe
+#   dev-sql-themes --pgcli-conf=PATH  usa otra ruta de config (pruebas)
+#   dev-sql-themes --mycli-conf=PATH
+#   dev-sql-themes --help
+# ==============================================================================
+set -uo pipefail
+
+# ─── look & feel (mismo estilo que dev-ssh/dev-packages) ────────────────────
+RED='\e[38;2;191;97;106m'
+GRN='\e[38;2;163;190;140m'
+YLW='\e[38;2;235;203;139m'
+BLU='\e[38;2;136;192;208m'
+CYN='\e[38;2;143;188;187m'
+DIM='\e[38;2;94;129;172m'
+BLD='\e[1m'
+RST='\e[0m'
+
+info() { printf "${BLU}[INFO]${RST}  %s\n" "$*"; }
+ok()   { printf "${GRN}[OK]${RST}    %s\n" "$*"; }
+err()  { printf "${RED}[ERR]${RST}   %s\n" "$*" >&2; }
+warn() { printf "${YLW}[WARN]${RST}  %s\n" "$*"; }
+sep()  { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
+
+USAGE="Uso:
+  dev-sql-themes                    pgcli y mycli, los que estén instalados
+  dev-sql-themes --pgcli            solo pgcli
+  dev-sql-themes --mycli            solo mycli
+  dev-sql-themes --dry-run          muestra el diff, no escribe
+  dev-sql-themes --pgcli-conf=PATH  usa otra ruta de config (pruebas)
+  dev-sql-themes --mycli-conf=PATH
+  dev-sql-themes --help"
+
+DO_PGCLI=""
+DO_MYCLI=""
+DRY_RUN=0
+PGCLI_CONF="$HOME/.config/pgcli/config"
+MYCLI_CONF="$HOME/.myclirc"
+
+for arg in "$@"; do
+  case "$arg" in
+    --pgcli) DO_PGCLI=1 ;;
+    --mycli) DO_MYCLI=1 ;;
+    --dry-run) DRY_RUN=1 ;;
+    --pgcli-conf=*) PGCLI_CONF="${arg#--pgcli-conf=}" ;;
+    --mycli-conf=*) MYCLI_CONF="${arg#--mycli-conf=}" ;;
+    -h|--help) printf "%s\n" "$USAGE"; exit 0 ;;
+    *) err "Argumento desconocido: $arg"; printf "%s\n" "$USAGE" >&2; exit 1 ;;
+  esac
+done
+
+DEFAULT_MODE=0
+if [[ -z "$DO_PGCLI" && -z "$DO_MYCLI" ]]; then
+  DO_PGCLI=1
+  DO_MYCLI=1
+  DEFAULT_MODE=1
+fi
+
+# ─── paleta Nord embebida (idéntica a la que ya está viva en ambas configs) ──
+PGCLI_PAYLOAD=$(cat <<'JSON'
+{
+  "main": {
+    "syntax_style": "nord"
+  },
+  "colors": {
+    "prompt": "'#88C0D0 bold'",
+    "completion-menu.completion.current": "'bg:#88C0D0 #2E3440'",
+    "completion-menu.completion": "'bg:#434C5E #D8DEE9'",
+    "completion-menu.meta.completion.current": "'bg:#81A1C1 #2E3440'",
+    "completion-menu.meta.completion": "'bg:#4C566A #D8DEE9'",
+    "completion-menu.multi-column-meta": "'bg:#3B4252 #D8DEE9'",
+    "scrollbar.arrow": "'bg:#4C566A'",
+    "scrollbar": "'bg:#5E81AC'",
+    "selected": "'#2E3440 bg:#88C0D0'",
+    "search": "'#2E3440 bg:#EBCB8B'",
+    "search.current": "'#2E3440 bg:#A3BE8C'",
+    "search-toolbar": "'noinherit bold'",
+    "search-toolbar.text": "'nobold'",
+    "system-toolbar": "'noinherit bold'",
+    "arg-toolbar": "'noinherit bold'",
+    "arg-toolbar.text": "'nobold'",
+    "literal.string": "'#A3BE8C'",
+    "literal.number": "'#B48EAD'",
+    "keyword": "'bold #81A1C1'",
+    "output.header": "\"#88C0D0 bold\"",
+    "output.odd-row": "\"\"",
+    "output.even-row": "\"\"",
+    "output.null": "\"#4C566A\""
+  }
+}
+JSON
+)
+
+MYCLI_PAYLOAD=$(cat <<'JSON'
+{
+  "main": {
+    "syntax_style": "nord"
+  },
+  "colors": {
+    "prompt": "'#88c0d0 bold'",
+    "completion-menu.completion.current": "'bg:#88c0d0 #2e3440'",
+    "completion-menu.completion": "'bg:#434c5e #eceff4'",
+    "completion-menu.meta.completion.current": "'bg:#81a1c1 #2e3440'",
+    "completion-menu.meta.completion": "'bg:#3b4252 #d8dee9'",
+    "completion-menu.multi-column-meta": "'bg:#434c5e #d8dee9'",
+    "scrollbar.arrow": "'bg:#3b4252'",
+    "scrollbar": "'bg:#81a1c1'",
+    "output.table-separator": "\"#4c566a\"",
+    "output.header": "\"#88c0d0 bold\"",
+    "output.odd-row": "\"\"",
+    "output.even-row": "\"\"",
+    "output.null": "\"#4c566a\"",
+    "output.status": "\"#81a1c1\"",
+    "output.status.warning-count": "\"#ebcb8b\"",
+    "output.timing": "\"#81a1c1\"",
+    "selected": "'#eceff4 bg:#5e81ac'",
+    "search": "'#eceff4 bg:#5e81ac'",
+    "search.current": "'#2e3440 bg:#a3be8c'",
+    "bottom-toolbar": "'bg:#3b4252 #d8dee9'",
+    "bottom-toolbar.off": "'bg:#3b4252 #4c566a'",
+    "bottom-toolbar.on": "'bg:#3b4252 #eceff4'",
+    "bottom-toolbar.transaction.valid": "'bg:#3b4252 #a3be8c bold'",
+    "bottom-toolbar.transaction.failed": "'bg:#3b4252 #bf616a bold'",
+    "matching-bracket.cursor": "'#2e3440 bg:#ebcb8b'",
+    "matching-bracket.other": "'#2e3440 bg:#88c0d0'"
+  }
+}
+JSON
+)
+
+# ─── motor: upsert clave por clave, section-aware, dentro de un archivo INI ──
+upsert_ini() {
+  local file="$1" payload_json="$2" payload_b64
+  payload_b64=$(printf '%s' "$payload_json" | base64 -w0)
+  python3 - "$file" "$DRY_RUN" "$payload_b64" <<'PYEOF'
+import sys, json, base64, re, pathlib, difflib, datetime
+
+file_path, dry_run, payload_b64 = sys.argv[1], sys.argv[2] == "1", sys.argv[3]
+payload = json.loads(base64.b64decode(payload_b64))
+
+path = pathlib.Path(file_path)
+if not path.exists():
+    sys.exit(2)
+
+orig_text = path.read_text()
+lines = orig_text.splitlines()
+
+sec_re = re.compile(r'^\[([^\]]+)\]\s*$')
+kv_re = re.compile(r'^([A-Za-z0-9_.\-]+)\s*=')
+
+seen = {sec: set() for sec in payload}
+encountered = set()
+new_lines = []
+current = None
+
+
+def flush_missing(section):
+    if section in payload:
+        missing = [(k, v) for k, v in payload[section].items() if k not in seen[section]]
+        if missing:
+            if new_lines and new_lines[-1].strip() != "":
+                new_lines.append("")
+            for key, value in missing:
+                new_lines.append(f"{key} = {value}")
+                seen[section].add(key)
+
+
+for line in lines:
+    m_sec = sec_re.match(line)
+    if m_sec:
+        flush_missing(current)
+        current = m_sec.group(1)
+        encountered.add(current)
+        new_lines.append(line)
+        continue
+    m_kv = kv_re.match(line)
+    if m_kv and current in payload and m_kv.group(1) in payload[current]:
+        key = m_kv.group(1)
+        new_lines.append(f"{key} = {payload[current][key]}")
+        seen[current].add(key)
+        continue
+    new_lines.append(line)
+
+flush_missing(current)
+
+for sec, kv in payload.items():
+    if sec not in encountered:
+        new_lines.append("")
+        new_lines.append(f"[{sec}]")
+        for key, value in kv.items():
+            new_lines.append(f"{key} = {value}")
+
+new_text = "\n".join(new_lines) + "\n"
+
+if new_text == orig_text:
+    print("NOCHANGE")
+    sys.exit(0)
+
+if dry_run:
+    sys.stdout.writelines(
+        difflib.unified_diff(
+            orig_text.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=str(path),
+            tofile=f"{path} (nuevo)",
+        )
+    )
+    sys.exit(0)
+
+backup = path.with_name(path.name + ".bak." + datetime.datetime.now().strftime("%Y%m%d%H%M%S"))
+backup.write_text(orig_text)
+path.write_text(new_text)
+print(f"CHANGED {backup}")
+PYEOF
+}
+
+apply_theme() {
+  local file="$1" payload="$2" out rc
+  out="$(upsert_ini "$file" "$payload")"
+  rc=$?
+  if (( rc == 2 )); then
+    err "No se pudo leer $file"
+    return 1
+  elif (( rc != 0 )); then
+    err "Fallo aplicando el tema a $file"
+    return 1
+  fi
+
+  if [[ "$out" == "NOCHANGE" ]]; then
+    ok "$file ya tenía el tema Nord al día (sin cambios)"
+  elif [[ "$DRY_RUN" == 1 ]]; then
+    printf "%s\n" "$out"
+    ok "dry-run: así quedaría $file"
+  else
+    ok "$file actualizado (backup: ${out#CHANGED })"
+  fi
+}
+
+do_pgcli() {
+  if ! command -v pgcli &>/dev/null; then
+    if (( DEFAULT_MODE )); then
+      warn "pgcli no está instalado — se salta."
+      return 0
+    fi
+    err "pgcli no está instalado."
+    return 1
+  fi
+  if [[ ! -f "$PGCLI_CONF" ]]; then
+    warn "No existe $PGCLI_CONF — corre pgcli una vez para que genere su config y vuelve a intentar."
+    return 0
+  fi
+  sep
+  info "pgcli -> $PGCLI_CONF"
+  apply_theme "$PGCLI_CONF" "$PGCLI_PAYLOAD"
+}
+
+do_mycli() {
+  if ! command -v mycli &>/dev/null; then
+    if (( DEFAULT_MODE )); then
+      warn "mycli no está instalado — se salta."
+      return 0
+    fi
+    err "mycli no está instalado."
+    return 1
+  fi
+  if [[ ! -f "$MYCLI_CONF" ]]; then
+    warn "No existe $MYCLI_CONF — corre mycli una vez para que genere su config y vuelve a intentar."
+    return 0
+  fi
+  sep
+  info "mycli -> $MYCLI_CONF"
+  apply_theme "$MYCLI_CONF" "$MYCLI_PAYLOAD"
+}
+
+RC=0
+[[ "$DO_PGCLI" == 1 ]] && { do_pgcli || RC=1; }
+[[ "$DO_MYCLI" == 1 ]] && { do_mycli || RC=1; }
+sep
+exit "$RC"

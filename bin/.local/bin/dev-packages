@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # dev-packages — front door para todas las herramientas no-apt (nvim, tmux,
-# kitty, yazi, peaclock, tmuxp, lavat): un único checklist `dialog` que instala
-# o actualiza lo que el usuario marque. Standalone, igual que dev-ssh/dev-motd:
+# kitty, yazi, peaclock, tmuxp, lavat, pgcli, mycli): dos checklists `dialog`
+# en secuencia (build/tarball, luego pipx) que instalan o actualizan lo que
+# el usuario marque. Standalone, igual que dev-ssh/dev-motd:
 # no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR, así que también corre
 # suelto una vez stow-eado a ~/.local/bin.
 #
@@ -13,7 +14,9 @@
 #                (mismo patrón que nvim, ver install_tmux más abajo).
 #   - yazi    -> compara versión contra el binario recién descargado.
 #   - kitty   -> siempre re-corre el instalador oficial (in-place, seguro).
-#   - tmuxp   -> pipx install / pipx upgrade.
+#   - tmuxp/pgcli/mycli -> pipx install / pipx upgrade (ver install_via_pipx
+#                más abajo). Si pipx no está instalado, dev-packages lo
+#                instala solo vía apt antes de tocar cualquiera de los tres.
 #   - peaclock/lavat -> no publican versiones (solo git+build), así que se
 #                compara el SHA remoto del HEAD contra uno guardado en
 #                ~/.local/share/dev-packages/<tool>.sha tras el último build.
@@ -21,6 +24,10 @@
 # nvim y tmux también tienen paquete apt con el mismo nombre: por defecto,
 # instalarlos vía dev-packages remueve la versión apt (ver KEEP_APT_PKGS /
 # --keep-apt más abajo) para que solo quede una versión en el PATH.
+#
+# El checklist interactivo se muestra en dos pasos: primero build/tarball
+# (nvim, tmux, kitty, yazi, peaclock, lavat), luego pipx (tmuxp, pgcli,
+# mycli) — cada uno con su propio "Skip". Ver PKG_GROUP / select_group.
 #
 # Uso:
 #   dev-packages                 checklist interactivo (dialog)
@@ -76,21 +83,46 @@ declare -A PKG_FN=(
   [mycli]="install_mycli"
 )
 
-# ─── checklist propio (misma semántica que checklist_select_or_all) ─────────
-select_packages() {
-  local -n _out_ref="$1"
-  _out_ref=()
+# A qué checklist (paso) pertenece cada key: "build" se muestra primero,
+# "pipx" segundo. Ver select_group/select_packages más abajo.
+declare -A PKG_GROUP=(
+  [nvim]="build"
+  [tmux]="build"
+  [kitty]="build"
+  [yazi]="build"
+  [peaclock]="build"
+  [lavat]="build"
+  [tmuxp]="pipx"
+  [pgcli]="pipx"
+  [mycli]="pipx"
+)
+GROUP_ORDER=(build pipx)
+declare -A GROUP_TITLE=(
+  [build]="build / tarball"
+  [pipx]="pipx"
+)
+declare -A GROUP_PROMPT=(
+  [build]="Select build/tarball tools to install/update  [SPACE=toggle  ENTER=confirm]\n\nLeave everything unchecked and press ENTER to install/update ALL of this group.\nCheck 'Skip' to skip this group."
+  [pipx]="Select pipx-managed CLIs to install/update  [SPACE=toggle  ENTER=confirm]\n\nLeave everything unchecked and press ENTER to install/update ALL of this group.\nCheck 'Skip' to skip this group."
+)
 
-  local _items=("__skip__" "Skip -- install none of the above" "off")
+# ─── checklist de un solo grupo (build o pipx) ───────────────────────────────
+select_group() {
+  local _group="$1"
+  local -n _grp_out="$2"
+  _grp_out=()
+
+  local _items=("__skip__" "Skip -- install none from this group" "off")
   local _key
   for _key in "${PKG_KEYS[@]}"; do
+    [[ "${PKG_GROUP[$_key]}" == "$_group" ]] || continue
     _items+=("$_key" "${PKG_LABEL[$_key]}" "off")
   done
 
   local _raw
   _raw=$(dialog --clear --colors --backtitle "$BACKTITLE" \
-    --title " dev-packages " --separate-output --checklist \
-    "Select packages to install/update  [SPACE=toggle  ENTER=confirm]\n\nLeave everything unchecked and press ENTER to install/update ALL.\nCheck 'Skip' to do nothing." \
+    --title " dev-packages · ${GROUP_TITLE[$_group]} " --separate-output --checklist \
+    "${GROUP_PROMPT[$_group]}" \
     18 72 10 "${_items[@]}" \
     3>&1 1>&2 2>&3) || return 1
 
@@ -100,14 +132,33 @@ select_packages() {
   while IFS= read -r _line; do [[ -n "$_line" ]] && _raw_chosen+=("$_line"); done <<< "$_raw"
 
   for _line in "${_raw_chosen[@]}"; do
-    [[ "$_line" == "__skip__" ]] && { _out_ref=(); return 0; }
+    [[ "$_line" == "__skip__" ]] && { _grp_out=(); return 0; }
   done
 
   if [[ ${#_raw_chosen[@]} -eq 0 ]]; then
-    _out_ref=("${PKG_KEYS[@]}")
+    local _all=()
+    for _key in "${PKG_KEYS[@]}"; do
+      [[ "${PKG_GROUP[$_key]}" == "$_group" ]] && _all+=("$_key")
+    done
+    _grp_out=("${_all[@]}")
   else
-    _out_ref=("${_raw_chosen[@]}")
+    _grp_out=("${_raw_chosen[@]}")
   fi
+}
+
+# ─── checklist propio: build primero, pipx después (dos diálogos) ──────────
+# Esc en cualquiera de los dos cancela dev-packages entero (mismo
+# comportamiento que antes tenía un único checklist); "Skip" solo salta ese
+# grupo puntual y sigue con el siguiente.
+select_packages() {
+  local -n _out_ref="$1"
+  _out_ref=()
+
+  local _build_chosen=() _pipx_chosen=()
+  select_group "build" _build_chosen || return 1
+  select_group "pipx" _pipx_chosen || return 1
+
+  _out_ref=("${_build_chosen[@]}" "${_pipx_chosen[@]}")
 }
 
 # ─── utilidad compartida: SHA remoto del HEAD de un repo git ────────────────
@@ -716,82 +767,59 @@ install_yazi() {
   ok "Installed yazi + ya -> $HOME/.local/bin ($new_version)"
 }
 
-# Instala/actualiza tmuxp (session manager de tmux) vía pipx, aislado en su
-# propio venv. pipx trae su propio mecanismo de actualización — lo usamos
-# directo en vez de reimplementar detección de versión.
+# Asegura pipx instalado antes de usarlo. Si falta, lo instala solo vía apt
+# (que en Debian/Ubuntu arrastra python3-venv como dependencia) en vez de
+# fallar pidiéndole al usuario que lo instale a mano. Idempotente: si ya
+# existe, no hace nada.
+ensure_pipx() {
+  command -v pipx &>/dev/null && return 0
+  info "pipx no encontrado — instalando vía apt..."
+  sudo apt-get install -y pipx || {
+    err "Falló 'apt-get install pipx'"
+    return 1
+  }
+  pipx ensurepath &>/dev/null || true
+  ok "pipx instalado -> $(command -v pipx)"
+}
+
+# Install/upgrade genérico vía pipx: común a tmuxp/pgcli/mycli (y a cualquier
+# CLI de Python que se agregue después). pipx trae su propio mecanismo de
+# actualización — lo usamos directo en vez de reimplementar detección de
+# versión.
+install_via_pipx() {
+  local pkg="$1"
+  ensure_pipx || return 1
+
+  if command -v "$pkg" &>/dev/null; then
+    info "Actualizando $pkg vía pipx..."
+    if ! pipx upgrade "$pkg"; then
+      err "Falló 'pipx upgrade $pkg'"
+      return 1
+    fi
+    ok "$pkg actualizado -> $(command -v "$pkg")"
+  else
+    info "Instalando $pkg vía pipx..."
+    if ! pipx install "$pkg" &>/dev/null; then
+      err "Falló 'pipx install $pkg'"
+      return 1
+    fi
+    ok "$pkg instalado vía pipx -> $HOME/.local/bin/$pkg"
+  fi
+}
+
 install_tmuxp() {
   sep
-  command -v pipx &>/dev/null || {
-    err "pipx no encontrado — instálalo primero (sudo apt install pipx)."
-    return 1
-  }
-
-  if command -v tmuxp &>/dev/null; then
-    info "Actualizando tmuxp vía pipx..."
-    if ! pipx upgrade tmuxp; then
-      err "Falló 'pipx upgrade tmuxp'"
-      return 1
-    fi
-    ok "tmuxp actualizado -> $(command -v tmuxp)"
-  else
-    info "Instalando tmuxp vía pipx..."
-    if ! pipx install tmuxp &>/dev/null; then
-      err "Falló 'pipx install tmuxp'"
-      return 1
-    fi
-    ok "tmuxp instalado vía pipx -> $HOME/.local/bin/tmuxp"
-  fi
+  install_via_pipx tmuxp
 }
 
-# Instala/actualiza pgcli (cliente Postgres) vía pipx, mismo patrón que tmuxp.
 install_pgcli() {
   sep
-  command -v pipx &>/dev/null || {
-    err "pipx no encontrado — instálalo primero (sudo apt install pipx)."
-    return 1
-  }
-
-  if command -v pgcli &>/dev/null; then
-    info "Actualizando pgcli vía pipx..."
-    if ! pipx upgrade pgcli; then
-      err "Falló 'pipx upgrade pgcli'"
-      return 1
-    fi
-    ok "pgcli actualizado -> $(command -v pgcli)"
-  else
-    info "Instalando pgcli vía pipx..."
-    if ! pipx install pgcli &>/dev/null; then
-      err "Falló 'pipx install pgcli'"
-      return 1
-    fi
-    ok "pgcli instalado vía pipx -> $HOME/.local/bin/pgcli"
-  fi
+  install_via_pipx pgcli
 }
 
-# Instala/actualiza mycli (cliente MySQL/MariaDB) vía pipx, mismo patrón que
-# tmuxp/pgcli.
 install_mycli() {
   sep
-  command -v pipx &>/dev/null || {
-    err "pipx no encontrado — instálalo primero (sudo apt install pipx)."
-    return 1
-  }
-
-  if command -v mycli &>/dev/null; then
-    info "Actualizando mycli vía pipx..."
-    if ! pipx upgrade mycli; then
-      err "Falló 'pipx upgrade mycli'"
-      return 1
-    fi
-    ok "mycli actualizado -> $(command -v mycli)"
-  else
-    info "Instalando mycli vía pipx..."
-    if ! pipx install mycli &>/dev/null; then
-      err "Falló 'pipx install mycli'"
-      return 1
-    fi
-    ok "mycli instalado vía pipx -> $HOME/.local/bin/mycli"
-  fi
+  install_via_pipx mycli
 }
 
 # Compila peaclock (reloj estético de terminal) desde fuente. No hay binario

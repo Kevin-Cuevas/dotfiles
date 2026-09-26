@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # dev-packages — front door para todas las herramientas no-apt (nvim, tmux,
-# kitty, yazi, peaclock, tmuxp, lavat, pgcli, mycli): dos checklists `dialog`
+# kitty, yazi, peaclock, tmuxp, lavat, pgcli, mycli, csvkit): dos checklists `dialog`
 # en secuencia (build/tarball, luego pipx) que instalan o actualizan lo que
 # el usuario marque. Standalone, igual que dev-ssh/dev-motd:
 # no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR, así que también corre
@@ -14,9 +14,10 @@
 #                (mismo patrón que nvim, ver install_tmux más abajo).
 #   - yazi    -> compara versión contra el binario recién descargado.
 #   - kitty   -> siempre re-corre el instalador oficial (in-place, seguro).
-#   - tmuxp/pgcli/mycli -> pipx install / pipx upgrade (ver install_via_pipx
-#                más abajo). Si pipx no está instalado, dev-packages lo
-#                instala solo vía apt antes de tocar cualquiera de los tres.
+#   - tmuxp/pgcli/mycli/csvkit -> pipx install / pipx upgrade (ver
+#                install_via_pipx más abajo). Si pipx no está instalado,
+#                dev-packages lo instala solo vía apt antes de tocar
+#                cualquiera de los cuatro.
 #   - peaclock/lavat -> no publican versiones (solo git+build), así que se
 #                compara el SHA remoto del HEAD contra uno guardado en
 #                ~/.local/share/dev-packages/<tool>.sha tras el último build.
@@ -27,7 +28,7 @@
 #
 # El checklist interactivo se muestra en dos pasos: primero build/tarball
 # (nvim, tmux, kitty, yazi, peaclock, lavat), luego pipx (tmuxp, pgcli,
-# mycli) — cada uno con su propio "Skip". Ver PKG_GROUP / select_group.
+# mycli, csvkit) — cada uno con su propio "Skip". Ver PKG_GROUP / select_group.
 #
 # Uso:
 #   dev-packages                 checklist interactivo (dialog)
@@ -59,7 +60,7 @@ BACKTITLE="${DEV_PACKAGES_BACKTITLE:-dev-packages · $(hostname) · $(date '+%Y-
 STATE_DIR="$HOME/.local/share/dev-packages"
 
 # ─── registro ─────────────────────────────────────────────────────────────
-PKG_KEYS=(nvim tmux kitty yazi peaclock tmuxp lavat pgcli mycli)
+PKG_KEYS=(nvim tmux kitty yazi peaclock tmuxp lavat pgcli mycli csvkit)
 declare -A PKG_LABEL=(
   [nvim]="Neovim (build/tarball + versión)"
   [tmux]="tmux (terminal multiplexer, build desde fuente, versión-checked)"
@@ -70,6 +71,7 @@ declare -A PKG_LABEL=(
   [lavat]="lavat (lava lamp de terminal, build desde fuente, sha-checked)"
   [pgcli]="pgcli (cliente Postgres, pipx install/upgrade)"
   [mycli]="mycli (cliente MySQL/MariaDB, pipx install/upgrade)"
+  [csvkit]="csvkit (utilidades CLI para CSV, pipx install/upgrade)"
 )
 declare -A PKG_FN=(
   [nvim]="install_nvim"
@@ -81,6 +83,7 @@ declare -A PKG_FN=(
   [lavat]="install_lavat"
   [pgcli]="install_pgcli"
   [mycli]="install_mycli"
+  [csvkit]="install_csvkit"
 )
 
 # A qué checklist (paso) pertenece cada key: "build" se muestra primero,
@@ -95,6 +98,7 @@ declare -A PKG_GROUP=(
   [tmuxp]="pipx"
   [pgcli]="pipx"
   [mycli]="pipx"
+  [csvkit]="pipx"
 )
 GROUP_ORDER=(build pipx)
 declare -A GROUP_TITLE=(
@@ -820,6 +824,11 @@ install_pgcli() {
 install_mycli() {
   sep
   install_via_pipx mycli
+}
+
+install_csvkit() {
+  sep
+  install_via_pipx csvkit
 }
 
 # Compila peaclock (reloj estético de terminal) desde fuente. No hay binario

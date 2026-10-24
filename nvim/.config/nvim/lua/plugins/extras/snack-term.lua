@@ -112,9 +112,31 @@ local function find_project_main(p_type, root, dir)
   return nil, nil, candidates
 end
 
+-- Prefix that points Maven/Gradle at the JDK the project asks for ==> the same
+-- one jdtls picks (see config/jdks.lua), not whatever `java` the terminal has.
+-- Empty when the project does not say or no suitable JDK is installed.
+-- Returns prefix, major of the JDK that will run (the terminal's when no prefix).
+local function jdk_prefix(p_type, root)
+  local jdks = require("config.jdks")
+  local want = jdks.target_release(p_type, root)
+  if not want then
+    return "", java_major()
+  end
+  local path, major = jdks.for_target(want)
+  if not path then
+    vim.notify(
+      string.format("No JDK >= %d installed, using the terminal's java", want),
+      vim.log.levels.WARN,
+      { title = "Run System" }
+    )
+    return "", java_major()
+  end
+  return string.format('export JAVA_HOME=%s && export PATH="$JAVA_HOME/bin:$PATH" && ', vim.fn.shellescape(path)), major
+end
+
 -- Shell command to run a Java file ==> Maven | Gradle | plain. Returns
--- cmd, kind ("Maven" | "Gradle" | "Plain"), or nil + reason when there is
--- nothing to run. `args_str` is optional.
+-- cmd, kind ("Maven" | "Gradle" | "Plain"), jdk (major it runs on, or nil), or
+-- nil + reason when there is nothing to run. `args_str` is optional.
 local function java_run_cmd(file, dir, args_str)
   local sh = vim.fn.shellescape
   local has_args = args_str and args_str ~= ""
@@ -133,34 +155,47 @@ local function java_run_cmd(file, dir, args_str)
   local arg_s = has_args and (" " .. args_str) or ""
   if p_type == "maven" then
     -- exec:java uses the project classpath (dependencies included) and needs no plugin in the pom
+    local prefix, jdk = jdk_prefix(p_type, p_root)
     return string.format(
-      "cd %s && mvn -q compile exec:java -Dexec.mainClass=%s%s",
+      "%scd %s && mvn -q compile exec:java -Dexec.mainClass=%s%s",
+      prefix,
       sh(p_root),
       main,
       has_args and (" -Dexec.args=" .. sh(args_str)) or ""
     ),
-      "Maven"
+      "Maven",
+      jdk
   elseif p_type == "gradle" then
     local gradle = vim.fn.executable(p_root .. "/gradlew") == 1 and "./gradlew" or "gradle"
+    local prefix, jdk = jdk_prefix(p_type, p_root)
     if check_gradle_application_plugin(p_root) then
-      return string.format("cd %s && %s -q run%s", sh(p_root), gradle, has_args and (" --args=" .. sh(args_str)) or ""),
-        "Gradle"
+      return string.format(
+        "%scd %s && %s -q run%s",
+        prefix,
+        sh(p_root),
+        gradle,
+        has_args and (" --args=" .. sh(args_str)) or ""
+      ),
+        "Gradle",
+        jdk
     end
     return string.format(
-      "cd %s && %s -q classes && java -cp build/classes/java/main %s%s",
+      "%scd %s && %s -q classes && java -cp build/classes/java/main %s%s",
+      prefix,
       sh(p_root),
       gradle,
       main,
       arg_s
     ),
-      "Gradle"
+      "Gradle",
+      jdk
   end
 
   -- Plain Java. JDK 22+ runs several source files directly (no .class files);
   -- older JDKs compile into a temp dir, with the file's folder as sourcepath.
   local major = java_major()
   if major and major >= 22 then
-    return string.format("java %s%s", sh(main_file), arg_s), "Plain"
+    return string.format("java %s%s", sh(main_file), arg_s), "Plain", major
   end
   return string.format(
     'out=$(mktemp -d) && javac -d "$out" -sourcepath %s %s && java -cp "$out" %s%s',
@@ -169,7 +204,8 @@ local function java_run_cmd(file, dir, args_str)
     main,
     arg_s
   ),
-    "Plain"
+    "Plain",
+    major
 end
 
 -- Parse @args metadata from file header ==> Supports 'name:type'
@@ -202,8 +238,8 @@ end
 -- USER PREFERENCE ==> node | deno | bun
 local js_runtime = "node"
 
--- Shell command to run a file ==> by extension. Returns cmd, kind (Java only:
--- "Maven" | "Gradle" | "Plain"), or nil + reason [+ hint]. `args_str` is
+-- Shell command to run a file ==> by extension. Returns cmd, kind, jdk (Java
+-- only: "Maven" | "Gradle" | "Plain" and its major), or nil + reason + hint. `args_str` is
 -- optional and reaches the program as typed (not escaped).
 local function build_cmd(file, args_str)
   local q = vim.fn.shellescape
@@ -274,15 +310,15 @@ end
 -- <leader>ra. The previous run is wiped first so terminals do not pile up.
 local function run_file(file, args_str)
   local ext, name = vim.fn.fnamemodify(file, ":e"), vim.fn.fnamemodify(file, ":t:r")
-  local cmd, extra, hint = build_cmd(file, args_str)
+  local cmd, extra, third = build_cmd(file, args_str)
   if not cmd then
     vim.notify(extra, vim.log.levels.WARN, { title = "Run System" })
-    if hint then
-      vim.notify(hint, vim.log.levels.INFO, { title = "Run System" })
+    if third then
+      vim.notify(third, vim.log.levels.INFO, { title = "Run System" })
     end
     return
   end
-  local kind = extra
+  local kind, jdk = extra, third
 
   local prev = _G.Run
   if prev and prev.buf and vim.api.nvim_buf_is_valid(prev.buf) then
@@ -299,6 +335,7 @@ local function run_file(file, args_str)
       border = "rounded",
       title = " "
         .. ext:upper()
+        .. (jdk and (" " .. jdk) or "")
         .. (kind and (" · " .. kind) or "")
         .. (args_str ~= nil and " Run + Args" or " Run"),
       title_pos = "center",

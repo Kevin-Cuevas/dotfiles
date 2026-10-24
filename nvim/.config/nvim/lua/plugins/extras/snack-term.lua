@@ -55,15 +55,6 @@ local function detect_main_class(file)
   return nil
 end
 
-local function check_maven_exec_plugin(project_root)
-  local pom_path = project_root .. "/pom.xml"
-  if vim.fn.filereadable(pom_path) == 0 then
-    return false
-  end
-  local content = table.concat(vim.fn.readfile(pom_path), "\n")
-  return string.find(content, "exec%-maven%-plugin") ~= nil
-end
-
 local function check_gradle_application_plugin(project_root)
   local gradle_files = { project_root .. "/build.gradle", project_root .. "/build.gradle.kts" }
   for _, gradle_file in ipairs(gradle_files) do
@@ -75,6 +66,104 @@ local function check_gradle_application_plugin(project_root)
     end
   end
   return false
+end
+
+-- Major version of the `java` on PATH (8, 17, 25...) ==> nil if there is none
+local function java_major()
+  if vim.fn.executable("java") == 0 then
+    return nil
+  end
+  local out = vim.fn.systemlist({ "java", "-version" })
+  local v = out[1] and out[1]:match('version "([^"]+)"')
+  return v and tonumber(v:match("^1%.(%d+)") or v:match("^(%d+)")) or nil
+end
+
+-- Main class of the project when the current file has no main() ==> returns
+-- class [, file] or nil + candidates. Order: pom/gradle config, then the only
+-- class with main() under src/main/java (or next to the file for plain Java).
+local function find_project_main(p_type, root, dir)
+  if p_type ~= "plain" then
+    local builds = p_type == "maven" and { "pom.xml" } or { "build.gradle", "build.gradle.kts" }
+    for _, name in ipairs(builds) do
+      local path = root .. "/" .. name
+      if vim.fn.filereadable(path) == 1 then
+        local content = table.concat(vim.fn.readfile(path), "\n")
+        local cfg = content:match("<main%.class>%s*([%w%._$]+)%s*</main%.class>")
+          or content:match("<mainClass>%s*([%w%._$]+)%s*</mainClass>")
+          or content:match("mainClass%a*[%s=%.%(a-z]*[\"']([%w%._$]+)[\"']")
+        if cfg then
+          return cfg
+        end
+      end
+    end
+  end
+  local files = p_type == "plain" and vim.fn.glob(dir .. "/*.java", false, true)
+    or vim.fn.globpath(root .. "/src/main/java", "**/*.java", false, true)
+  local candidates = {}
+  for _, f in ipairs(files) do
+    local class = detect_main_class(f)
+    if class then
+      table.insert(candidates, { class = class, file = f })
+    end
+  end
+  if #candidates == 1 then
+    return candidates[1].class, candidates[1].file
+  end
+  return nil, nil, candidates
+end
+
+-- Shell command to run a Java file ==> Maven | Gradle | plain. Returns nil +
+-- reason when there is nothing to run. `args_str` is optional.
+local function java_run_cmd(file, dir, args_str)
+  local sh = vim.fn.shellescape
+  local has_args = args_str and args_str ~= ""
+  local p_type, p_root = detect_java_project_type(dir)
+  local main, main_file = detect_main_class(file), file
+  if not main then
+    local candidates
+    main, main_file, candidates = find_project_main(p_type, p_root, dir)
+    if not main then
+      return nil,
+        (candidates and #candidates > 1) and "No main() here and several in the project: open the one to run"
+          or "No main() in this file and no project main class found"
+    end
+  end
+
+  if p_type == "maven" then
+    -- exec:java uses the project classpath (dependencies included) and needs no plugin in the pom
+    return string.format(
+      "cd %s && mvn -q compile exec:java -Dexec.mainClass=%s%s",
+      sh(p_root),
+      main,
+      has_args and (" -Dexec.args=" .. sh(args_str)) or ""
+    )
+  elseif p_type == "gradle" then
+    local gradle = vim.fn.executable(p_root .. "/gradlew") == 1 and "./gradlew" or "gradle"
+    if check_gradle_application_plugin(p_root) then
+      return string.format("cd %s && %s -q run%s", sh(p_root), gradle, has_args and (" --args=" .. sh(args_str)) or "")
+    end
+    return string.format(
+      "cd %s && %s -q classes && java -cp build/classes/java/main %s%s",
+      sh(p_root),
+      gradle,
+      main,
+      has_args and (" " .. args_str) or ""
+    )
+  end
+
+  -- Plain Java. JDK 22+ runs several source files directly (no .class files);
+  -- older JDKs compile into a temp dir, with the file's folder as sourcepath.
+  local major = java_major()
+  if major and major >= 22 then
+    return string.format("java %s%s", sh(main_file), has_args and (" " .. args_str) or "")
+  end
+  return string.format(
+    'out=$(mktemp -d) && javac -d "$out" -sourcepath %s %s && java -cp "$out" %s%s',
+    sh(vim.fn.fnamemodify(main_file, ":h")),
+    sh(main_file),
+    main,
+    has_args and (" " .. args_str) or ""
+  )
 end
 
 -- Parse @args metadata from file header ==> Supports 'name:type'
@@ -177,9 +266,12 @@ return {
         desc = "Vertical terminal",
       },
 
-      -- RUN COMMAND ==> <leader> + t + r
+      -- RUN GROUP ==> <leader> + r (name shown in which-key)
+      { "<leader>r", "", desc = "+run" },
+
+      -- RUN COMMAND ==> <leader> + r + r  (alias: F5)
       {
-        "<leader>tr",
+        "<leader>rr",
         function()
           if vim.bo.modified then
             vim.cmd(":w")
@@ -204,21 +296,7 @@ return {
             lua = string.format("cd %s && lua %s", dir, file),
             sh = string.format("cd %s && bash %s", dir, file),
             java = function()
-              local p_type, p_root = detect_java_project_type(dir)
-              local main = detect_main_class(file)
-              if not main then
-                return string.format("javac %s", file)
-              end
-              if p_type == "maven" then
-                return check_maven_exec_plugin(p_root)
-                    and string.format("cd %s && mvn compile exec:java -Dexec.mainClass=%s", p_root, main)
-                  or string.format("cd %s && mvn compile && java -cp target/classes %s", p_root, main)
-              elseif p_type == "gradle" then
-                return check_gradle_application_plugin(p_root) and string.format("cd %s && ./gradlew run", p_root)
-                  or string.format("cd %s && ./gradlew build && java -cp build/classes/java/main %s", p_root, main)
-              else
-                return string.format("javac %s && java -cp %s %s", file, dir, main)
-              end
+              return java_run_cmd(file, dir)
             end,
           }
 
@@ -237,9 +315,14 @@ return {
             end
           end
 
-          local cmd = cmd_map[ext]
+          local cmd, reason = cmd_map[ext], nil
           if type(cmd) == "function" then
-            cmd = cmd()
+            cmd, reason = cmd()
+          end
+
+          if not cmd and reason then
+            vim.notify(reason, vim.log.levels.WARN, { title = "Run System" })
+            return
           end
 
           if not cmd then
@@ -269,10 +352,11 @@ return {
         end,
         desc = "Execute file",
       },
+      { "<F5>", "<leader>rr", remap = true, desc = "Execute file" },
 
-      -- ARGS RUNNER ==> <leader> + t + a
+      -- ARGS RUNNER ==> <leader> + r + a  (alias: F6)
       {
-        "<leader>ta",
+        "<leader>ra",
         function()
           if vim.bo.modified then
             vim.cmd(":w")
@@ -296,32 +380,7 @@ return {
               lua = string.format("cd %s && lua %s %s", dir, file, args_str),
               sh = string.format("cd %s && bash %s %s", dir, file, args_str),
               java = function()
-                local p_type, p_root = detect_java_project_type(dir)
-                local main = detect_main_class(file)
-                if not main then
-                  return string.format("javac %s", file)
-                end
-                if p_type == "maven" then
-                  return check_maven_exec_plugin(p_root)
-                      and string.format(
-                        "cd %s && mvn compile exec:java -Dexec.mainClass=%s -Dexec.args='%s'",
-                        p_root,
-                        main,
-                        args_str
-                      )
-                    or string.format("cd %s && mvn compile && java -cp target/classes %s %s", p_root, main, args_str)
-                elseif p_type == "gradle" then
-                  return check_gradle_application_plugin(p_root)
-                      and string.format("cd %s && ./gradlew run --args='%s'", p_root, args_str)
-                    or string.format(
-                      "cd %s && ./gradlew build && java -cp build/classes/java/main %s %s",
-                      p_root,
-                      main,
-                      args_str
-                    )
-                else
-                  return string.format("javac %s && java -cp %s %s %s", file, dir, main, args_str)
-                end
+                return java_run_cmd(file, dir, args_str)
               end,
             }
 
@@ -339,9 +398,14 @@ return {
               end
             end
 
-            local cmd = cmd_map[ext]
+            local cmd, reason = cmd_map[ext], nil
             if type(cmd) == "function" then
-              cmd = cmd()
+              cmd, reason = cmd()
+            end
+
+            if not cmd and reason then
+              vim.notify(reason, vim.log.levels.WARN, { title = "Run System" })
+              return
             end
 
             if not cmd then
@@ -403,6 +467,7 @@ return {
         end,
         desc = "Run with args",
       },
+      { "<F6>", "<leader>ra", remap = true, desc = "Run with args" },
 
       -- COMPILER ==> <leader> + t + c
       {

@@ -199,6 +199,116 @@ local function with_banner(cmd, name, args_str)
   return string.format("echo %s && echo '' && %s", vim.fn.shellescape(msg), cmd)
 end
 
+-- USER PREFERENCE ==> node | deno | bun
+local js_runtime = "node"
+
+-- Shell command to run a file ==> by extension. Returns cmd, kind (Java only:
+-- "Maven" | "Gradle" | "Plain"), or nil + reason [+ hint]. `args_str` is
+-- optional and reaches the program as typed (not escaped).
+local function build_cmd(file, args_str)
+  local q = vim.fn.shellescape
+  local ext, name, dir =
+    vim.fn.fnamemodify(file, ":e"), vim.fn.fnamemodify(file, ":t:r"), vim.fn.fnamemodify(file, ":p:h")
+  local has_args = args_str and args_str ~= ""
+  local args = has_args and (" " .. args_str) or ""
+
+  local runners = {
+    py = function()
+      return string.format("cd %s && python3 %s%s", q(dir), q(file), args)
+    end,
+    rs = function()
+      local is_cargo, root = detect_cargo_project(dir)
+      if is_cargo then
+        return string.format("cd %s && cargo run%s", q(root), has_args and (" -- " .. args_str) or "")
+      end
+      local bin = dir .. "/" .. name
+      return string.format("rustc %s -o %s && %s%s", q(file), q(bin), q(bin), args)
+    end,
+    go = function()
+      return string.format("go run %s%s", q(file), args)
+    end,
+    lua = function()
+      return string.format("cd %s && lua %s%s", q(dir), q(file), args)
+    end,
+    sh = function()
+      return string.format("cd %s && bash %s%s", q(dir), q(file), args)
+    end,
+    java = function()
+      return java_run_cmd(file, dir, args_str)
+    end,
+  }
+
+  -- JS/TS FAMILY HANDLER ==> node (tsx) | deno | bun
+  for _, jext in ipairs({ "js", "mjs", "cjs", "ts" }) do
+    runners[jext] = function()
+      if js_runtime == "deno" then
+        return string.format("cd %s && deno run -A %s%s", q(dir), q(file), args)
+      elseif js_runtime == "bun" then
+        return string.format("cd %s && bun run %s%s", q(dir), q(file), args)
+      end
+      return string.format("cd %s && %s %s%s", q(dir), jext == "ts" and "npx tsx" or "node", q(file), args)
+    end
+  end
+
+  local runner = runners[ext]
+  if not runner then
+    local supported = vim.tbl_keys(runners)
+    table.sort(supported)
+    return nil,
+      "Unsupported file type: ." .. (ext ~= "" and ext or "none"),
+      "Supported: " .. table.concat(supported, ", ")
+  end
+  return runner()
+end
+
+-- Current buffer's file, saved first ==> nil when it is not on disk
+local function current_file()
+  if vim.bo.modified then
+    vim.cmd(":w")
+  end
+  local file = vim.fn.expand("%:p")
+  return vim.fn.filereadable(file) == 1 and file or nil
+end
+
+-- Run a file in a floating terminal ==> shared by <leader>rr (no args_str) and
+-- <leader>ra. The previous run is wiped first so terminals do not pile up.
+local function run_file(file, args_str)
+  local ext, name = vim.fn.fnamemodify(file, ":e"), vim.fn.fnamemodify(file, ":t:r")
+  local cmd, extra, hint = build_cmd(file, args_str)
+  if not cmd then
+    vim.notify(extra, vim.log.levels.WARN, { title = "Run System" })
+    if hint then
+      vim.notify(hint, vim.log.levels.INFO, { title = "Run System" })
+    end
+    return
+  end
+  local kind = extra
+
+  local prev = _G.Run
+  if prev and prev.buf and vim.api.nvim_buf_is_valid(prev.buf) then
+    local buf = prev.buf
+    pcall(prev.close, prev)
+    pcall(vim.api.nvim_buf_delete, buf, { force = true }) -- also kills a job still running
+  end
+
+  _G.Run = Snacks.terminal.open(with_banner(cmd, name .. "." .. ext, args_str), {
+    win = {
+      position = "float",
+      width = 0.9,
+      height = 0.8,
+      border = "rounded",
+      title = " "
+        .. ext:upper()
+        .. (kind and (" · " .. kind) or "")
+        .. (args_str ~= nil and " Run + Args" or " Run"),
+      title_pos = "center",
+      backdrop = false,
+    },
+    interactive = true,
+    auto_close = false,
+  })
+end
+
 -- # ==========================================================
 -- # SNACKS TERMINAL CONFIG
 -- # ==========================================================
@@ -286,83 +396,10 @@ return {
       {
         "<leader>rr",
         function()
-          if vim.bo.modified then
-            vim.cmd(":w")
+          local file = current_file()
+          if file then
+            run_file(file)
           end
-          local file, ext, filename, dir =
-            vim.fn.expand("%:p"), vim.fn.expand("%:e"), vim.fn.expand("%:t:r"), vim.fn.expand("%:h")
-          if vim.fn.filereadable(file) == 0 then
-            return
-          end
-
-          -- USER PREFERENCE ==> node | deno | bun
-          local js_runtime = "node"
-
-          local cmd_map = {
-            py = string.format("cd %s && python3 %s", dir, file),
-            rs = function()
-              local is_cargo, p_root = detect_cargo_project(dir)
-              return is_cargo and string.format("cd %s && cargo run", p_root)
-                or string.format("rustc %s -o %s/%s && %s/%s", file, dir, filename, dir, filename)
-            end,
-            go = "go run " .. file,
-            lua = string.format("cd %s && lua %s", dir, file),
-            sh = string.format("cd %s && bash %s", dir, file),
-            java = function()
-              return java_run_cmd(file, dir)
-            end,
-          }
-
-          -- JS/TS FAMILY HANDLER ==> node (tsx) | deno | bun
-          local js_family = { "js", "mjs", "cjs", "ts" }
-          for _, jext in ipairs(js_family) do
-            cmd_map[jext] = function()
-              if js_runtime == "deno" then
-                return string.format("cd %s && deno run -A %s", dir, file)
-              elseif js_runtime == "bun" then
-                return string.format("cd %s && bun run %s", dir, file)
-              else
-                local bin = (jext == "ts") and "npx tsx" or "node"
-                return string.format("cd %s && %s %s", dir, bin, file)
-              end
-            end
-          end
-
-          local cmd, extra = cmd_map[ext], nil
-          if type(cmd) == "function" then
-            cmd, extra = cmd() -- extra: reason when cmd is nil, build kind (Maven/Gradle/Plain) otherwise
-          end
-
-          if not cmd and extra then
-            vim.notify(extra, vim.log.levels.WARN, { title = "Run System" })
-            return
-          end
-          local kind = cmd and extra
-
-          if not cmd then
-            local supported_exts = table.concat(vim.tbl_keys(cmd_map), ", ")
-            vim.notify(
-              "Unsupported file type: ." .. (ext ~= "" and ext or "none"),
-              vim.log.levels.WARN,
-              { title = "Run System" }
-            )
-            vim.notify("Supported: " .. supported_exts, vim.log.levels.INFO, { title = "Run System" })
-            return
-          end
-
-          _G.Run = Snacks.terminal.open(with_banner(cmd, filename .. "." .. ext), {
-            win = {
-              position = "float",
-              width = 0.9,
-              height = 0.8,
-              border = "rounded",
-              title = " " .. ext:upper() .. (kind and (" · " .. kind) or "") .. " Run",
-              title_pos = "center",
-              backdrop = false,
-            },
-            interactive = true,
-            auto_close = false,
-          })
         end,
         desc = "Execute file",
       },
@@ -372,75 +409,13 @@ return {
       {
         "<leader>ra",
         function()
-          if vim.bo.modified then
-            vim.cmd(":w")
-          end
-          local file, ext, filename, dir =
-            vim.fn.expand("%:p"), vim.fn.expand("%:e"), vim.fn.expand("%:t:r"), vim.fn.expand("%:h")
-          if vim.fn.filereadable(file) == 0 then
+          local file = current_file()
+          if not file then
             return
           end
 
           local function execute_with_args(args_str)
-            local js_runtime = "node"
-            local cmd_map = {
-              py = string.format("cd %s && python3 %s %s", dir, file, args_str),
-              rs = function()
-                local is_cargo, p_root = detect_cargo_project(dir)
-                return is_cargo and string.format("cd %s && cargo run -- %s", p_root, args_str)
-                  or string.format("rustc %s -o %s/%s && %s/%s %s", file, dir, filename, dir, filename, args_str)
-              end,
-              go = string.format("go run %s %s", file, args_str),
-              lua = string.format("cd %s && lua %s %s", dir, file, args_str),
-              sh = string.format("cd %s && bash %s %s", dir, file, args_str),
-              java = function()
-                return java_run_cmd(file, dir, args_str)
-              end,
-            }
-
-            local js_family = { "js", "mjs", "cjs", "ts" }
-            for _, jext in ipairs(js_family) do
-              cmd_map[jext] = function()
-                if js_runtime == "deno" then
-                  return string.format("cd %s && deno run -A %s %s", dir, file, args_str)
-                elseif js_runtime == "bun" then
-                  return string.format("cd %s && bun run %s %s", dir, file, args_str)
-                else
-                  local bin = (jext == "ts") and "npx tsx" or "node"
-                  return string.format("cd %s && %s %s %s", dir, bin, file, args_str)
-                end
-              end
-            end
-
-            local cmd, extra = cmd_map[ext], nil
-            if type(cmd) == "function" then
-              cmd, extra = cmd() -- extra: reason when cmd is nil, build kind (Maven/Gradle/Plain) otherwise
-            end
-
-            if not cmd and extra then
-              vim.notify(extra, vim.log.levels.WARN, { title = "Run System" })
-              return
-            end
-            local kind = cmd and extra
-
-            if not cmd then
-              vim.notify("Unsupported file type: ." .. (ext ~= "" and ext or "none"), vim.log.levels.WARN)
-              return
-            end
-
-            _G.Run = Snacks.terminal.open(with_banner(cmd, filename .. "." .. ext, args_str), {
-              win = {
-                position = "float",
-                width = 0.9,
-                height = 0.8,
-                border = "rounded",
-                title = " " .. ext:upper() .. (kind and (" · " .. kind) or "") .. " Run + Args",
-                title_pos = "center",
-                backdrop = false,
-              },
-              interactive = true,
-              auto_close = false,
-            })
+            run_file(file, args_str)
           end
 
           -- Trigger CLI Interactive Prompts
@@ -481,46 +456,6 @@ return {
         desc = "Run with args",
       },
       { "<F6>", "<leader>ra", remap = true, desc = "Run with args" },
-
-      -- COMPILER ==> <leader> + t + c
-      {
-        "<leader>tc",
-        function()
-          _G.Run = Snacks.terminal.open("echo ' Building target...' && sleep 1", {
-            win = {
-              position = "float",
-              width = 0.8,
-              height = 0.6,
-              border = "rounded",
-              title = " Compile",
-              backdrop = false,
-            },
-            interactive = true,
-            auto_close = false,
-          })
-        end,
-        desc = "Build project",
-      },
-
-      -- TESTER ==> <leader> + t + t
-      {
-        "<leader>tt",
-        function()
-          _G.Run = Snacks.terminal.open("echo '󰙨 Running test suite...'", {
-            win = {
-              position = "float",
-              width = 0.9,
-              height = 0.8,
-              border = "rounded",
-              title = "󰙨 Tests",
-              backdrop = false,
-            },
-            interactive = true,
-            auto_close = false,
-          })
-        end,
-        desc = "Test suite",
-      },
     },
   },
 }

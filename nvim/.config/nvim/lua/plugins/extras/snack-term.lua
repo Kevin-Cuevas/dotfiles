@@ -112,8 +112,9 @@ local function find_project_main(p_type, root, dir)
   return nil, nil, candidates
 end
 
--- Shell command to run a Java file ==> Maven | Gradle | plain. Returns nil +
--- reason when there is nothing to run. `args_str` is optional.
+-- Shell command to run a Java file ==> Maven | Gradle | plain. Returns
+-- cmd, kind ("Maven" | "Gradle" | "Plain"), or nil + reason when there is
+-- nothing to run. `args_str` is optional.
 local function java_run_cmd(file, dir, args_str)
   local sh = vim.fn.shellescape
   local has_args = args_str and args_str ~= ""
@@ -129,6 +130,7 @@ local function java_run_cmd(file, dir, args_str)
     end
   end
 
+  local arg_s = has_args and (" " .. args_str) or ""
   if p_type == "maven" then
     -- exec:java uses the project classpath (dependencies included) and needs no plugin in the pom
     return string.format(
@@ -136,34 +138,38 @@ local function java_run_cmd(file, dir, args_str)
       sh(p_root),
       main,
       has_args and (" -Dexec.args=" .. sh(args_str)) or ""
-    )
+    ),
+      "Maven"
   elseif p_type == "gradle" then
     local gradle = vim.fn.executable(p_root .. "/gradlew") == 1 and "./gradlew" or "gradle"
     if check_gradle_application_plugin(p_root) then
-      return string.format("cd %s && %s -q run%s", sh(p_root), gradle, has_args and (" --args=" .. sh(args_str)) or "")
+      return string.format("cd %s && %s -q run%s", sh(p_root), gradle, has_args and (" --args=" .. sh(args_str)) or ""),
+        "Gradle"
     end
     return string.format(
       "cd %s && %s -q classes && java -cp build/classes/java/main %s%s",
       sh(p_root),
       gradle,
       main,
-      has_args and (" " .. args_str) or ""
-    )
+      arg_s
+    ),
+      "Gradle"
   end
 
   -- Plain Java. JDK 22+ runs several source files directly (no .class files);
   -- older JDKs compile into a temp dir, with the file's folder as sourcepath.
   local major = java_major()
   if major and major >= 22 then
-    return string.format("java %s%s", sh(main_file), has_args and (" " .. args_str) or "")
+    return string.format("java %s%s", sh(main_file), arg_s), "Plain"
   end
   return string.format(
     'out=$(mktemp -d) && javac -d "$out" -sourcepath %s %s && java -cp "$out" %s%s',
     sh(vim.fn.fnamemodify(main_file, ":h")),
     sh(main_file),
     main,
-    has_args and (" " .. args_str) or ""
-  )
+    arg_s
+  ),
+    "Plain"
 end
 
 -- Parse @args metadata from file header ==> Supports 'name:type'
@@ -184,6 +190,13 @@ local function parse_args_metadata(file)
     end
   end
   return nil
+end
+
+-- Banner printed before the command ==>  Executing "file.ext" [args: [..]]
+local function with_banner(cmd, name, args_str)
+  local shown = (args_str and args_str ~= "") and (" args: [" .. args_str .. "]") or ""
+  local msg = string.format(' Executing "%s"%s', name, shown)
+  return string.format("echo %s && echo '' && %s", vim.fn.shellescape(msg), cmd)
 end
 
 -- # ==========================================================
@@ -315,15 +328,16 @@ return {
             end
           end
 
-          local cmd, reason = cmd_map[ext], nil
+          local cmd, extra = cmd_map[ext], nil
           if type(cmd) == "function" then
-            cmd, reason = cmd()
+            cmd, extra = cmd() -- extra: reason when cmd is nil, build kind (Maven/Gradle/Plain) otherwise
           end
 
-          if not cmd and reason then
-            vim.notify(reason, vim.log.levels.WARN, { title = "Run System" })
+          if not cmd and extra then
+            vim.notify(extra, vim.log.levels.WARN, { title = "Run System" })
             return
           end
+          local kind = cmd and extra
 
           if not cmd then
             local supported_exts = table.concat(vim.tbl_keys(cmd_map), ", ")
@@ -336,13 +350,13 @@ return {
             return
           end
 
-          _G.Run = Snacks.terminal.open(cmd, {
+          _G.Run = Snacks.terminal.open(with_banner(cmd, filename .. "." .. ext), {
             win = {
               position = "float",
               width = 0.9,
               height = 0.8,
               border = "rounded",
-              title = " " .. ext:upper() .. " Run",
+              title = " " .. ext:upper() .. (kind and (" · " .. kind) or "") .. " Run",
               title_pos = "center",
               backdrop = false,
             },
@@ -398,30 +412,29 @@ return {
               end
             end
 
-            local cmd, reason = cmd_map[ext], nil
+            local cmd, extra = cmd_map[ext], nil
             if type(cmd) == "function" then
-              cmd, reason = cmd()
+              cmd, extra = cmd() -- extra: reason when cmd is nil, build kind (Maven/Gradle/Plain) otherwise
             end
 
-            if not cmd and reason then
-              vim.notify(reason, vim.log.levels.WARN, { title = "Run System" })
+            if not cmd and extra then
+              vim.notify(extra, vim.log.levels.WARN, { title = "Run System" })
               return
             end
+            local kind = cmd and extra
 
             if not cmd then
               vim.notify("Unsupported file type: ." .. (ext ~= "" and ext or "none"), vim.log.levels.WARN)
               return
             end
 
-            local start_msg =
-              string.format("echo ' Executing \"%s\" args: [%s]' && echo ''", filename .. "." .. ext, args_str)
-            _G.Run = Snacks.terminal.open(start_msg .. " && " .. cmd, {
+            _G.Run = Snacks.terminal.open(with_banner(cmd, filename .. "." .. ext, args_str), {
               win = {
                 position = "float",
                 width = 0.9,
                 height = 0.8,
                 border = "rounded",
-                title = " " .. ext:upper() .. " Run + Args",
+                title = " " .. ext:upper() .. (kind and (" · " .. kind) or "") .. " Run + Args",
                 title_pos = "center",
                 backdrop = false,
               },

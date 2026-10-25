@@ -9,6 +9,8 @@ return {
       end
       -- JDKs contra los que se compilan tus proyectos
       opts.settings.java.configuration = { runtimes = require("config.jdks").discover() }
+      -- debug: resolveJavaExecutable de una en una (ver lua/util/jdtls_serial.lua)
+      require("util.jdtls_serial").apply()
     end,
   },
 

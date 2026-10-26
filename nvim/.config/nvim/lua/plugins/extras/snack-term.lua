@@ -32,27 +32,96 @@ local function detect_cargo_project(dir)
   return false, dir
 end
 
--- Extract Java main class ==> check @Test or main()
-local function detect_main_class(file)
-  local content = vim.fn.readfile(file)
-  local package_name, class_name, has_main = "", "", false
-  for _, line in ipairs(content) do
-    local pkg = string.match(line, "^%s*package%s+([%w%.]+)")
-    if pkg then
-      package_name = pkg
+local java_types = {
+  class_declaration = true,
+  record_declaration = true,
+  enum_declaration = true,
+  interface_declaration = true,
+}
+
+-- Java main() methods of a file, via treesitter ==> list of { class, first, last }:
+-- binary class name (pkg.Outer$Inner) and the 0-based rows of that class.
+local function java_mains(file)
+  local src = table.concat(vim.fn.readfile(file), "\n")
+  local ok, parser = pcall(vim.treesitter.get_string_parser, src, "java")
+  if not ok then
+    return {}
+  end
+  local root = parser:parse()[1]:root()
+  local text = function(node)
+    return vim.treesitter.get_node_text(node, src)
+  end
+
+  local pkg = ""
+  local mains = {}
+  local function visit(node)
+    local t = node:type()
+    if t == "package_declaration" then
+      for child in node:iter_children() do
+        if child:type() == "scoped_identifier" or child:type() == "identifier" then
+          pkg = text(child) .. "."
+        end
+      end
+    elseif t == "method_declaration" then
+      local name, mods = node:field("name")[1], node:child(0)
+      local params = text(node:field("parameters")[1]):gsub("%s", "")
+      local is_main = name
+        and text(name) == "main"
+        and node:field("type")[1]:type() == "void_type"
+        and mods:type() == "modifiers"
+        and text(mods):find("public")
+        and text(mods):find("static")
+        and (params:match("^%(String%[%][%w_$]+%)$") or params:match("^%(String%.%.%.[%w_$]+%)$") or params:match(
+          "^%(String[%w_$]+%[%]%)$"
+        ))
+      if is_main then
+        -- enclosing types up to the file; skip anonymous/local classes
+        local names, cls, p = {}, nil, node:parent()
+        while p do
+          local pt = p:type()
+          if pt == "block" or pt == "object_creation_expression" then
+            return
+          end
+          if java_types[pt] then
+            cls = cls or p
+            table.insert(names, 1, text(p:field("name")[1]))
+          end
+          p = p:parent()
+        end
+        if cls then
+          local first, _, last = cls:range()
+          table.insert(mains, { class = pkg .. table.concat(names, "$"), first = first, last = last })
+        end
+      end
+      return
     end
-    local cls = string.match(line, "^%s*public%s+class%s+(%w+)")
-    if cls then
-      class_name = cls
-    end
-    if string.match(line, "public%s+static%s+void%s+main") then
-      has_main = true
+    for child in node:iter_children() do
+      visit(child)
     end
   end
-  if has_main and class_name ~= "" then
-    return package_name ~= "" and (package_name .. "." .. class_name) or class_name
+  visit(root)
+  return mains
+end
+
+-- Main class to run from a file ==> like IntelliJ: the class under the cursor
+-- (innermost), else the only one. Returns class, or nil + all mains (0 or >1).
+local function detect_main_class(file, row)
+  local mains = java_mains(file)
+  if row then
+    local best
+    for _, m in ipairs(mains) do
+      if row >= m.first and row <= m.last and (not best or m.first >= best.first) then
+        best = m
+      end
+    end
+    if best then
+      return best.class
+    end
   end
-  return nil
+  if #mains == 1 then
+    return mains[1].class
+  end
+  return nil, mains
 end
 
 local function check_gradle_application_plugin(project_root)
@@ -101,9 +170,8 @@ local function find_project_main(p_type, root, dir)
     or vim.fn.globpath(root .. "/src/main/java", "**/*.java", false, true)
   local candidates = {}
   for _, f in ipairs(files) do
-    local class = detect_main_class(f)
-    if class then
-      table.insert(candidates, { class = class, file = f })
+    for _, m in ipairs(java_mains(f)) do
+      table.insert(candidates, { class = m.class, file = f })
     end
   end
   if #candidates == 1 then
@@ -136,12 +204,21 @@ end
 
 -- Shell command to run a Java file ==> Maven | Gradle | plain. Returns
 -- cmd, kind ("Maven" | "Gradle" | "Plain"), jdk (major it runs on, or nil), or
--- nil + reason when there is nothing to run. `args_str` is optional.
-local function java_run_cmd(file, dir, args_str)
+-- nil + reason when there is nothing to run, or nil + list of classes to pick
+-- from. `args_str`, `row` (cursor, 0-based) and `main` (picked class) are optional.
+local function java_run_cmd(file, dir, args_str, row, main)
   local sh = vim.fn.shellescape
   local has_args = args_str and args_str ~= ""
   local p_type, p_root = detect_java_project_type(dir)
-  local main, main_file = detect_main_class(file), file
+  local main_file, in_file = file, nil
+  if not main then
+    main, in_file = detect_main_class(file, row)
+  end
+  if not main and #in_file > 1 then
+    return nil, vim.tbl_map(function(m)
+      return m.class
+    end, in_file)
+  end
   if not main then
     local candidates
     main, main_file, candidates = find_project_main(p_type, p_root, dir)
@@ -160,7 +237,7 @@ local function java_run_cmd(file, dir, args_str)
       "%scd %s && mvn -q compile exec:java -Dexec.mainClass=%s%s",
       prefix,
       sh(p_root),
-      main,
+      sh(main),
       has_args and (" -Dexec.args=" .. sh(args_str)) or ""
     ),
       "Maven",
@@ -184,24 +261,27 @@ local function java_run_cmd(file, dir, args_str)
       prefix,
       sh(p_root),
       gradle,
-      main,
+      sh(main),
       arg_s
     ),
       "Gradle",
       jdk
   end
 
-  -- Plain Java. JDK 22+ runs several source files directly (no .class files);
-  -- older JDKs compile into a temp dir, with the file's folder as sourcepath.
+  -- Plain Java. JDK 22+ runs several source files directly (no .class files),
+  -- but starts the file's first class: only safe when main lives in the class
+  -- named like the file. Otherwise compile into a temp dir, with the file's
+  -- folder as sourcepath.
   local major = java_major()
-  if major and major >= 22 then
+  local in_file_class = main:match("[%w_$]+$") == vim.fn.fnamemodify(main_file, ":t:r")
+  if major and major >= 22 and in_file_class then
     return string.format("java %s%s", sh(main_file), arg_s), "Plain", major
   end
   return string.format(
     'out=$(mktemp -d) && javac -d "$out" -sourcepath %s %s && java -cp "$out" %s%s',
     sh(vim.fn.fnamemodify(main_file, ":h")),
     sh(main_file),
-    main,
+    sh(main),
     arg_s
   ),
     "Plain",
@@ -241,7 +321,7 @@ local js_runtime = "node"
 -- Shell command to run a file ==> by extension. Returns cmd, kind, jdk (Java
 -- only: "Maven" | "Gradle" | "Plain" and its major), or nil + reason + hint. `args_str` is
 -- optional and reaches the program as typed (not escaped).
-local function build_cmd(file, args_str)
+local function build_cmd(file, args_str, row, main)
   local q = vim.fn.shellescape
   local ext, name, dir =
     vim.fn.fnamemodify(file, ":e"), vim.fn.fnamemodify(file, ":t:r"), vim.fn.fnamemodify(file, ":p:h")
@@ -270,7 +350,7 @@ local function build_cmd(file, args_str)
       return string.format("cd %s && bash %s%s", q(dir), q(file), args)
     end,
     java = function()
-      return java_run_cmd(file, dir, args_str)
+      return java_run_cmd(file, dir, args_str, row, main)
     end,
   }
 
@@ -308,9 +388,19 @@ end
 
 -- Run a file in a floating terminal ==> shared by <leader>rr (no args_str) and
 -- <leader>ra. The previous run is wiped first so terminals do not pile up.
-local function run_file(file, args_str)
+-- Several Java mains and the cursor in none ==> pick one (`main` on the retry).
+local function run_file(file, args_str, main)
   local ext, name = vim.fn.fnamemodify(file, ":e"), vim.fn.fnamemodify(file, ":t:r")
-  local cmd, extra, third = build_cmd(file, args_str)
+  local row = vim.api.nvim_buf_get_name(0) == file and (vim.api.nvim_win_get_cursor(0)[1] - 1) or nil
+  local cmd, extra, third = build_cmd(file, args_str, row, main)
+  if not cmd and type(extra) == "table" then
+    vim.ui.select(extra, { prompt = "Main class" }, function(choice)
+      if choice then
+        run_file(file, args_str, choice)
+      end
+    end)
+    return
+  end
   if not cmd then
     vim.notify(extra, vim.log.levels.WARN, { title = "Run System" })
     if third then

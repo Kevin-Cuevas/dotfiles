@@ -1,26 +1,29 @@
-# bootstrap.d/20-runtimes.sh — language runtimes (rust, node, deno, bun)
+# bootstrap.d/20-runtimes.sh — language runtimes (rust, node, deno, bun, java)
 # ==============================================================================
 # RUNTIME_KEYS/LABEL/FN + install_runtimes() drive menu option 12's
 # checklist; NPM_GLOBAL_KEYS/LABEL/PKG feed install_node_globals(), offered
-# right after Node installs. To add a runtime: add its key to RUNTIME_KEYS +
+# right after Node installs; install_java_jdks() does the same for JDKs right
+# after SDKMAN installs. To add a runtime: add its key to RUNTIME_KEYS +
 # a label/function entry in RUNTIME_LABEL/RUNTIME_FN, and define
 # install_<name>().
 # ==============================================================================
 
 # Lenguajes/runtimes que NO vienen por apt. Para agregar uno: añade su clave a
 # RUNTIME_KEYS y su etiqueta + función en los mapas, y define install_<algo>().
-RUNTIME_KEYS=(rust node deno bun)
+RUNTIME_KEYS=(rust node deno bun java)
 declare -A RUNTIME_LABEL=(
   [rust]="Rust (rustup)"
   [node]="Node LTS (fnm)"
   [deno]="Deno"
   [bun]="Bun"
+  [java]="Java JDKs (SDKMAN)"
 )
 declare -A RUNTIME_FN=(
   [rust]="install_rust"
   [node]="install_node"
   [deno]="install_deno"
   [bun]="install_bun"
+  [java]="install_java"
 )
 
 # Paquetes npm globales que se ofrecen tras instalar Node (checklist).
@@ -198,6 +201,208 @@ install_node_globals() {
 write_czrc() {
   echo '{ "path": "cz-conventional-changelog" }' > "$HOME/.czrc"
   ok "Wrote $HOME/.czrc"
+}
+
+# Distribución de JDKs que ofrece install_java_jdks() (sufijo de SDKMAN:
+# tem = Eclipse Temurin). Las versiones salen de 'sdk list java', así que el
+# checklist siempre trae la mayor más reciente sin tocar este archivo.
+JDK_DIST="tem"
+
+# 'sdk' es una función de shell, no un binario: hay que sourcear el init en
+# este proceso. El init y sdk usan variables sin definir, y el bootstrap corre
+# con 'set -u', así que lo apagamos solo mientras se ejecutan.
+sdkman_load() {
+  set +u
+  # shellcheck source=/dev/null
+  source "$SDKMAN_DIR/bin/sdkman-init.sh"
+  local rc=$?
+  set -u
+  return $rc
+}
+
+sdk_run() {
+  set +u
+  sdk "$@"
+  local rc=$?
+  set -u
+  return $rc
+}
+
+install_java() {
+  sep
+  export SDKMAN_DIR="$HOME/.sdkman"
+
+  if [[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]]; then
+    skip "SDKMAN already installed"
+  else
+    # El instalador exige zip/unzip (vienen en APT_PKGS).
+    local dep
+    for dep in curl zip unzip; do
+      command -v "$dep" &>/dev/null || {
+        warn "SDKMAN necesita '$dep' — instálalo (opción 2) y vuelve a intentar"
+        return 1
+      }
+    done
+
+    info "Installing SDKMAN..."
+    # rcupdate=false: no toca ~/.zshrc (symlink al repo), el .zshrc ya lo carga
+    if curl -fsSL "https://get.sdkman.io?rcupdate=false" | bash &>/dev/null; then
+      ok "SDKMAN installed at $SDKMAN_DIR"
+    else
+      warn "Failed to install SDKMAN — check network/curl"
+      return 1
+    fi
+  fi
+
+  sdkman_load || {
+    warn "No se pudo cargar sdkman-init.sh"
+    return 1
+  }
+
+  install_java_jdks
+}
+
+# Checklist de JDKs (una entrada por versión mayor) sobre SDKMAN. Detecta los
+# ya instalados (cualquier distribución) para marcarlos y saltarlos, marca por
+# defecto la mayor más reciente, y al final ofrece elegir el JDK por defecto.
+# En modo no interactivo instala solo la más reciente y conserva el default.
+install_java_jdks() {
+  local java_dir="$SDKMAN_DIR/candidates/java"
+
+  # Instalados: mayor => identificadores (8.0.504+1-tem -> 8)
+  local -A installed=()
+  local installed_ids=() dir id major
+  for dir in "$java_dir"/*; do
+    id="${dir##*/}"
+    [[ -d "$dir" && "$id" != current ]] || continue
+    major="${id%%[.+-]*}"
+    installed_ids+=("$id")
+    installed[$major]="${installed[$major]:+${installed[$major]} }$id"
+  done
+
+  local prev_default=""
+  [[ -L "$java_dir/current" ]] && prev_default="$(basename "$(readlink -f "$java_dir/current")")"
+
+  # Disponibles en $JDK_DIST: mayor => identificador más nuevo. 'sdk list'
+  # viene ordenado de mayor a menor, así que el primero de cada mayor gana.
+  local -A latest_id=()
+  local majors=() line
+  while IFS= read -r line; do
+    major="${line%%[.+-]*}"
+    if [[ -n "$major" && -z "${latest_id[$major]:-}" ]]; then
+      latest_id[$major]="$line"
+      majors+=("$major")
+    fi
+  done < <(PAGER=cat sdk_run list java 2>/dev/null |
+    awk -F'|' -v dist="$JDK_DIST" '{gsub(/ /, "", $4)} $4 ~ ("-" dist "$") {print $4}')
+
+  if [[ ${#majors[@]} -eq 0 ]]; then
+    warn "No se pudo obtener la lista de JDKs de SDKMAN (¿sin red?)"
+  fi
+  local newest="${majors[0]:-}"
+
+  local chosen=()
+  if [[ "$NONINTERACTIVE" == "true" ]]; then
+    [[ -n "$newest" ]] && chosen=("$newest")
+    info "Non-interactive mode — JDK $newest ($JDK_DIST)"
+  elif [[ ${#majors[@]} -gt 0 ]]; then
+    local items=() state label
+    for major in "${majors[@]}"; do
+      # dialog solo tiene [*]/[ ]: los instalados van sin marcar y con una
+      # etiqueta verde (\Z2, requiere --colors) en vez de la casilla.
+      if [[ -n "${installed[$major]:-}" ]]; then
+        label="Java $major  \Z2\Zb✓ instalado\Zn (${installed[$major]})"
+        state="off"
+      else
+        label="Java $major  (${latest_id[$major]})"
+        [[ "$major" == "$newest" ]] && state="on" || state="off"
+      fi
+      items+=("$major" "$label" "$state")
+    done
+
+    local lh="${#majors[@]}"
+    [[ $lh -lt 6 ]] && lh=6
+    [[ $lh -gt 12 ]] && lh=12
+    local wh=$((lh + 10))
+
+    local raw
+    raw=$(dialog \
+      --clear --colors \
+      --backtitle "$BACKTITLE" \
+      --title " Java JDKs (SDKMAN) " \
+      --separate-output \
+      --checklist \
+      "¿Qué JDKs instalar?  [SPACE=toggle  ENTER=confirm]\n\nDistribución: $JDK_DIST. Los que dicen \Z2\Zb✓ instalado\Zn ya están\nen SDKMAN: se saltan aunque los marques." \
+      "$wh" 76 "$lh" \
+      "${items[@]}" \
+      3>&1 1>&2 2>&3) || {
+      clear
+      warn "JDK install cancelled."
+      raw=""
+    }
+    clear
+
+    while IFS= read -r major; do
+      [[ -n "$major" ]] && chosen+=("$major")
+    done <<< "$raw"
+  fi
+
+  for major in "${chosen[@]}"; do
+    if [[ -n "${installed[$major]:-}" ]]; then
+      skip "Java $major already installed (${installed[$major]})"
+      continue
+    fi
+    id="${latest_id[$major]:-}"
+    [[ -z "$id" ]] && continue
+    info "Installing Java $id..."
+    # "n" responde a "¿usar como default?"; el default se decide abajo. Si es
+    # el primer JDK, sdk lo pone de default sin preguntar.
+    if sdk_run install java "$id" <<< "n"; then
+      ok "Java $id installed"
+      installed_ids+=("$id")
+    else
+      warn "Failed to install Java $id"
+    fi
+  done
+
+  java_pick_default "$prev_default" "${installed_ids[@]}"
+}
+
+# Elige el JDK por defecto de SDKMAN ($1 = default previo, resto = instalados).
+# Interactivo: menú con los instalados (preselecciona el actual). No
+# interactivo: conserva el previo; si no había, deja el que puso sdk.
+java_pick_default() {
+  local prev="$1"
+  shift
+  local ids=("$@")
+  [[ ${#ids[@]} -eq 0 ]] && return
+
+  local pick="$prev"
+  if [[ "$NONINTERACTIVE" == false && ${#ids[@]} -gt 1 ]]; then
+    local items=() id
+    for id in "${ids[@]}"; do
+      [[ "$id" == "$prev" ]] && items+=("$id" "default actual") || items+=("$id" "")
+    done
+    local lh=${#ids[@]}
+    [[ $lh -gt 10 ]] && lh=10
+    pick=$(dialog \
+      --clear --colors \
+      --backtitle "$BACKTITLE" \
+      --title " Java por defecto (SDKMAN) " \
+      ${prev:+--default-item "$prev"} \
+      --menu "¿Qué JDK usar por defecto en nuevas shells?" \
+      $((lh + 8)) 64 "$lh" \
+      "${items[@]}" \
+      3>&1 1>&2 2>&3) || pick="$prev" # cancelar = conservar el actual
+    clear
+  fi
+
+  [[ -z "$pick" ]] && return
+  if sdk_run default java "$pick" &>/dev/null; then
+    ok "Java por defecto: $pick"
+  else
+    warn "No se pudo establecer Java $pick como default"
+  fi
 }
 
 install_rust() {

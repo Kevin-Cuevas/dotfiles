@@ -1,11 +1,20 @@
+-- Java mínimo para correr jdtls (1.63+: JavaSE-25)
+local JDTLS_MIN_JAVA = 25
+
 return {
   {
     "mfussenegger/nvim-jdtls",
     opts = function(_, opts)
-      -- jdtls corre siempre con el JDK del sistema, aunque nvim se abra tras `sdk use`
-      local sys_java = "/usr/lib/jvm/default-java/bin/java"
-      if vim.fn.executable(sys_java) == 1 then
-        table.insert(opts.cmd, "--java-executable=" .. sys_java)
+      -- ruta fija, no default-java (21 en Debian 13) ni `sdk use`
+      local jdk = require("util.jdks").for_target(JDTLS_MIN_JAVA)
+      if jdk then
+        table.insert(opts.cmd, "--java-executable=" .. jdk .. "/bin/java")
+      else
+        vim.notify(
+          ("jdtls necesita JDK %d+: sudo apt install openjdk-%d-jdk-headless"):format(JDTLS_MIN_JAVA, JDTLS_MIN_JAVA),
+          vim.log.levels.WARN,
+          { title = "jdtls" }
+        )
       end
       -- JDKs contra los que se compilan tus proyectos
       opts.settings.java.configuration = { runtimes = require("util.jdks").discover() }

@@ -1,6 +1,6 @@
 -- Fuente de blink.cmp: en `public class |` sugiere el nombre del archivo, que
 -- en Java debe coincidir con el del tipo público. Se registra en
--- plugins/extras/blink-cmp.lua.
+-- plugins/java.lua.
 local source = {}
 
 local kinds = "class|interface|enum|record"

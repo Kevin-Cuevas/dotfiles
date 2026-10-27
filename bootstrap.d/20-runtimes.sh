@@ -203,10 +203,13 @@ write_czrc() {
   ok "Wrote $HOME/.czrc"
 }
 
-# Distribución de JDKs que ofrece install_java_jdks() (sufijo de SDKMAN:
-# tem = Eclipse Temurin). Las versiones salen de 'sdk list java', así que el
-# checklist siempre trae la mayor más reciente sin tocar este archivo.
-JDK_DIST="tem"
+# Distribuciones de JDK que usa install_java_jdks(), en orden de preferencia
+# (sufijos de SDKMAN: tem = Eclipse Temurin, amzn = Corretto, zulu, librca =
+# Liberica). Si un build no arranca en esta máquina (p. ej. Temurin 17 en la VM
+# aarch64 de Android) se prueba la siguiente. Las versiones salen de
+# 'sdk list java', así que el checklist trae la mayor más reciente sin tocar
+# este archivo.
+JDK_DISTS=(tem amzn zulu librca)
 
 # 'sdk' es una función de shell, no un binario: hay que sourcear el init en
 # este proceso. El init y sdk usan variables sin definir, y el bootstrap corre
@@ -262,39 +265,112 @@ install_java() {
   install_java_jdks
 }
 
-# Checklist de JDKs (una entrada por versión mayor) sobre SDKMAN. Detecta los
-# ya instalados (cualquier distribución) para marcarlos y saltarlos, marca por
-# defecto la mayor más reciente, y al final ofrece elegir el JDK por defecto.
-# En modo no interactivo instala solo la más reciente y conserva el default.
+# Smoke test de un JDK ($1 = su home): compila y ejecuta una clase. Un JDK
+# "instalado" no es uno que arranca: hay builds que mueren con SIGSEGV/SIGILL en
+# ciertas CPUs. Corre en un tmpdir con ErrorFile=/dev/null y sin core dumps,
+# así no deja hs_err_pid*.log ni cores en el cwd.
+jdk_works() {
+  local home="$1" tmp out
+  [[ -x "$home/bin/java" && -x "$home/bin/javac" ]] || return 1
+  tmp="$(mktemp -d)" || return 1
+  out="$(
+    cd "$tmp" || exit 1
+    ulimit -c 0
+    printf 'public class Hello { public static void main(String[] a) { System.out.println("ok"); } }\n' > Hello.java
+    timeout 60 "$home/bin/javac" -J-XX:ErrorFile=/dev/null Hello.java &>/dev/null &&
+      timeout 60 "$home/bin/java" -XX:ErrorFile=/dev/null -cp . Hello 2>/dev/null
+  )"
+  rm -rf "$tmp"
+  [[ "$out" == "ok" ]]
+}
+
+# Instala la versión mayor $1 probando JDK_DISTS en orden: instala, corre
+# jdk_works y, si no arranca, la desinstala y pasa a la siguiente distribución.
+# Usa avail/broken de install_java_jdks (scope dinámico de bash) y deja el id
+# instalado en JDK_NEW_ID. Si 'sdk install' falla (red, etc.) no se sigue: eso
+# no es un problema del build.
+install_jdk_major() {
+  local major="$1" dist id tried=()
+  JDK_NEW_ID=""
+  for dist in "${JDK_DISTS[@]}"; do
+    id="${avail[$major:$dist]:-}"
+    # Si ya hay un build roto de esta distribución, ni se descarga otro
+    [[ -z "$id" || " ${broken[$major]:-} " == *"-$dist "* ]] && continue
+    tried+=("$id")
+
+    info "Installing Java $id..."
+    # "n" responde a "¿usar como default?"; el default se decide al final. Si
+    # es el primer JDK, sdk lo pone de default sin preguntar.
+    if ! sdk_run install java "$id" <<< "n"; then
+      warn "Failed to install Java $id"
+      return 1
+    fi
+
+    if jdk_works "$SDKMAN_DIR/candidates/java/$id"; then
+      ok "Java $id installed (smoke test OK)"
+      JDK_NEW_ID="$id"
+      return 0
+    fi
+
+    warn "Java $id no arranca en esta máquina — desinstalando"
+    sdk_run uninstall java "$id" --force &>/dev/null || warn "No se pudo desinstalar $id"
+  done
+
+  if [[ ${#tried[@]} -eq 0 ]]; then
+    warn "No hay builds de Java $major en ${JDK_DISTS[*]} (¿sin red?)"
+  else
+    warn "Ningún build de Java $major arranca aquí (probados: ${tried[*]})"
+  fi
+  return 1
+}
+
+# Checklist de JDKs (una entrada por versión mayor) sobre SDKMAN. Verifica los
+# ya instalados (cualquier distribución): los que arrancan salen como
+# instalados y se saltan; los que no, salen marcados para repararlos con otra
+# distribución. Marca por defecto la mayor más reciente y al final ofrece
+# elegir el JDK por defecto. En modo no interactivo instala la más reciente,
+# repara los rotos y conserva el default.
 install_java_jdks() {
   local java_dir="$SDKMAN_DIR/candidates/java"
-
-  # Instalados: mayor => identificadores (8.0.504+1-tem -> 8)
-  local -A installed=()
-  local installed_ids=() dir id major
-  for dir in "$java_dir"/*; do
-    id="${dir##*/}"
-    [[ -d "$dir" && "$id" != current ]] || continue
-    major="${id%%[.+-]*}"
-    installed_ids+=("$id")
-    installed[$major]="${installed[$major]:+${installed[$major]} }$id"
-  done
 
   local prev_default=""
   [[ -L "$java_dir/current" ]] && prev_default="$(basename "$(readlink -f "$java_dir/current")")"
 
-  # Disponibles en $JDK_DIST: mayor => identificador más nuevo. 'sdk list'
-  # viene ordenado de mayor a menor, así que el primero de cada mayor gana.
-  local -A latest_id=()
-  local majors=() line
-  while IFS= read -r line; do
-    major="${line%%[.+-]*}"
-    if [[ -n "$major" && -z "${latest_id[$major]:-}" ]]; then
-      latest_id[$major]="$line"
-      majors+=("$major")
+  # Instalados: mayor => ids que arrancan / ids rotos (8.0.504+1-tem -> 8)
+  local -A installed=() broken=()
+  local working_ids=() dir id major
+  for dir in "$java_dir"/*; do
+    id="${dir##*/}"
+    [[ -d "$dir" && "$id" != current ]] || continue
+    major="${id%%[.+-]*}"
+    if jdk_works "$dir"; then
+      working_ids+=("$id")
+      installed[$major]="${installed[$major]:+${installed[$major]} }$id"
+    else
+      broken[$major]="${broken[$major]:+${broken[$major]} }$id"
     fi
+  done
+
+  # Disponibles: "mayor:dist" => id más nuevo. 'sdk list' viene ordenado de
+  # mayor a menor dentro de cada distribución, así que el primero gana.
+  local -A avail=()
+  local majors=() dist dist_re
+  dist_re="-($(
+    IFS='|'
+    echo "${JDK_DISTS[*]}"
+  ))\$"
+  while IFS= read -r id; do
+    major="${id%%[.+-]*}"
+    dist="${id##*-}"
+    [[ -n "$major" && -z "${avail[$major:$dist]:-}" ]] && avail[$major:$dist]="$id"
   done < <(PAGER=cat sdk_run list java 2>/dev/null |
-    awk -F'|' -v dist="$JDK_DIST" '{gsub(/ /, "", $4)} $4 ~ ("-" dist "$") {print $4}')
+    awk -F'|' -v re="$dist_re" '{gsub(/ /, "", $4)} $4 ~ re {print $4}')
+
+  # Unión de mayores de todas las distribuciones, de 8 en adelante (zulu aún
+  # ofrece 6 y 7)
+  while IFS= read -r major; do
+    [[ -n "$major" && "$major" -ge 8 ]] && majors+=("$major")
+  done < <(for id in "${!avail[@]}"; do echo "${id%%:*}"; done | sort -rnu)
 
   if [[ ${#majors[@]} -eq 0 ]]; then
     warn "No se pudo obtener la lista de JDKs de SDKMAN (¿sin red?)"
@@ -304,17 +380,29 @@ install_java_jdks() {
   local chosen=()
   if [[ "$NONINTERACTIVE" == "true" ]]; then
     [[ -n "$newest" ]] && chosen=("$newest")
-    info "Non-interactive mode — JDK $newest ($JDK_DIST)"
-  elif [[ ${#majors[@]} -gt 0 ]]; then
-    local items=() state label
     for major in "${majors[@]}"; do
-      # dialog solo tiene [*]/[ ]: los instalados van sin marcar y con una
-      # etiqueta verde (\Z2, requiere --colors) en vez de la casilla.
+      [[ -n "${broken[$major]:-}" && -z "${installed[$major]:-}" && "$major" != "$newest" ]] &&
+        chosen+=("$major")
+    done
+    info "Non-interactive mode — JDK(s): ${chosen[*]:-ninguno}"
+  elif [[ ${#majors[@]} -gt 0 ]]; then
+    local items=() state label pref
+    for major in "${majors[@]}"; do
+      # dialog solo tiene [*]/[ ]: el estado de lo ya instalado va en una
+      # etiqueta de color (\Z2 verde, \Z1 rojo; requiere --colors).
       if [[ -n "${installed[$major]:-}" ]]; then
         label="Java $major  \Z2\Zb✓ instalado\Zn (${installed[$major]})"
         state="off"
+      elif [[ -n "${broken[$major]:-}" ]]; then
+        label="Java $major  \Z1\Zb✗ no arranca\Zn (${broken[$major]})"
+        state="on"
       else
-        label="Java $major  (${latest_id[$major]})"
+        pref=""
+        for dist in "${JDK_DISTS[@]}"; do
+          pref="${avail[$major:$dist]:-}"
+          [[ -n "$pref" ]] && break
+        done
+        label="Java $major  ($pref)"
         [[ "$major" == "$newest" ]] && state="on" || state="off"
       fi
       items+=("$major" "$label" "$state")
@@ -323,7 +411,7 @@ install_java_jdks() {
     local lh="${#majors[@]}"
     [[ $lh -lt 6 ]] && lh=6
     [[ $lh -gt 12 ]] && lh=12
-    local wh=$((lh + 10))
+    local wh=$((lh + 12))
 
     local raw
     raw=$(dialog \
@@ -332,7 +420,7 @@ install_java_jdks() {
       --title " Java JDKs (SDKMAN) " \
       --separate-output \
       --checklist \
-      "¿Qué JDKs instalar?  [SPACE=toggle  ENTER=confirm]\n\nDistribución: $JDK_DIST. Los que dicen \Z2\Zb✓ instalado\Zn ya están\nen SDKMAN: se saltan aunque los marques." \
+      "¿Qué JDKs instalar?  [SPACE=toggle  ENTER=confirm]\n\nLos que dicen \Z2\Zb✓ instalado\Zn se saltan aunque los marques; los\n\Z1\Zb✗ no arranca\Zn se reinstalan con otra distribución.\nOrden: ${JDK_DISTS[*]} (si un build no arranca, se prueba el siguiente)." \
       "$wh" 76 "$lh" \
       "${items[@]}" \
       3>&1 1>&2 2>&3) || {
@@ -347,25 +435,28 @@ install_java_jdks() {
     done <<< "$raw"
   fi
 
+  local old
   for major in "${chosen[@]}"; do
     if [[ -n "${installed[$major]:-}" ]]; then
       skip "Java $major already installed (${installed[$major]})"
       continue
     fi
-    id="${latest_id[$major]:-}"
-    [[ -z "$id" ]] && continue
-    info "Installing Java $id..."
-    # "n" responde a "¿usar como default?"; el default se decide abajo. Si es
-    # el primer JDK, sdk lo pone de default sin preguntar.
-    if sdk_run install java "$id" <<< "n"; then
-      ok "Java $id installed"
-      installed_ids+=("$id")
-    else
-      warn "Failed to install Java $id"
-    fi
+    install_jdk_major "$major" || continue
+    working_ids+=("$JDK_NEW_ID")
+
+    # Reparado: retira los builds rotos de esa mayor. Si uno era el default,
+    # el reemplazo hereda ese lugar.
+    for old in ${broken[$major]:-}; do
+      if sdk_run uninstall java "$old" --force &>/dev/null; then
+        ok "Removed broken Java $old"
+      else
+        warn "No se pudo desinstalar $old"
+      fi
+      [[ "$old" == "$prev_default" ]] && prev_default="$JDK_NEW_ID"
+    done
   done
 
-  java_pick_default "$prev_default" "${installed_ids[@]}"
+  java_pick_default "$prev_default" "${working_ids[@]}"
 }
 
 # Elige el JDK por defecto de SDKMAN ($1 = default previo, resto = instalados).

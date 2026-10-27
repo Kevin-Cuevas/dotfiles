@@ -1,11 +1,11 @@
 return {
   "folke/snacks.nvim",
   opts = function(_, opts)
-    -- Obtener el nombre del usuario de Linux
-    local username = vim.loop.os_gethostname() or "HOST"
+    -- Nombre de la máquina (hostname)
+    local username = vim.uv.os_gethostname() or "HOST"
 
     -- Detectar si es Termux (usuarios que empiezan con u0_a)
-    if username:match("^u0_a%d+$") then
+    if (vim.uv.os_get_passwd().username or ""):match("^u0_a%d+$") then
       username = "TERMUX"
     end
 

@@ -123,6 +123,10 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 [[ -f "$HOME/.deno/env" ]] && source "$HOME/.deno/env"
 
+# SDKMAN (java)
+export SDKMAN_DIR="$HOME/.sdkman"
+[[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
+
 # TMUXP path
 export TMUXP_CONFIGDIR="$HOME/dev/infra/tmuxp"
 

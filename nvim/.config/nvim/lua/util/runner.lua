@@ -1,6 +1,6 @@
--- # ==========================================================
--- # HELPERS
--- # ==========================================================
+-- File runner for <leader>rr / <leader>ra (keys in plugins/terminal.lua) ==>
+-- builds the shell command per extension and opens a floating Snacks terminal.
+local M = {}
 
 -- Detect Java build system ==> Maven/Gradle/Plain
 local function detect_java_project_type(dir)
@@ -71,9 +71,11 @@ local function java_mains(file)
         and mods:type() == "modifiers"
         and text(mods):find("public")
         and text(mods):find("static")
-        and (params:match("^%(String%[%][%w_$]+%)$") or params:match("^%(String%.%.%.[%w_$]+%)$") or params:match(
-          "^%(String[%w_$]+%[%]%)$"
-        ))
+        and (
+          params:match("^%(String%[%][%w_$]+%)$")
+          or params:match("^%(String%.%.%.[%w_$]+%)$")
+          or params:match("^%(String[%w_$]+%[%]%)$")
+        )
       if is_main then
         -- enclosing types up to the file; skip anonymous/local classes
         local names, cls, p = {}, nil, node:parent()
@@ -181,11 +183,11 @@ local function find_project_main(p_type, root, dir)
 end
 
 -- Prefix that points Maven/Gradle at the JDK the project asks for ==> the same
--- one jdtls picks (see config/jdks.lua), not whatever `java` the terminal has.
+-- one jdtls picks (see util/jdks.lua), not whatever `java` the terminal has.
 -- Empty when the project does not say or no suitable JDK is installed.
 -- Returns prefix, major of the JDK that will run (the terminal's when no prefix).
 local function jdk_prefix(p_type, root)
-  local jdks = require("config.jdks")
+  local jdks = require("util.jdks")
   local want = jdks.target_release(p_type, root)
   if not want then
     return "", java_major()
@@ -436,153 +438,59 @@ local function run_file(file, args_str, main)
   })
 end
 
--- # ==========================================================
--- # SNACKS TERMINAL CONFIG
--- # ==========================================================
-
--- CTRL+/ terminal ==> bottom split like the LazyVim original. A split can't have
--- a real float border/title, so its "header" is the winbar: we replace the
--- default "1: term://.../zsh" with "󰆍 Terminal". Edit it here:
---   left  -> "  󰆍 Terminal"      right -> "%=󰆍 Terminal"      center -> "%=󰆍 Terminal%="
-local function bottom_terminal()
-  Snacks.terminal.toggle(nil, {
-    count = 1,
-    cwd = LazyVim.root(),
-    win = {
-      style = "terminal",
-      position = "bottom",
-      height = 0.4,
-      wo = { winbar = "%=󰆍 Terminal%=" },
-    },
-    interactive = true,
-    auto_close = true,
-  })
+-- <leader>rr ==> run the current file
+function M.run()
+  local file = current_file()
+  if file then
+    run_file(file)
+  end
 end
 
-return {
-  {
-    "folke/snacks.nvim",
-    keys = {
-      -- CTRL+/ TERMINAL ==> bottom split (overrides the LazyVim default only to
-      -- give it a clean winbar; still a split, not a float).
-      { "<C-/>", bottom_terminal, mode = { "n", "t" }, desc = "Terminal (bottom)" },
-      { "<C-_>", bottom_terminal, mode = { "n", "t" }, desc = "which_key_ignore" },
+-- <leader>ra ==> ask for args (@args header or free text), then run
+function M.run_with_args()
+  local file = current_file()
+  if not file then
+    return
+  end
 
-      -- SMART TOGGLE ==> Prioritize active run buffer over scratch
-      {
-        "<C-\\>",
-        function()
-          if _G.Run and _G.Run.buf and vim.api.nvim_buf_is_valid(_G.Run.buf) then
-            _G.Run:toggle()
-          else
-            Snacks.terminal.toggle(nil, {
-              count = 2,
-              win = {
-                style = "float",
-                width = 0.9,
-                height = 0.8,
-                border = "rounded",
-                title = "󰆍 Terminal ",
-                title_pos = "center",
-                wo = { winblend = 0, winhighlight = "Normal:Normal,FloatBorder:FloatBorder" },
-                backdrop = false,
-              },
-              interactive = true,
-              auto_close = true,
-            })
-          end
-        end,
-        mode = { "n", "t" },
-        desc = "Smart terminal toggle",
-      },
+  local function execute_with_args(args_str)
+    run_file(file, args_str)
+  end
 
-      -- SPAWN VERTICAL ==> <leader> + t + v
-      {
-        "<leader>tv",
-        function()
-          Snacks.terminal.open(nil, {
-            count = 3,
-            win = {
-              position = "right",
-              width = 0.4,
-              border = "rounded",
-              title = "󰆍 Vertical Term ",
-              title_pos = "center",
-            },
-            interactive = true,
-            auto_close = false,
-          })
-        end,
-        desc = "Vertical terminal",
-      },
+  -- Trigger CLI Interactive Prompts
+  local expected_args = parse_args_metadata(file)
 
-      -- RUN GROUP ==> <leader> + r (name shown in which-key)
-      { "<leader>r", "", desc = "+run" },
+  if expected_args and #expected_args > 0 then
+    local collected = {}
+    local function ask_next(i)
+      if i > #expected_args then
+        execute_with_args(table.concat(collected, " "))
+        return
+      end
 
-      -- RUN COMMAND ==> <leader> + r + r  (alias: F5)
-      {
-        "<leader>rr",
-        function()
-          local file = current_file()
-          if file then
-            run_file(file)
-          end
-        end,
-        desc = "Execute file",
-      },
-      { "<F5>", "<leader>rr", remap = true, desc = "Execute file" },
+      local arg = expected_args[i]
+      -- FORMAT: Capitalize name -> Name [type]
+      local title_name = arg.name:gsub("^%l", string.upper)
+      local prompt_str = string.format(" %s [%s] ", title_name, arg.type)
 
-      -- ARGS RUNNER ==> <leader> + r + a  (alias: F6)
-      {
-        "<leader>ra",
-        function()
-          local file = current_file()
-          if not file then
-            return
-          end
+      vim.ui.input({ prompt = prompt_str }, function(input)
+        if not input then
+          return
+        end -- User aborted (Esc)
+        table.insert(collected, input)
+        ask_next(i + 1)
+      end)
+    end
+    ask_next(1)
+  else
+    -- Standard fallback
+    vim.ui.input({ prompt = " CLI Args " }, function(args)
+      if not args or args == "" then
+        return
+      end
+      execute_with_args(args)
+    end)
+  end
+end
 
-          local function execute_with_args(args_str)
-            run_file(file, args_str)
-          end
-
-          -- Trigger CLI Interactive Prompts
-          local expected_args = parse_args_metadata(file)
-
-          if expected_args and #expected_args > 0 then
-            local collected = {}
-            local function ask_next(i)
-              if i > #expected_args then
-                execute_with_args(table.concat(collected, " "))
-                return
-              end
-
-              local arg = expected_args[i]
-              -- FORMAT: Capitalize name -> Name [type]
-              local title_name = arg.name:gsub("^%l", string.upper)
-              local prompt_str = string.format(" %s [%s] ", title_name, arg.type)
-
-              vim.ui.input({ prompt = prompt_str }, function(input)
-                if not input then
-                  return
-                end -- User aborted (Esc)
-                table.insert(collected, input)
-                ask_next(i + 1)
-              end)
-            end
-            ask_next(1)
-          else
-            -- Standard fallback
-            vim.ui.input({ prompt = " CLI Args " }, function(args)
-              if not args or args == "" then
-                return
-              end
-              execute_with_args(args)
-            end)
-          end
-        end,
-        desc = "Run with args",
-      },
-      { "<F6>", "<leader>ra", remap = true, desc = "Run with args" },
-    },
-  },
-}
+return M

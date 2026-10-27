@@ -1,5 +1,5 @@
 -- JDKs instalados (SDKMAN y Debian) y qué JDK pide un proyecto. Lo usan
--- plugins/java.lua (runtimes de jdtls) y plugins/extras/snack-term.lua (rr/ra),
+-- plugins/java.lua (runtimes de jdtls) y util/runner.lua (rr/ra),
 -- para que el editor y F5 compilen con el mismo JDK.
 local M = {}
 

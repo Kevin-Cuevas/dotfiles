@@ -7,13 +7,6 @@
 -- Or remove existing autocmds by their group name (which is prefixed with `lazyvim_` for the defaults)
 -- e.g. vim.api.nvim_del_augroup_by_name("lazyvim_wrap_spell")
 
--- Cambiar color de inlay hints
-vim.api.nvim_set_hl(0, "LspInlayHint", {
-  fg = "#81A1C1", -- Púrpura más visible
-  bg = "NONE", -- Sin fondo
-  italic = true, -- Cursiva opcional
-})
-
 -- Para cuando se entra al terminal (incluye toggle)
 vim.api.nvim_create_autocmd("TermEnter", {
   callback = function()

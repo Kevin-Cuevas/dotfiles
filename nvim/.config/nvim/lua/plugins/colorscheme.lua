@@ -112,4 +112,23 @@ return {
       end
     end,
   },
+
+  -- dark theme (light one: colors/nord-snow-storm.lua)
+  {
+    "gbprod/nord.nvim",
+    lazy = false,
+    priority = 1000,
+    opts = {
+      terminal_colors = true,
+      styles = {
+        comments = { italic = true },
+      },
+      -- lighter grey for hidden files (Snacks), NonText and comments
+      on_highlights = function(highlights)
+        highlights.NonText = { fg = "#6C7680" }
+        highlights.SnacksHidden = { fg = "#6C7680" }
+        highlights.Comment = { fg = "#6C7680", italic = true }
+      end,
+    },
+  },
 }

@@ -9,10 +9,11 @@ return {
       name = "TERMUX"
     end
 
-    -- Mismo banner que dev-motd (texto plano si no hay toilet)
+    -- Banner ANSI Shadow, fuente en figlet/ (texto plano si no hay toilet)
     local header = name
     if vim.fn.executable("toilet") == 1 then
-      local out = vim.system({ "toilet", "-f", "pagga", name }, { text = true }):wait()
+      local fonts = vim.fn.stdpath("config") .. "/figlet"
+      local out = vim.system({ "toilet", "-d", fonts, "-f", "ansi_shadow", name }, { text = true }):wait()
       if out.code == 0 and out.stdout ~= "" then
         header = vim.trim(out.stdout)
       end

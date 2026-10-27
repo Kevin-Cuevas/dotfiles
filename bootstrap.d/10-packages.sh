@@ -32,7 +32,9 @@ APT_PKGS=(
   direnv
   eza
   pipx
+  zip
   unzip
+  default-jdk
 )
 
 install_packages() {

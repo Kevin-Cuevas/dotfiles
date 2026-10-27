@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # dev-packages — front door para todas las herramientas no-apt (nvim, tmux,
-# kitty, yazi, peaclock, tmuxp, lavat, pgcli, mycli, csvkit): dos checklists `dialog`
+# kitty, yazi, tree-sitter, peaclock, tmuxp, lavat, pgcli, mycli, csvkit): dos
+# checklists `dialog`
 # en secuencia (build/tarball, luego pipx) que instalan o actualizan lo que
 # el usuario marque. Standalone, igual que dev-ssh/dev-motd:
 # no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR, así que también corre
@@ -13,6 +14,7 @@
 #   - tmux    -> build desde fuente + último tag de git vs. versión instalada
 #                (mismo patrón que nvim, ver install_tmux más abajo).
 #   - yazi    -> compara versión contra el binario recién descargado.
+#   - tree-sitter -> igual que yazi (binario de GitHub, versión-checked).
 #   - kitty   -> siempre re-corre el instalador oficial (in-place, seguro).
 #   - tmuxp/pgcli/mycli/csvkit -> pipx install / pipx upgrade (ver
 #                install_via_pipx más abajo). Si pipx no está instalado,
@@ -22,12 +24,12 @@
 #                compara el SHA remoto del HEAD contra uno guardado en
 #                ~/.local/share/dev-packages/<tool>.sha tras el último build.
 #
-# nvim y tmux también tienen paquete apt con el mismo nombre: por defecto,
+# nvim, tmux y tree-sitter también tienen paquete apt: por defecto,
 # instalarlos vía dev-packages remueve la versión apt (ver KEEP_APT_PKGS /
 # --keep-apt más abajo) para que solo quede una versión en el PATH.
 #
 # El checklist interactivo se muestra en dos pasos: primero build/tarball
-# (nvim, tmux, kitty, yazi, peaclock, lavat), luego pipx (tmuxp, pgcli,
+# (nvim, tmux, kitty, yazi, tree-sitter, peaclock, lavat), luego pipx (tmuxp, pgcli,
 # mycli, csvkit) — cada uno con su propio "Skip". Ver PKG_GROUP / select_group.
 #
 # Uso:
@@ -35,7 +37,7 @@
 #   dev-packages --all           instala/actualiza todo, sin diálogo
 #   dev-packages --only=a,b,c    instala/actualiza solo esas keys, sin diálogo
 #   dev-packages --keep-apt      no purga el paquete apt si existe uno con el
-#                                 mismo nombre (nvim/tmux) — deja ambos instalados
+#                                 mismo nombre (nvim/tmux/tree-sitter) — deja ambos instalados
 set -uo pipefail
 
 # ─── helpers (mismo estilo que bootstrap.d/00-core.sh) ───────────────────────
@@ -60,12 +62,13 @@ BACKTITLE="${DEV_PACKAGES_BACKTITLE:-dev-packages · $(hostname) · $(date '+%Y-
 STATE_DIR="$HOME/.local/share/dev-packages"
 
 # ─── registro ─────────────────────────────────────────────────────────────
-PKG_KEYS=(nvim tmux kitty yazi peaclock tmuxp lavat pgcli mycli csvkit)
+PKG_KEYS=(nvim tmux kitty yazi tree-sitter peaclock tmuxp lavat pgcli mycli csvkit)
 declare -A PKG_LABEL=(
   [nvim]="Neovim (build/tarball + versión)"
   [tmux]="tmux (terminal multiplexer, build desde fuente, versión-checked)"
   [kitty]="kitty (instalador oficial, actualiza in-place)"
   [yazi]="Yazi (file manager, release de GitHub, versión-checked)"
+  [tree-sitter]="tree-sitter CLI (parsers de nvim-treesitter, release de GitHub)"
   [peaclock]="Peaclock (reloj de terminal, build desde fuente, sha-checked)"
   [tmuxp]="tmuxp (tmux session manager, pipx install/upgrade)"
   [lavat]="lavat (lava lamp de terminal, build desde fuente, sha-checked)"
@@ -78,6 +81,7 @@ declare -A PKG_FN=(
   [tmux]="install_tmux"
   [kitty]="install_kitty"
   [yazi]="install_yazi"
+  [tree-sitter]="install_tree_sitter"
   [peaclock]="install_peaclock"
   [tmuxp]="install_tmuxp"
   [lavat]="install_lavat"
@@ -93,6 +97,7 @@ declare -A PKG_GROUP=(
   [tmux]="build"
   [kitty]="build"
   [yazi]="build"
+  [tree-sitter]="build"
   [peaclock]="build"
   [lavat]="build"
   [tmuxp]="pipx"
@@ -170,7 +175,7 @@ remote_head_sha() {
   git ls-remote "$1" HEAD 2>/dev/null | awk '{print $1}'
 }
 
-# ─── utilidad compartida: remover paquete apt homónimo (nvim/tmux) ──────────
+# ─── utilidad compartida: remover paquete apt homónimo (nvim/tmux/tree-sitter)
 # Por defecto purga el paquete apt si existe uno con el mismo nombre, para
 # que solo quede la versión de dev-packages en el PATH. KEEP_APT_PKGS=true
 # (o --keep-apt) lo deja instalado en vez de purgarlo. log/warn/ok resuelven
@@ -769,6 +774,101 @@ install_yazi() {
   rm -rf "$tmp"
 
   ok "Installed yazi + ya -> $HOME/.local/bin ($new_version)"
+}
+
+# Instala/actualiza el CLI de tree-sitter desde el binario precompilado oficial.
+# nvim-treesitter (rama main, LazyVim 15+) lo necesita para compilar parsers y
+# pide una versión reciente que el apt de Debians anteriores no trae. Mismo
+# flujo que install_yazi: descarga, lee la versión del binario candidato y la
+# compara con la instalada. El binario upstream pide glibc >= 2.39; si no
+# corre aquí, aborta sin tocar nada. Luego purga tree-sitter-cli de apt (ver
+# remove_apt_if_present) para que solo quede ~/.local/bin/tree-sitter.
+install_tree_sitter() {
+  sep
+  local arch asset
+  arch="$(uname -m)"
+  case "$arch" in
+  x86_64) asset="tree-sitter-linux-x64.gz" ;;
+  aarch64) asset="tree-sitter-linux-arm64.gz" ;;
+  *)
+    warn "No official tree-sitter binary for architecture '$arch' — skipping."
+    return 1
+    ;;
+  esac
+
+  local current_version=""
+  if command -v tree-sitter &>/dev/null; then
+    current_version="$(tree-sitter --version 2>/dev/null | head -1)"
+    info "Current tree-sitter version: ${current_version:-unknown} ($(command -v tree-sitter))"
+  else
+    info "tree-sitter is not currently installed."
+  fi
+
+  local tmp
+  tmp="$(mktemp -d)" || {
+    err "Could not create temp dir for tree-sitter download"
+    return 1
+  }
+
+  local url="https://github.com/tree-sitter/tree-sitter/releases/latest/download/${asset}"
+
+  info "Downloading $url ..."
+  if ! curl -fL --progress-bar -o "$tmp/$asset" "$url"; then
+    err "Failed to download $asset"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  if ! gunzip -f "$tmp/$asset"; then
+    err "Failed to extract $asset"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  local bin="$tmp/${asset%.gz}"
+  chmod +x "$bin"
+
+  local new_version
+  if ! new_version="$("$bin" --version 2>/dev/null | head -1)" || [[ -z "$new_version" ]]; then
+    err "Downloaded tree-sitter does not run here (needs glibc >= 2.39; this host has $(ldd --version 2>/dev/null | head -1 | awk '{print $NF}'))."
+    err "Fallback: cargo install --locked tree-sitter-cli"
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  if [[ -n "$current_version" && "$current_version" == "$new_version" ]]; then
+    if [[ "$NONINTERACTIVE" == "true" ]]; then
+      info "Non-interactive — reinstalling the same version ($new_version)."
+    else
+      if dialog \
+          --clear --colors \
+          --backtitle "$BACKTITLE" \
+          --title " tree-sitter " \
+          --defaultno \
+          --yesno "You already have $new_version installed.\n\nDownload and reinstall it anyway?" \
+          9 64; then
+        clear
+      else
+        clear
+        skip "tree-sitter reinstall skipped — already on $new_version"
+        rm -rf "$tmp"
+        return 0
+      fi
+    fi
+  else
+    info "Updating: ${current_version:-<none>} -> ${new_version:-<unknown>}"
+  fi
+
+  mkdir -p "$HOME/.local/bin"
+  install -m 755 "$bin" "$HOME/.local/bin/tree-sitter"
+  rm -rf "$tmp"
+
+  (
+    log() { info "$*"; }
+    remove_apt_if_present tree-sitter-cli
+  )
+
+  ok "Installed tree-sitter -> $HOME/.local/bin ($new_version)"
 }
 
 # Asegura pipx instalado antes de usarlo. Si falta, lo instala solo vía apt

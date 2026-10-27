@@ -128,6 +128,8 @@ return {
         highlights.NonText = { fg = "#6C7680" }
         highlights.SnacksHidden = { fg = "#6C7680" }
         highlights.Comment = { fg = "#6C7680", italic = true }
+        -- dashboard banner in Nord frost, like dev-motd
+        highlights.SnacksDashboardHeader = { fg = "#88C0D0", bold = true }
       end,
     },
   },

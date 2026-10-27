@@ -11,7 +11,10 @@ return {
         table.insert(opts.cmd, "--java-executable=" .. jdk .. "/bin/java")
       else
         vim.notify(
-          ("jdtls necesita JDK %d+: sudo apt install openjdk-%d-jdk-headless"):format(JDTLS_MIN_JAVA, JDTLS_MIN_JAVA),
+          ("jdtls necesita JDK %d+: sdk install java <%d+>-tem (o bootstrap, opción 12)"):format(
+            JDTLS_MIN_JAVA,
+            JDTLS_MIN_JAVA
+          ),
           vim.log.levels.WARN,
           { title = "jdtls" }
         )

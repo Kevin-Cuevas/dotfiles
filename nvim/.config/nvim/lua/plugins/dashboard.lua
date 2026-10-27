@@ -39,17 +39,20 @@ return {
         for _, font in ipairs(fonts) do
           local b = banner(font)
           if b and b.width <= width then
-            return b.text
+            return b.text, b.width
           end
         end
       end
-      return name
+      return name, vim.fn.strdisplaywidth(name)
     end
 
     opts.dashboard = opts.dashboard or {}
     opts.dashboard.enabled = true
     opts.dashboard.preset = opts.dashboard.preset or {}
     opts.dashboard.preset.header = name
+    -- Ancho normal del menú; en ventanas angostas se encoge al ancho del banner
+    local base_width = opts.dashboard.width or 60
+    local min_width = 30
 
     -- Sustituir la sección header por una que se recalcula en cada render (resize incluido)
     opts.dashboard.sections = opts.dashboard.sections
@@ -57,7 +60,15 @@ return {
     for i, section in ipairs(opts.dashboard.sections) do
       if type(section) == "table" and section.section == "header" then
         opts.dashboard.sections[i] = function(self)
-          return { header = header(self:size().width), padding = 2 }
+          local win_width = self:size().width
+          local text, width = header(win_width)
+          -- Se resuelve antes del layout, así que el nuevo ancho aplica al render actual
+          if win_width < base_width + 10 then
+            self.opts.width = math.min(base_width, win_width - 2, math.max(width, min_width))
+          else
+            self.opts.width = base_width
+          end
+          return { header = text, padding = 2 }
         end
       end
     end

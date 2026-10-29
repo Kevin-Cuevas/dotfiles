@@ -13,8 +13,9 @@ return {
     local fonts_dir = vim.fn.stdpath("config") .. "/figlet"
     local fonts = { "ansi_shadow", "pagga", "future" }
     local has_toilet = vim.fn.executable("toilet") == 1
+    local plain = { text = name, width = vim.fn.strdisplaywidth(name), height = 1 }
 
-    -- Cache por fuente: { text, width }
+    -- Cache por fuente: { text, width, height }
     local banners = {}
     local function banner(font)
       if banners[font] == nil then
@@ -23,27 +24,51 @@ return {
         local out = vim.system({ "toilet", "-d", fonts_dir, "-w", "999", "-f", font, name }, { text = true }):wait()
         if out.code == 0 and out.stdout ~= "" then
           local text = vim.trim(out.stdout)
+          local lines = vim.split(text, "\n")
           local width = 0
-          for _, line in ipairs(vim.split(text, "\n")) do
+          for _, line in ipairs(lines) do
             width = math.max(width, vim.fn.strdisplaywidth(line))
           end
-          banners[font] = { text = text, width = width }
+          banners[font] = { text = text, width = width, height = #lines }
         end
       end
       return banners[font] or nil
     end
 
-    -- Primera fuente que cabe en la ventana del dashboard
-    local function header(width)
+    -- Banners que caben a lo ancho, de mayor a menor
+    local function candidates(width)
+      local ret = {}
       if has_toilet then
         for _, font in ipairs(fonts) do
           local b = banner(font)
           if b and b.width <= width then
-            return b.text, b.width
+            ret[#ret + 1] = b
           end
         end
       end
-      return name, vim.fn.strdisplaywidth(name)
+      return ret
+    end
+
+    -- Layout que cabe a lo alto; se degrada en orden: gap 0, fuente más baja,
+    -- sin startup y, al final, el nombre en texto plano
+    local function fit(size, nkeys)
+      local function rows(b, gap, startup)
+        -- header + padding 2, keys + gaps + padding 1, startup
+        return b.height + 2 + nkeys + gap * math.max(nkeys - 1, 0) + 1 + (startup and 1 or 0)
+      end
+      local banners_fit = candidates(size.width)
+      for _, list in ipairs({ banners_fit, { plain } }) do
+        for _, startup in ipairs({ true, false }) do
+          for _, b in ipairs(list) do
+            for _, gap in ipairs({ 1, 0 }) do
+              if rows(b, gap, startup) <= size.height then
+                return { banner = b, gap = gap, startup = startup }
+              end
+            end
+          end
+        end
+      end
+      return { banner = plain, gap = 0, startup = false }
     end
 
     opts.dashboard = opts.dashboard or {}
@@ -54,21 +79,34 @@ return {
     local base_width = opts.dashboard.width or 60
     local min_width = 30
 
-    -- Sustituir la sección header por una que se recalcula en cada render (resize incluido)
+    -- Layout del render actual: lo decide el header y lo leen keys y startup
+    local layout = { gap = 1, startup = true }
+
+    -- Sustituir header, keys y startup por secciones que se recalculan en cada render (resize incluido)
     opts.dashboard.sections = opts.dashboard.sections
       or { { section = "header" }, { section = "keys", gap = 1, padding = 1 }, { section = "startup" } }
     for i, section in ipairs(opts.dashboard.sections) do
       if type(section) == "table" and section.section == "header" then
         opts.dashboard.sections[i] = function(self)
-          local win_width = self:size().width
-          local text, width = header(win_width)
+          local size = self:size()
+          local keys = self.opts.preset.keys
+          layout = fit(size, type(keys) == "table" and #keys or 0)
+          local b = layout.banner
           -- Se resuelve antes del layout, así que el nuevo ancho aplica al render actual
-          if win_width < base_width + 10 then
-            self.opts.width = math.min(base_width, win_width - 2, math.max(width, min_width))
+          if size.width < base_width + 10 then
+            self.opts.width = math.min(base_width, size.width - 2, math.max(b.width, min_width))
           else
             self.opts.width = base_width
           end
-          return { header = text, padding = 2 }
+          return { header = b.text, padding = 2 }
+        end
+      elseif type(section) == "table" and section.section == "keys" then
+        opts.dashboard.sections[i] = function()
+          return vim.tbl_extend("force", section, { gap = math.min(section.gap or 0, layout.gap) })
+        end
+      elseif type(section) == "table" and section.section == "startup" then
+        opts.dashboard.sections[i] = function()
+          return layout.startup and section or {}
         end
       end
     end

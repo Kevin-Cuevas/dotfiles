@@ -54,26 +54,6 @@ return {
         desc = "Smart terminal toggle",
       },
 
-      -- SPAWN VERTICAL ==> <leader> + t + v
-      {
-        "<leader>tv",
-        function()
-          Snacks.terminal.open(nil, {
-            count = 3,
-            win = {
-              position = "right",
-              width = 0.4,
-              border = "rounded",
-              title = "󰆍 Vertical Term ",
-              title_pos = "center",
-            },
-            interactive = true,
-            auto_close = false,
-          })
-        end,
-        desc = "Vertical terminal",
-      },
-
       -- RUN GROUP ==> <leader> + r (name shown in which-key)
       { "<leader>r", "", desc = "+run" },
 

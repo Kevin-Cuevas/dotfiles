@@ -40,6 +40,7 @@ dotfiles/
 ├── cava/         -> ~/.config/cava
 ├── icons/        -> ~/.icons              cursor and icon themes
 ├── kitty/        -> ~/.config/kitty
+├── konsole/      -> ~/.local/share/konsole  Konsole/Yakuake profiles + Nordic colorschemes  [per-file]
 ├── nvim/         -> ~/.config/nvim        LazyVim config
 ├── peaclock/     -> ~/.peaclock
 ├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local [per-file]
@@ -261,9 +262,9 @@ manual ones.
 ## Packages installed by bootstrap
 
 ```
-git stow zsh wget curl fzf ripgrep fd-find bat zoxide
-taskwarrior timewarrior build-essential figlet wl-clipboard
-direnv eza pipx unzip
+git stow zsh wget kitty-terminfo curl fzf ripgrep fd-find bat zoxide
+taskwarrior timewarrior build-essential cmake libicu-dev golang figlet toilet
+wl-clipboard direnv eza pipx zip unzip default-jdk
 ```
 
 ---
@@ -280,7 +281,7 @@ menu option **5**:
 dev-packages                 # interactive checklist (dialog)
 dev-packages --all           # install/update everything, no prompts
 dev-packages --only=kitty    # install/update just one, no prompts
-dev-packages --keep-apt      # don't purge a same-named apt package (nvim/tmux)
+dev-packages --keep-apt      # don't purge a same-named apt package (nvim/tmux/tree-sitter)
 ```
 
 It manages:
@@ -291,11 +292,12 @@ It manages:
 | `tmux`     | build-from-source only (no upstream precompiled binaries) — latest git tag compared against the installed version |
 | `kitty`    | re-runs the official installer script — safe, replaces in-place  |
 | `yazi`     | compares the downloaded binary's version against the installed one |
-| `tmuxp`    | `pipx install` if missing, `pipx upgrade` if already installed   |
+| `tree-sitter` | same as yazi (GitHub release binary, version-checked)          |
+| `tmuxp`, `pgcli`, `mycli`, `csvkit` | `pipx install` if missing, `pipx upgrade` if already installed |
 | `peaclock` | no upstream releases — compares the remote git HEAD sha against one saved after the last build |
 | `lavat`    | same as peaclock: remote git HEAD sha comparison                 |
 
-`nvim` and `tmux` also have a same-named apt package: by default, installing
+`nvim`, `tmux` and `tree-sitter` also have a same-named apt package: by default, installing
 them via `dev-packages` purges the apt version afterward so only one binary
 ends up on the `PATH` — pass `--keep-apt` (or set `KEEP_APT_PKGS=true`) to
 leave the apt package installed alongside it instead.
@@ -315,7 +317,7 @@ cd ~/dotfiles
 # Whole-folder packages (one symlink per package)
 stow cava icons kitty nvim peaclock task templates tmux zsh
 # Per-file packages (--no-folding: real directory + one symlink per file)
-stow --no-folding bin ssh zsh-completions
+stow --no-folding bin konsole ssh zsh-completions
 ```
 
 ---
@@ -340,8 +342,9 @@ stow --no-folding bin ssh zsh-completions
   `tmux-theme-*`). Everything installed by a native installer (pipx, curl
   releases, the Claude Code / aws-cli installers, ...) lands in the *real*
   `~/.local/bin` and is invisible to git.
-- Neovim, tmux, kitty, yazi, tmuxp, peaclock and lavat are all installed/updated
-  via **`dev-packages`**, not apt — see **Extra (non-apt) packages** above
-  for how each one detects updates.
+- Neovim, tmux, kitty, yazi, tree-sitter, tmuxp, pgcli, mycli, csvkit,
+  peaclock and lavat are all installed/updated via **`dev-packages`**, not
+  apt — see **Extra (non-apt) packages** above for how each one detects
+  updates.
 - The Timewarrior hook (`on-modify.timewarrior`) must be installed once per
-  machine; the bootstrap handles it via option 7.
+  machine; the bootstrap handles it via option 8.

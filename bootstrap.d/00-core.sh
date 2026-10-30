@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # bootstrap.d/00-core.sh — shared UI/logging primitives
 # ==============================================================================
 # Colors, log helpers (info/ok/err/warn/skip/die/sep), the generic
@@ -63,10 +64,13 @@ checklist_select_or_all() {
   clear
 
   local _raw_chosen=() _line
-  while IFS= read -r _line; do [[ -n "$_line" ]] && _raw_chosen+=("$_line"); done <<< "$_raw"
+  while IFS= read -r _line; do [[ -n "$_line" ]] && _raw_chosen+=("$_line"); done <<<"$_raw"
 
   for _line in "${_raw_chosen[@]}"; do
-    [[ "$_line" == "__skip__" ]] && { _out_ref=(); return 0; }
+    [[ "$_line" == "__skip__" ]] && {
+      _out_ref=()
+      return 0
+    }
   done
 
   if [[ ${#_raw_chosen[@]} -eq 0 ]]; then

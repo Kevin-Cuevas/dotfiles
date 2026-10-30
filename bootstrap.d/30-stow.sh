@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # bootstrap.d/30-stow.sh — stow strategy + systemd --user unit linking
 # ==============================================================================
 # stow_packages() (menu option 4) dispatches each package to
@@ -40,7 +41,7 @@ declare -A STOW_PER_FILE_TARGET=(
   [bin]=".local/bin"
   [konsole]=".local/share/konsole"
   [ssh]=".ssh"
-  [zsh-completions]=".zsh/completions"
+  ["zsh-completions"]=".zsh/completions"
 )
 
 # Whole-folder packages: one symlink for the entire package directory.
@@ -105,11 +106,11 @@ stow_packages() {
       return
     }
 
-    clear   # wipe dialog remnants before stow logs
+    clear # wipe dialog remnants before stow logs
 
     while IFS= read -r item; do
       [[ -n "$item" ]] && chosen+=("$item")
-    done <<< "$raw"
+    done <<<"$raw"
 
     if [[ ${#chosen[@]} -eq 0 ]]; then
       warn "No packages selected."
@@ -132,18 +133,14 @@ stow_packages() {
   local stowed=0 conflicts=0
 
   for pkg in "${chosen[@]}"; do
-    local stow_err
-    if [[ " ${STOW_PER_FILE_PACKAGES[*]} " == *" $pkg "* ]]; then
-      stow_err=$(stow_per_file "$pkg" 2>&1)
-    else
-      stow_err=$(stow_whole_folder "$pkg" 2>&1)
-    fi
-    if [[ $? -eq 0 ]]; then
+    local stow_err stow_fn=stow_whole_folder
+    [[ " ${STOW_PER_FILE_PACKAGES[*]} " == *" $pkg "* ]] && stow_fn=stow_per_file
+    if stow_err=$("$stow_fn" "$pkg" 2>&1); then
       ok "Stowed: $pkg"
       ((stowed++)) || true
     else
       warn "Conflict stowing $pkg:"
-      echo "$stow_err" | sed 's/^/         /' >&2
+      printf '         %s\n' "${stow_err//$'\n'/$'\n'         }" >&2
       warn "Remove conflicting files or run stow manually to resolve."
       ((conflicts++)) || true
     fi
@@ -182,8 +179,8 @@ link_systemd_units() {
 
   local linked=0 f name
   for f in "$DOTFILES_DIR"/system/services/infra-*.service \
-           "$DOTFILES_DIR"/system/timers/infra-*.service \
-           "$DOTFILES_DIR"/system/timers/infra-*.timer; do
+    "$DOTFILES_DIR"/system/timers/infra-*.service \
+    "$DOTFILES_DIR"/system/timers/infra-*.timer; do
     [[ -e "$f" ]] || continue
     name="$(basename "$f")"
     ln -sf "$f" "$unit_dir/$name"

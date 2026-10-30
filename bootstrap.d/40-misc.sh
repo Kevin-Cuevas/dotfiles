@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # bootstrap.d/40-misc.sh — shell/permissions, dev-* launchers, fonts, TPM, TW hook
 # ==============================================================================
 # Small, mostly-independent menu-option implementations that don't warrant
@@ -35,11 +36,11 @@ set_default_shell() {
   # En Run everything interactivo, confirmar antes de cambiar el shell
   if [[ "$confirm" == true && "$NONINTERACTIVE" == false ]]; then
     if dialog \
-        --clear --colors \
-        --backtitle "$BACKTITLE" \
-        --title " Cambiar shell por defecto " \
-        --yesno "¿Establecer zsh ($zsh_path) como tu shell por defecto?\n\nEjecuta: chsh -s $zsh_path $USER\nEfectivo en la próxima sesión." \
-        10 64; then
+      --clear --colors \
+      --backtitle "$BACKTITLE" \
+      --title " Cambiar shell por defecto " \
+      --yesno "¿Establecer zsh ($zsh_path) como tu shell por defecto?\n\nEjecuta: chsh -s $zsh_path $USER\nEfectivo en la próxima sesión." \
+      10 64; then
       clear
     else
       clear
@@ -122,9 +123,10 @@ install_fonts() {
       continue
     fi
     info "Downloading $font Nerd Font..."
-    local tmp; tmp="$(mktemp /tmp/${font}XXXXXX.zip)"
+    local tmp
+    tmp="$(mktemp /tmp/${font}XXXXXX.zip)"
     if curl -fL "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.0.2/${font}.zip" \
-        -o "$tmp" 2>/dev/null; then
+      -o "$tmp" 2>/dev/null; then
       unzip -o "$tmp" -d "$font_dir" &>/dev/null
       rm -f "$tmp"
       ok "$font Nerd Font installed"
@@ -137,7 +139,11 @@ install_fonts() {
 
   if $refreshed; then
     info "Refreshing font cache..."
-    fc-cache -fv "$font_dir" &>/dev/null && ok "Font cache updated" || warn "fc-cache failed"
+    if fc-cache -fv "$font_dir" &>/dev/null; then
+      ok "Font cache updated"
+    else
+      warn "fc-cache failed"
+    fi
   fi
 }
 

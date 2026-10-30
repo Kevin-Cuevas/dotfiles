@@ -7,14 +7,18 @@ DEST="${DOTFILES_DIR:-$HOME/dotfiles}"
 RED='\e[38;2;191;97;106m'
 GRN='\e[38;2;163;190;140m'
 BLU='\e[38;2;136;192;208m'
+# shellcheck disable=SC2034 # paleta Nord compartida entre scripts; aquí no se usa
 YLW='\e[38;2;235;203;139m'
 BLD='\e[1m'
 RST='\e[0m'
 
 info() { printf "${BLU}[INFO]${RST}  %s\n" "$*"; }
-ok()   { printf "${GRN}[OK]${RST}    %s\n" "$*"; }
-err()  { printf "${RED}[ERR]${RST}   %s\n" "$*" >&2; }
-die()  { err "$*"; exit 1; }
+ok() { printf "${GRN}[OK]${RST}    %s\n" "$*"; }
+err() { printf "${RED}[ERR]${RST}   %s\n" "$*" >&2; }
+die() {
+  err "$*"
+  exit 1
+}
 
 command -v git &>/dev/null || die "git is not installed. Run: sudo apt-get install -y git"
 

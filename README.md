@@ -282,6 +282,7 @@ dev-packages                 # interactive checklist (dialog)
 dev-packages --all           # install/update everything, no prompts
 dev-packages --only=kitty    # install/update just one, no prompts
 dev-packages --keep-apt      # don't purge a same-named apt package (nvim/tmux/tree-sitter)
+dev-packages --help          # usage + the list of package keys
 ```
 
 It manages:
@@ -290,9 +291,8 @@ It manages:
 | ---------- | ----------------------------------------------------------------- |
 | `nvim`     | its own `install_nvim` function: choice of build-from-source (`-march=native`) or precompiled tarball, version-compared before reinstalling |
 | `tmux`     | build-from-source only (no upstream precompiled binaries) — latest git tag compared against the installed version |
-| `kitty`    | re-runs the official installer script — safe, replaces in-place  |
-| `yazi`     | compares the downloaded binary's version against the installed one |
-| `tree-sitter` | same as yazi (GitHub release binary, version-checked)          |
+| `kitty`    | compares the official `current-version.txt` against the installed version; if needed, downloads the official installer to a file and runs it (replaces in-place) |
+| `yazi`, `tree-sitter` | shared `github_release_install`: downloads the latest GitHub release asset, compares the downloaded binary's version against the installed one |
 | `tmuxp`, `pgcli`, `mycli`, `csvkit` | `pipx install` if missing, `pipx upgrade` if already installed |
 | `peaclock` | no upstream releases — compares the remote git HEAD sha against one saved after the last build |
 | `lavat`    | same as peaclock: remote git HEAD sha comparison                 |
@@ -305,6 +305,9 @@ leave the apt package installed alongside it instead.
 Same checklist semantics as the apt packages dialog: leave everything
 unchecked and press ENTER to install/update all of them, or check "Skip" to
 do nothing.
+
+Everything temporary (downloads, clones, builds) lives in a single work
+directory that a trap removes on exit, Ctrl-C included.
 
 ---
 

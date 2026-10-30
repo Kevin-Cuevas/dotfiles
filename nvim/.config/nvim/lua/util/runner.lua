@@ -1,6 +1,48 @@
 -- File runner for <leader>rr / <leader>ra (keys in plugins/terminal.lua) ==>
 -- builds the shell command per extension and opens a floating Snacks terminal.
+-- package.json menu in util/runner_node.lua, processes in util/runner_procs.lua.
 local M = {}
+
+local node = require("util.runner_node")
+local procs = require("util.runner_procs")
+
+-- Memory between sessions ==> last args per item, so <leader>ra pre-fills them.
+-- JSON in stdpath("state"): machine state, not dotfiles (like lazy-lock.json).
+local memory = { path = vim.fn.stdpath("state") .. "/runner.json" }
+
+function memory.load()
+  if not memory.data then
+    local ok, data = false, nil
+    if vim.fn.filereadable(memory.path) == 1 then
+      ok, data = pcall(vim.json.decode, table.concat(vim.fn.readfile(memory.path), "\n"))
+    end
+    memory.data = (ok and type(data) == "table") and data or {}
+  end
+  return memory.data
+end
+
+function memory.get(root, field, key)
+  local p = memory.load()[root]
+  if not p then
+    return nil
+  end
+  if key then
+    return (p[field] or {})[key]
+  end
+  return p[field]
+end
+
+function memory.set(root, field, key, value)
+  local data = memory.load()
+  data[root] = data[root] or {}
+  if key then
+    data[root][field] = data[root][field] or {}
+    data[root][field][key] = value
+  else
+    data[root][field] = value
+  end
+  pcall(vim.fn.writefile, { vim.json.encode(data) }, memory.path)
+end
 
 -- Detect Java build system ==> Maven/Gradle/Plain
 local function detect_java_project_type(dir)
@@ -30,74 +72,6 @@ local function detect_cargo_project(dir)
     current_dir = vim.fn.fnamemodify(current_dir, ":h")
   end
   return false, dir
-end
-
--- Detect Node project ==> nearest package.json. Returns root + its decoded table
--- ({} when it does not parse), or nil when there is none.
-local function detect_node_project(dir)
-  local current_dir = dir
-  while current_dir ~= "/" and current_dir ~= "" do
-    local path = current_dir .. "/package.json"
-    if vim.fn.filereadable(path) == 1 then
-      local ok, pkg = pcall(vim.json.decode, table.concat(vim.fn.readfile(path), "\n"))
-      return current_dir, (ok and type(pkg) == "table") and pkg or {}
-    end
-    current_dir = vim.fn.fnamemodify(current_dir, ":h")
-  end
-  return nil
-end
-
-local lockfiles = {
-  { "pnpm-lock.yaml", "pnpm" },
-  { "yarn.lock", "yarn" },
-  { "bun.lock", "bun" },
-  { "bun.lockb", "bun" },
-  { "package-lock.json", "npm" },
-}
-
--- Package manager of a Node project ==> "packageManager" of package.json, else
--- the nearest lockfile (going up: in workspaces it lives at the repo root), else
--- npm. npm too when the one found is not installed.
-local function node_package_manager(root, pkg)
-  local pm = type(pkg.packageManager) == "string" and pkg.packageManager:match("^(%a+)@") or nil
-  local current_dir = root
-  while not pm and current_dir ~= "/" and current_dir ~= "" do
-    for _, lock in ipairs(lockfiles) do
-      if vim.fn.filereadable(current_dir .. "/" .. lock[1]) == 1 then
-        pm = lock[2]
-        break
-      end
-    end
-    current_dir = vim.fn.fnamemodify(current_dir, ":h")
-  end
-  return (pm and vim.fn.executable(pm) == 1) and pm or "npm"
-end
-
--- package.json scripts menu ==> dev/start/serve/watch first (the usual way to
--- start a server), then the file itself (when it can run alone), then the rest.
--- `this_file` is the menu item for the file: compared by identity, so it never
--- collides with a script name.
-local main_scripts = { "dev", "start", "serve", "watch" }
-local this_file = {}
-
-local function node_menu(pkg, with_file)
-  local scripts = type(pkg.scripts) == "table" and pkg.scripts or {}
-  local items, rest = {}, {}
-  for _, s in ipairs(main_scripts) do
-    if scripts[s] then
-      table.insert(items, s)
-    end
-  end
-  for s in pairs(scripts) do
-    if not vim.tbl_contains(main_scripts, s) then
-      table.insert(rest, s)
-    end
-  end
-  table.sort(rest)
-  if with_file then
-    table.insert(items, this_file)
-  end
-  return vim.list_extend(items, rest), scripts
 end
 
 local java_types = {
@@ -392,11 +366,12 @@ end
 -- USER PREFERENCE ==> node | deno | bun
 local js_runtime = "node"
 
--- Shell command to run a file ==> by extension. Returns cmd, kind (Java: "Maven" |
--- "Gradle" | "Plain"; JS: what runs, e.g. "pnpm run dev"), jdk (Java major) and
--- shown (banner name, the file when nil); or nil + reason + hint; or nil +
--- picker { prompt, items, format } whose choice comes back as `pick`. `args_str`
--- is optional and reaches the program as typed (not escaped).
+-- What to run for a file ==> by extension. Returns a spec { cmd, kind (Java:
+-- "Maven" | "Gradle" | "Plain"; JS: what runs, e.g. "pnpm run dev"), jdk (Java
+-- major), shown (banner name, the file when nil), slot (util/runner_procs.lua),
+-- memo + key (where the memory keeps its args) }; or nil + reason + hint; or nil + picker { prompt,
+-- items, format } whose choice comes back as `pick`. `args_str` is optional and
+-- reaches the program as typed (not escaped).
 local function build_cmd(file, args_str, row, pick)
   local q = vim.fn.shellescape
   local ext, name, dir =
@@ -430,56 +405,82 @@ local function build_cmd(file, args_str, row, pick)
     end,
   }
 
-  -- The file alone, in watch mode ==> the Run float stays open and restarts on
-  -- every :w (a server does not have to be killed and run again by hand).
-  -- node gets the .env of `cwd` if there is one; bun loads it by itself.
+  -- The file alone ==> in watch mode only when it keeps running (a server: it
+  -- restarts on every :w, no need to kill and run it again by hand); a short
+  -- script runs once and exits (see util/runner_node.lua). node gets the .env
+  -- of `cwd` if there is one; bun loads it by itself.
   local function js_file_cmd(cwd, jext)
+    local watch = node.is_long_running(file)
     if js_runtime == "deno" then
-      return string.format("cd %s && deno run -A --watch %s%s", q(cwd), q(file), args), "deno --watch"
+      local bin = watch and "deno run -A --watch" or "deno run -A"
+      return string.format("cd %s && %s %s%s", q(cwd), bin, q(file), args), bin
     elseif js_runtime == "bun" then
-      return string.format("cd %s && bun --watch run %s%s", q(cwd), q(file), args), "bun --watch"
+      local bin = watch and "bun --watch run" or "bun run"
+      return string.format("cd %s && %s %s%s", q(cwd), bin, q(file), args), bin
     end
-    local bin = jext == "ts" and "npx tsx watch" or "node --watch"
+    local bin = jext == "ts" and (watch and "npx tsx watch" or "npx tsx") or (watch and "node --watch" or "node")
     local env = vim.fn.filereadable(cwd .. "/.env") == 1 and " --env-file=.env" or ""
     return string.format("cd %s && %s%s %s%s", q(cwd), bin, env, q(file), args), bin
   end
 
-  -- package.json project ==> menu of its scripts (+ the file when `jext` is set),
-  -- run from the project root. npm is the only one that needs `--` to hand the
-  -- args to the script; pnpm/yarn/bun pass them as they are.
+  -- package.json project ==> menu of its scripts (+ the file when `jext` is set
+  -- and it can run alone), run from the project root; see util/runner_node.lua.
+  -- Every item gets its own process slot. npm is the only one that needs `--`
+  -- to hand the args to the script; pnpm/yarn/bun pass them as they are.
   local function node_cmd(jext)
-    local root, pkg = detect_node_project(dir)
+    local root, pkg = node.detect(dir)
     if not root then
-      if jext then
-        return js_file_cmd(dir, jext)
+      if not jext then
+        return nil
+      end
+      local cmd, bin = js_file_cmd(dir, jext)
+      return { cmd = cmd, kind = bin, slot = "file:" .. file, memo = file, key = "file" }
+    end
+    local function file_spec()
+      local cmd, bin = js_file_cmd(root, jext)
+      local key = "file:" .. file:sub(#root + 2)
+      return { cmd = cmd, kind = bin, slot = root .. "|" .. key, memo = root, key = key }
+    end
+    if pick and pick.kind == "file" then
+      return file_spec()
+    end
+    local pm = node.package_manager(root, pkg)
+    if pick then
+      local run = pm .. " run " .. pick.name
+      local sep = (has_args and pm == "npm") and " --" or ""
+      return {
+        cmd = string.format("cd %s && %s run %s%s%s", q(root), pm, q(pick.name), sep, args),
+        kind = run,
+        shown = run,
+        slot = root .. "|" .. pick.key,
+        memo = root,
+        key = pick.key,
+      }
+    end
+    local _, file_kind = js_file_cmd(root, jext)
+    local items = node.items(root, pkg, {
+      file = file,
+      jext = jext,
+      file_cmd = file_kind,
+      running = function(key)
+        return procs.alive(root .. "|" .. key)
+      end,
+    })
+    if #items == 0 then
+      if jext and node.is_test_file(file) then
+        return nil, "Test file: neotest runs it", "<leader>tt file · <leader>tr nearest · <leader>ts summary"
       end
       return nil
     end
-    if pick == this_file then
-      return js_file_cmd(root, jext)
+    if #items == 1 and items[1].kind == "file" then
+      return file_spec()
     end
-    local pm = node_package_manager(root, pkg)
-    local items, scripts = node_menu(pkg, jext ~= nil)
-    if pick then
-      local run = pm .. " run " .. pick
-      local sep = (has_args and pm == "npm") and " --" or ""
-      return string.format("cd %s && %s run %s%s%s", q(root), pm, q(pick), sep, args), run, nil, run
-    end
-    if #items == 0 then
-      return nil
-    end
-    if #items == 1 and items[1] == this_file then
-      return js_file_cmd(root, jext)
-    end
-    local _, file_kind = js_file_cmd(root, jext)
-    local file_label = string.format("󰈙 %s  (%s)", vim.fn.fnamemodify(file, ":t"), file_kind)
     return nil,
       {
-        prompt = pm .. " run",
+        prompt = pm .. " run · " .. vim.fn.fnamemodify(root, ":t"),
         items = items,
-        format = function(item)
-          return item == this_file and file_label or string.format("%s  ·  %s", item, scripts[item])
-        end,
+        format = node.format(items),
+        snacks = node.picker_opts(items),
       }
   end
 
@@ -494,9 +495,9 @@ local function build_cmd(file, args_str, row, pick)
   -- Any other file of a package.json project (html, css, jsx, vue...) ==> only
   -- its scripts: that is how they run (vite, live-server...).
   if not runner then
-    local cmd, extra, third, shown = node_cmd(nil)
-    if cmd or extra then
-      return cmd, extra, third, shown
+    local spec, extra = node_cmd(nil)
+    if spec or extra then
+      return spec, extra
     end
   end
   if not runner then
@@ -506,7 +507,13 @@ local function build_cmd(file, args_str, row, pick)
       "Unsupported file type: ." .. (ext ~= "" and ext or "none"),
       "Supported: " .. table.concat(supported, ", ")
   end
-  return runner()
+
+  local cmd, kind, jdk = runner()
+  if type(cmd) ~= "string" then
+    return cmd, kind, jdk -- Node spec, picker or error: already in shape
+  end
+  -- Every other language shares the "run" slot: a new run replaces the last one
+  return { cmd = cmd, kind = kind, jdk = jdk, slot = "run", memo = file, key = "file" }
 end
 
 -- Current buffer's file, saved first ==> nil when it is not on disk
@@ -518,84 +525,20 @@ local function current_file()
   return vim.fn.filereadable(file) == 1 and file or nil
 end
 
--- Run a file in a floating terminal ==> shared by <leader>rr (no args_str) and
--- <leader>ra. The previous run is wiped first so terminals do not pile up.
--- Something to pick (several Java mains and the cursor in none, package.json
--- scripts) ==> menu, and the choice comes back as `pick` on the retry.
-local function run_file(file, args_str, pick)
-  local ext, name = vim.fn.fnamemodify(file, ":e"), vim.fn.fnamemodify(file, ":t:r")
-  local row = vim.api.nvim_buf_get_name(0) == file and (vim.api.nvim_win_get_cursor(0)[1] - 1) or nil
-  local cmd, extra, third, shown = build_cmd(file, args_str, row, pick)
-  if not cmd and type(extra) == "table" then
-    vim.ui.select(extra.items, { prompt = extra.prompt, format_item = extra.format }, function(choice)
-      if choice then
-        run_file(file, args_str, choice)
-      end
-    end)
-    return
-  end
-  if not cmd then
-    vim.notify(extra, vim.log.levels.WARN, { title = "Run System" })
-    if third then
-      vim.notify(third, vim.log.levels.INFO, { title = "Run System" })
-    end
-    return
-  end
-  local kind, jdk = extra, third
-
-  local prev = _G.Run
-  if prev and prev.buf and vim.api.nvim_buf_is_valid(prev.buf) then
-    local buf = prev.buf
-    pcall(prev.close, prev)
-    pcall(vim.api.nvim_buf_delete, buf, { force = true }) -- also kills a job still running
-  end
-
-  _G.Run = Snacks.terminal.open(with_banner(cmd, shown or (name .. "." .. ext), args_str), {
-    win = {
-      position = "float",
-      width = 0.9,
-      height = 0.8,
-      border = "rounded",
-      title = " "
-        .. ext:upper()
-        .. (jdk and (" " .. jdk) or "")
-        .. (kind and (" · " .. kind) or "")
-        .. (args_str ~= nil and " Run + Args" or " Run"),
-      title_pos = "center",
-      backdrop = false,
-    },
-    interactive = true,
-    auto_close = false,
-  })
-end
-
--- <leader>rr ==> run the current file
-function M.run()
-  local file = current_file()
-  if file then
-    run_file(file)
-  end
-end
-
--- <leader>ra ==> ask for args (@args header or free text), then run
-function M.run_with_args()
-  local file = current_file()
-  if not file then
-    return
-  end
-
-  local function execute_with_args(args_str)
-    run_file(file, args_str)
-  end
-
-  -- Trigger CLI Interactive Prompts
-  local expected_args = parse_args_metadata(file)
+-- Ask the args of what is about to run ==> after the menu, so they belong to the
+-- chosen item. When the file itself runs and has an @args header: one prompt per
+-- arg; else free text. Both pre-filled with the last args used for that item.
+-- <Esc> cancels; empty runs without args.
+local function ask_args(file, spec, on_args)
+  local last = memory.get(spec.memo, "args", spec.key) or ""
+  local expected_args = spec.key:match("^file") and parse_args_metadata(file) or nil
 
   if expected_args and #expected_args > 0 then
+    local prev = vim.split(last, "%s+", { trimempty = true })
     local collected = {}
     local function ask_next(i)
       if i > #expected_args then
-        execute_with_args(table.concat(collected, " "))
+        on_args(table.concat(collected, " "))
         return
       end
 
@@ -604,7 +547,7 @@ function M.run_with_args()
       local title_name = arg.name:gsub("^%l", string.upper)
       local prompt_str = string.format(" %s [%s] ", title_name, arg.type)
 
-      vim.ui.input({ prompt = prompt_str }, function(input)
+      vim.ui.input({ prompt = prompt_str, default = prev[i] }, function(input)
         if not input then
           return
         end -- User aborted (Esc)
@@ -614,14 +557,88 @@ function M.run_with_args()
     end
     ask_next(1)
   else
-    -- Standard fallback
-    vim.ui.input({ prompt = " CLI Args " }, function(args)
-      if not args or args == "" then
-        return
+    local target = spec.shown or vim.fn.fnamemodify(file, ":t")
+    vim.ui.input({ prompt = " Args · " .. target .. " ", default = last }, function(args)
+      if args then
+        on_args(vim.trim(args))
       end
-      execute_with_args(args)
     end)
   end
 end
+
+-- Run a file in a floating terminal ==> shared by <leader>rr and <leader>ra
+-- (opts.ask). opts = { pick, args, ask }. Something to pick (several Java mains
+-- and the cursor in none, package.json scripts) ==> menu, and the choice comes
+-- back as opts.pick on the retry; then the args, when asked for.
+local function run_file(file, opts)
+  local ext, name = vim.fn.fnamemodify(file, ":e"), vim.fn.fnamemodify(file, ":t:r")
+  local row = vim.api.nvim_buf_get_name(0) == file and (vim.api.nvim_win_get_cursor(0)[1] - 1) or nil
+  local spec, extra, hint = build_cmd(file, opts.args, row, opts.pick)
+  if not spec and type(extra) == "table" then
+    local select_opts = { prompt = extra.prompt, format_item = extra.format, snacks = extra.snacks }
+    vim.ui.select(extra.items, select_opts, function(choice)
+      if choice then
+        run_file(file, vim.tbl_extend("force", opts, { pick = choice }))
+      end
+    end)
+    return
+  end
+  if not spec then
+    vim.notify(extra, vim.log.levels.WARN, { title = "Run System" })
+    if hint then
+      vim.notify(hint, vim.log.levels.INFO, { title = "Run System" })
+    end
+    return
+  end
+  if opts.ask and not opts.args then
+    ask_args(file, spec, function(args)
+      run_file(file, vim.tbl_extend("force", opts, { args = args }))
+    end)
+    return
+  end
+
+  if opts.args then
+    memory.set(spec.memo, "args", spec.key, opts.args)
+  end
+  local label = spec.shown or (name .. "." .. ext)
+  local project = spec.memo == file and vim.fn.fnamemodify(file, ":h") or spec.memo
+  procs.start(spec.slot, {
+    cmd = with_banner(spec.cmd, label, opts.args),
+    label = label,
+    project = vim.fn.fnamemodify(project, ":t"),
+    win = {
+      position = "float",
+      width = 0.9,
+      height = 0.8,
+      border = "rounded",
+      title = " "
+        .. ext:upper()
+        .. (spec.jdk and (" " .. spec.jdk) or "")
+        .. (spec.kind and (" · " .. spec.kind) or "")
+        .. ((opts.args and opts.args ~= "") and " Run + Args" or " Run"),
+      title_pos = "center",
+      backdrop = false,
+    },
+  })
+end
+
+-- <leader>rr ==> run the current file
+function M.run()
+  local file = current_file()
+  if file then
+    run_file(file, {})
+  end
+end
+
+-- <leader>ra ==> pick what to run (if there is a menu), then its args
+function M.run_with_args()
+  local file = current_file()
+  if file then
+    run_file(file, { ask = true })
+  end
+end
+
+-- <leader>rl ==> processes launched by the runner (show / kill / restart)
+M.processes = procs.list
 
 return M

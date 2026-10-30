@@ -76,6 +76,16 @@ return {
         desc = "Run with args",
       },
       { "<F6>", "<leader>ra", remap = true, desc = "Run with args" },
+
+      -- PROCESS LIST ==> <leader> + r + l: what the runner launched, to show,
+      -- kill (<C-x>) or restart (<C-e>) it, see util/runner_procs.lua
+      {
+        "<leader>rl",
+        function()
+          require("util.runner").processes()
+        end,
+        desc = "Run processes",
+      },
     },
   },
 }

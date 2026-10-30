@@ -30,16 +30,18 @@ RED='\e[38;2;191;97;106m'
 GRN='\e[38;2;163;190;140m'
 YLW='\e[38;2;235;203;139m'
 BLU='\e[38;2;136;192;208m'
+# shellcheck disable=SC2034 # paleta Nord compartida entre scripts; aquí no se usa
 CYN='\e[38;2;143;188;187m'
 DIM='\e[38;2;94;129;172m'
+# shellcheck disable=SC2034 # paleta Nord compartida entre scripts; aquí no se usa
 BLD='\e[1m'
 RST='\e[0m'
 
 info() { printf "${BLU}[INFO]${RST}  %s\n" "$*"; }
-ok()   { printf "${GRN}[OK]${RST}    %s\n" "$*"; }
-err()  { printf "${RED}[ERR]${RST}   %s\n" "$*" >&2; }
+ok() { printf "${GRN}[OK]${RST}    %s\n" "$*"; }
+err() { printf "${RED}[ERR]${RST}   %s\n" "$*" >&2; }
 warn() { printf "${YLW}[WARN]${RST}  %s\n" "$*"; }
-sep()  { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
+sep() { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
 
 USAGE="Uso:
   dev-sql-themes                    pgcli y mycli, los que estén instalados
@@ -63,8 +65,15 @@ for arg in "$@"; do
     --dry-run) DRY_RUN=1 ;;
     --pgcli-conf=*) PGCLI_CONF="${arg#--pgcli-conf=}" ;;
     --mycli-conf=*) MYCLI_CONF="${arg#--mycli-conf=}" ;;
-    -h|--help) printf "%s\n" "$USAGE"; exit 0 ;;
-    *) err "Argumento desconocido: $arg"; printf "%s\n" "$USAGE" >&2; exit 1 ;;
+    -h | --help)
+      printf "%s\n" "$USAGE"
+      exit 0
+      ;;
+    *)
+      err "Argumento desconocido: $arg"
+      printf "%s\n" "$USAGE" >&2
+      exit 1
+      ;;
   esac
 done
 
@@ -76,7 +85,8 @@ if [[ -z "$DO_PGCLI" && -z "$DO_MYCLI" ]]; then
 fi
 
 # ─── paleta Nord embebida (idéntica a la que ya está viva en ambas configs) ──
-PGCLI_PAYLOAD=$(cat <<'JSON'
+PGCLI_PAYLOAD=$(
+  cat <<'JSON'
 {
   "main": {
     "syntax_style": "nord"
@@ -110,7 +120,8 @@ PGCLI_PAYLOAD=$(cat <<'JSON'
 JSON
 )
 
-MYCLI_PAYLOAD=$(cat <<'JSON'
+MYCLI_PAYLOAD=$(
+  cat <<'JSON'
 {
   "main": {
     "syntax_style": "nord"
@@ -237,10 +248,10 @@ apply_theme() {
   local file="$1" payload="$2" out rc
   out="$(upsert_ini "$file" "$payload")"
   rc=$?
-  if (( rc == 2 )); then
+  if ((rc == 2)); then
     err "No se pudo leer $file"
     return 1
-  elif (( rc != 0 )); then
+  elif ((rc != 0)); then
     err "Fallo aplicando el tema a $file"
     return 1
   fi
@@ -257,7 +268,7 @@ apply_theme() {
 
 do_pgcli() {
   if ! command -v pgcli &>/dev/null; then
-    if (( DEFAULT_MODE )); then
+    if ((DEFAULT_MODE)); then
       warn "pgcli no está instalado — se salta."
       return 0
     fi
@@ -275,7 +286,7 @@ do_pgcli() {
 
 do_mycli() {
   if ! command -v mycli &>/dev/null; then
-    if (( DEFAULT_MODE )); then
+    if ((DEFAULT_MODE)); then
       warn "mycli no está instalado — se salta."
       return 0
     fi

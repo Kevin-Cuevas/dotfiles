@@ -47,6 +47,7 @@ YLW='\e[38;2;235;203;139m'
 BLU='\e[38;2;136;192;208m'
 CYN='\e[38;2;143;188;187m'
 DIM='\e[38;2;94;129;172m'
+# shellcheck disable=SC2034 # paleta Nord compartida entre scripts; aquí no se usa
 BLD='\e[1m'
 RST='\e[0m'
 
@@ -68,7 +69,7 @@ declare -A PKG_LABEL=(
   [tmux]="tmux (terminal multiplexer, build desde fuente, versión-checked)"
   [kitty]="kitty (instalador oficial, actualiza in-place)"
   [yazi]="Yazi (file manager, release de GitHub, versión-checked)"
-  [tree-sitter]="tree-sitter CLI (parsers de nvim-treesitter, release de GitHub)"
+  ["tree-sitter"]="tree-sitter CLI (parsers de nvim-treesitter, release de GitHub)"
   [peaclock]="Peaclock (reloj de terminal, build desde fuente, sha-checked)"
   [tmuxp]="tmuxp (tmux session manager, pipx install/upgrade)"
   [lavat]="lavat (lava lamp de terminal, build desde fuente, sha-checked)"
@@ -81,7 +82,7 @@ declare -A PKG_FN=(
   [tmux]="install_tmux"
   [kitty]="install_kitty"
   [yazi]="install_yazi"
-  [tree-sitter]="install_tree_sitter"
+  ["tree-sitter"]="install_tree_sitter"
   [peaclock]="install_peaclock"
   [tmuxp]="install_tmuxp"
   [lavat]="install_lavat"
@@ -97,7 +98,7 @@ declare -A PKG_GROUP=(
   [tmux]="build"
   [kitty]="build"
   [yazi]="build"
-  [tree-sitter]="build"
+  ["tree-sitter"]="build"
   [peaclock]="build"
   [lavat]="build"
   [tmuxp]="pipx"
@@ -138,10 +139,13 @@ select_group() {
   clear
 
   local _raw_chosen=() _line
-  while IFS= read -r _line; do [[ -n "$_line" ]] && _raw_chosen+=("$_line"); done <<< "$_raw"
+  while IFS= read -r _line; do [[ -n "$_line" ]] && _raw_chosen+=("$_line"); done <<<"$_raw"
 
   for _line in "${_raw_chosen[@]}"; do
-    [[ "$_line" == "__skip__" ]] && { _grp_out=(); return 0; }
+    [[ "$_line" == "__skip__" ]] && {
+      _grp_out=()
+      return 0
+    }
   done
 
   if [[ ${#_raw_chosen[@]} -eq 0 ]]; then
@@ -155,19 +159,20 @@ select_group() {
   fi
 }
 
-# ─── checklist propio: build primero, pipx después (dos diálogos) ──────────
-# Esc en cualquiera de los dos cancela dev-packages entero (mismo
+# ─── checklist propio: un diálogo por grupo, en el orden de GROUP_ORDER ────
+# Esc en cualquiera de ellos cancela dev-packages entero (mismo
 # comportamiento que antes tenía un único checklist); "Skip" solo salta ese
-# grupo puntual y sigue con el siguiente.
+# grupo puntual y sigue con el siguiente. Un grupo nuevo solo se registra en
+# GROUP_ORDER/GROUP_TITLE/GROUP_PROMPT, aquí no hay que tocar nada.
 select_packages() {
   local -n _out_ref="$1"
   _out_ref=()
 
-  local _build_chosen=() _pipx_chosen=()
-  select_group "build" _build_chosen || return 1
-  select_group "pipx" _pipx_chosen || return 1
-
-  _out_ref=("${_build_chosen[@]}" "${_pipx_chosen[@]}")
+  local _group _chosen=()
+  for _group in "${GROUP_ORDER[@]}"; do
+    select_group "$_group" _chosen || return 1
+    _out_ref+=("${_chosen[@]}")
+  done
 }
 
 # ─── utilidad compartida: SHA remoto del HEAD de un repo git ────────────────
@@ -216,6 +221,9 @@ install_nvim() {
   sep
   (
     set -euo pipefail
+    # Propias de este instalador (su cleanup las lee): local para que no se
+    # mezclen con las homónimas de install_nvim/install_tmux.
+    local SUDO_KEEPALIVE_PID="" TMP_DIR=""
 
     log() { echo "[INFO] $*"; }
     ok() { echo "[ OK] $*"; }
@@ -231,9 +239,9 @@ install_nvim() {
     NVIM_BACKTITLE="dev-packages · nvim · $(hostname) · $(date '+%Y-%m-%d %H:%M')"
 
     case "$ARCH" in
-    x86_64) TARBALL_ARCH="x86_64" ;;
-    aarch64) TARBALL_ARCH="arm64" ;;
-    *) TARBALL_ARCH="" ;;
+      x86_64) TARBALL_ARCH="x86_64" ;;
+      aarch64) TARBALL_ARCH="arm64" ;;
+      *) TARBALL_ARCH="" ;;
     esac
 
     BUILD_SUPPORTED=false
@@ -306,10 +314,10 @@ install_nvim() {
       local choice
       read -rp "  Opción [1/2/q]: " choice
       case "$choice" in
-      1 | build | b) CHOSEN_METHOD="build" ;;
-      2 | tarball | t) CHOSEN_METHOD="tarball" ;;
-      q | Q | c | cancel) CHOSEN_METHOD="" ;;
-      *) CHOSEN_METHOD="tarball" ;;
+        1 | build | b) CHOSEN_METHOD="build" ;;
+        2 | tarball | t) CHOSEN_METHOD="tarball" ;;
+        q | Q | c | cancel) CHOSEN_METHOD="" ;;
+        *) CHOSEN_METHOD="tarball" ;;
       esac
       return 0
     }
@@ -484,17 +492,17 @@ EOF
 
       log "Verificando flags del binario instalado..."
       local producer detected_march ymm
-      producer=$(readelf -wi "$NVIM_PREFIX/bin/nvim" 2>/dev/null |
-        grep -am1 "DW_AT_producer" | sed -E 's/.*\): //')
+      producer=$(readelf -wi "$NVIM_PREFIX/bin/nvim" 2>/dev/null \
+        | grep -am1 "DW_AT_producer" | sed -E 's/.*\): //')
       detected_march=$(grep -oE -- '-march=[^ ]+' <<<"$producer" | head -1)
       ymm=$(objdump -d "$NVIM_PREFIX/bin/nvim" 2>/dev/null | grep -c "ymm")
       case "$detected_march" in
-      "" | "-march=x86-64")
-        warn "El binario no quedó optimizado (${detected_march:-sin -march}): ${producer:-<sin DWARF>}"
-        ;;
-      *)
-        ok "DWARF producer: ${detected_march} confirmado"
-        ;;
+        "" | "-march=x86-64")
+          warn "El binario no quedó optimizado (${detected_march:-sin -march}): ${producer:-<sin DWARF>}"
+          ;;
+        *)
+          ok "DWARF producer: ${detected_march} confirmado"
+          ;;
       esac
       log "Instrucciones AVX2 (ymm): $ymm"
     }
@@ -518,23 +526,23 @@ EOF
     fi
 
     case "$METHOD" in
-    build)
-      if build_source; then
-        finalize
-      else
-        log "Instalación cancelada."
-      fi
-      ;;
-    tarball)
-      if install_tarball; then
-        finalize
-      else
-        log "Instalación cancelada."
-      fi
-      ;;
-    *)
-      err "Método desconocido: $METHOD"
-      ;;
+      build)
+        if build_source; then
+          finalize
+        else
+          log "Instalación cancelada."
+        fi
+        ;;
+      tarball)
+        if install_tarball; then
+          finalize
+        else
+          log "Instalación cancelada."
+        fi
+        ;;
+      *)
+        err "Método desconocido: $METHOD"
+        ;;
     esac
   )
 }
@@ -553,6 +561,9 @@ install_tmux() {
   sep
   (
     set -euo pipefail
+    # Propias de este instalador (su cleanup las lee): local para que no se
+    # mezclen con las homónimas de install_nvim/install_tmux.
+    local SUDO_KEEPALIVE_PID="" TMP_DIR=""
 
     log() { echo "[INFO] $*"; }
     ok() { echo "[ OK] $*"; }
@@ -602,8 +613,8 @@ install_tmux() {
     fi
 
     log "Consultando último tag de tmux upstream..."
-    LATEST_TAG=$(git ls-remote --tags --refs "$TMUX_REPO" 2>/dev/null |
-      awk -F/ '{print $NF}' | grep -E '^[0-9]+\.[0-9]+[a-z]?$' | sort -V | tail -1)
+    LATEST_TAG=$(git ls-remote --tags --refs "$TMUX_REPO" 2>/dev/null \
+      | awk -F/ '{print $NF}' | grep -E '^[0-9]+\.[0-9]+[a-z]?$' | sort -V | tail -1)
     [[ -n "$LATEST_TAG" ]] || err "No se pudo determinar el último tag de tmux"
     NEW_VERSION="tmux $LATEST_TAG"
     log "Última versión upstream: $NEW_VERSION"
@@ -691,12 +702,12 @@ install_yazi() {
   local arch triple
   arch="$(uname -m)"
   case "$arch" in
-  x86_64) triple="x86_64-unknown-linux-gnu" ;;
-  aarch64) triple="aarch64-unknown-linux-gnu" ;;
-  *)
-    warn "No official yazi binary for architecture '$arch' — skipping."
-    return 1
-    ;;
+    x86_64) triple="x86_64-unknown-linux-gnu" ;;
+    aarch64) triple="aarch64-unknown-linux-gnu" ;;
+    *)
+      warn "No official yazi binary for architecture '$arch' — skipping."
+      return 1
+      ;;
   esac
 
   command -v unzip &>/dev/null || {
@@ -750,12 +761,12 @@ install_yazi() {
       info "Non-interactive — reinstalling the same version ($new_version)."
     else
       if dialog \
-          --clear --colors \
-          --backtitle "$BACKTITLE" \
-          --title " yazi " \
-          --defaultno \
-          --yesno "You already have $new_version installed.\n\nDownload and reinstall it anyway?" \
-          9 64; then
+        --clear --colors \
+        --backtitle "$BACKTITLE" \
+        --title " yazi " \
+        --defaultno \
+        --yesno "You already have $new_version installed.\n\nDownload and reinstall it anyway?" \
+        9 64; then
         clear
       else
         clear
@@ -788,12 +799,12 @@ install_tree_sitter() {
   local arch asset
   arch="$(uname -m)"
   case "$arch" in
-  x86_64) asset="tree-sitter-linux-x64.gz" ;;
-  aarch64) asset="tree-sitter-linux-arm64.gz" ;;
-  *)
-    warn "No official tree-sitter binary for architecture '$arch' — skipping."
-    return 1
-    ;;
+    x86_64) asset="tree-sitter-linux-x64.gz" ;;
+    aarch64) asset="tree-sitter-linux-arm64.gz" ;;
+    *)
+      warn "No official tree-sitter binary for architecture '$arch' — skipping."
+      return 1
+      ;;
   esac
 
   local current_version=""
@@ -841,12 +852,12 @@ install_tree_sitter() {
       info "Non-interactive — reinstalling the same version ($new_version)."
     else
       if dialog \
-          --clear --colors \
-          --backtitle "$BACKTITLE" \
-          --title " tree-sitter " \
-          --defaultno \
-          --yesno "You already have $new_version installed.\n\nDownload and reinstall it anyway?" \
-          9 64; then
+        --clear --colors \
+        --backtitle "$BACKTITLE" \
+        --title " tree-sitter " \
+        --defaultno \
+        --yesno "You already have $new_version installed.\n\nDownload and reinstall it anyway?" \
+        9 64; then
         clear
       else
         clear
@@ -990,7 +1001,7 @@ install_peaclock() {
 
   rm -rf "$tmp"
   mkdir -p "$STATE_DIR"
-  [[ -n "$remote_sha" ]] && echo "$remote_sha" > "$state_file"
+  [[ -n "$remote_sha" ]] && echo "$remote_sha" >"$state_file"
   ok "peaclock instalado/actualizado -> $(command -v peaclock)"
 }
 
@@ -1043,7 +1054,7 @@ install_lavat() {
 
   rm -rf "$tmp"
   mkdir -p "$STATE_DIR"
-  [[ -n "$remote_sha" ]] && echo "$remote_sha" > "$state_file"
+  [[ -n "$remote_sha" ]] && echo "$remote_sha" >"$state_file"
   ok "lavat instalado/actualizado -> $(command -v lavat)"
 }
 
@@ -1051,15 +1062,15 @@ install_lavat() {
 ONLY_KEYS=()
 for arg in "$@"; do
   case "$arg" in
-  --all) NONINTERACTIVE=true ;;
-  --only=*)
-    IFS=',' read -ra ONLY_KEYS <<< "${arg#--only=}"
-    ;;
-  --keep-apt) KEEP_APT_PKGS=true ;;
-  *)
-    err "Argumento desconocido: $arg"
-    exit 1
-    ;;
+    --all) NONINTERACTIVE=true ;;
+    --only=*)
+      IFS=',' read -ra ONLY_KEYS <<<"${arg#--only=}"
+      ;;
+    --keep-apt) KEEP_APT_PKGS=true ;;
+    *)
+      err "Argumento desconocido: $arg"
+      exit 1
+      ;;
   esac
 done
 

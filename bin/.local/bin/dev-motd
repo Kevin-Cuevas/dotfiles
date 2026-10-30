@@ -20,8 +20,8 @@ DEFAULT_MOTD="99-nivek-banner"
 # ------------------------------------------------------------------------------
 
 info() { echo "[INFO] $*"; }
-ok()   { echo "[OK]   $*"; }
-err()  { echo "[ERR]  $*" >&2; }
+ok() { echo "[OK]   $*"; }
+err() { echo "[ERR]  $*" >&2; }
 
 # ------------------------------------------------------------------------------
 
@@ -42,16 +42,16 @@ DST="${TARGET_DIR}/${NAME}"
 # ------------------------------------------------------------------------------
 
 if [[ "$ACTION" == "remove" ]]; then
-info "Removing MOTD: ${NAME}"
+  info "Removing MOTD: ${NAME}"
 
-if [[ -e "$DST" ]]; then
-sudo rm -f "$DST"
-ok "Removed ${DST}"
-else
-err "MOTD not found: ${DST}"
-fi
+  if [[ -e "$DST" ]]; then
+    sudo rm -f "$DST"
+    ok "Removed ${DST}"
+  else
+    err "MOTD not found: ${DST}"
+  fi
 
-exit 0
+  exit 0
 fi
 
 # ------------------------------------------------------------------------------
@@ -61,8 +61,8 @@ fi
 # ------------------------------------------------------------------------------
 
 if [[ ! -f "$SRC" ]]; then
-err "Source not found: ${SRC}"
-exit 1
+  err "Source not found: ${SRC}"
+  exit 1
 fi
 
 info "Installing MOTD: ${NAME}"
@@ -87,4 +87,3 @@ ok "Installed successfully"
 # sudo find "$TARGET_DIR" -type f ! -name "$NAME" -exec chmod -x {} ;
 
 # ok "Only ${NAME} is active"
-

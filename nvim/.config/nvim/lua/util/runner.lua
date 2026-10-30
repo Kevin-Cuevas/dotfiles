@@ -5,6 +5,7 @@ local M = {}
 
 local node = require("util.runner_node")
 local procs = require("util.runner_procs")
+local args_meta = require("util.runner_args")
 
 -- Memory between sessions ==> last args per item, so <leader>ra pre-fills them.
 -- JSON in stdpath("state"): machine state, not dotfiles (like lazy-lock.json).
@@ -336,29 +337,10 @@ local function java_run_cmd(file, dir, args_str, row, main)
     major
 end
 
--- Parse @args metadata from file header ==> Supports 'name:type'
-local function parse_args_metadata(file)
-  if vim.fn.filereadable(file) == 0 then
-    return nil
-  end
-  local lines = vim.fn.readfile(file, "", 50)
-  for _, line in ipairs(lines) do
-    local match = line:match("@args%s+(.+)")
-    if match then
-      local args = {}
-      for token in match:gmatch("%S+") do
-        local name, arg_type = token:match("([^:]+):?([^:]*)")
-        table.insert(args, { name = name, type = (arg_type ~= "" and arg_type or "string") })
-      end
-      return args
-    end
-  end
-  return nil
-end
-
--- Banner printed before the command ==>  Executing "file.ext" [args: [..]]
-local function with_banner(cmd, name, args_str)
-  local shown = (args_str and args_str ~= "") and (" args: [" .. args_str .. "]") or ""
+-- Banner printed before the command ==>  Executing "file.ext" [args: [..]].
+-- `args_shown` is what to print: the raw text, or `name=value` pairs for @args.
+local function with_banner(cmd, name, args_shown)
+  local shown = (args_shown and args_shown ~= "") and (" args: [" .. args_shown .. "]") or ""
   local msg = string.format(' Executing "%s"%s', name, shown)
   return string.format("echo %s && echo '' && %s", vim.fn.shellescape(msg), cmd)
 end
@@ -526,48 +508,28 @@ local function current_file()
 end
 
 -- Ask the args of what is about to run ==> after the menu, so they belong to the
--- chosen item. When the file itself runs and has an @args header: one prompt per
--- arg; else free text. Both pre-filled with the last args used for that item.
--- <Esc> cancels; empty runs without args.
+-- chosen item. When the file itself runs and has an @args header: one prompt
+-- (or menu) per arg, validated and shell-escaped, see util/runner_args.lua.
+-- Else free text, passed as typed (shell syntax allowed). Both pre-filled with
+-- the last answers for that item. <Esc> cancels; empty runs without args.
+-- on_args(argv, shown, named): named = { name = value } for @args, else nil.
 local function ask_args(file, spec, on_args)
-  local last = memory.get(spec.memo, "args", spec.key) or ""
-  local expected_args = spec.key:match("^file") and parse_args_metadata(file) or nil
-
-  if expected_args and #expected_args > 0 then
-    local prev = vim.split(last, "%s+", { trimempty = true })
-    local collected = {}
-    local function ask_next(i)
-      if i > #expected_args then
-        on_args(table.concat(collected, " "))
-        return
-      end
-
-      local arg = expected_args[i]
-      -- FORMAT: Capitalize name -> Name [type]
-      local title_name = arg.name:gsub("^%l", string.upper)
-      local prompt_str = string.format(" %s [%s] ", title_name, arg.type)
-
-      vim.ui.input({ prompt = prompt_str, default = prev[i] }, function(input)
-        if not input then
-          return
-        end -- User aborted (Esc)
-        table.insert(collected, input)
-        ask_next(i + 1)
-      end)
-    end
-    ask_next(1)
-  else
-    local target = spec.shown or vim.fn.fnamemodify(file, ":t")
-    vim.ui.input({ prompt = " Args · " .. target .. " ", default = last }, function(args)
-      if args then
-        on_args(vim.trim(args))
-      end
-    end)
+  local declared = spec.key:match("^file") and args_meta.parse(file) or nil
+  if declared then
+    args_meta.ask(declared, memory.get(spec.memo, "named", spec.key), on_args)
+    return
   end
+  local target = spec.shown or vim.fn.fnamemodify(file, ":t")
+  local last = memory.get(spec.memo, "args", spec.key) or ""
+  vim.ui.input({ prompt = " Args · " .. target .. " ", default = last }, function(args)
+    if args then
+      on_args(vim.trim(args))
+    end
+  end)
 end
 
 -- Run a file in a floating terminal ==> shared by <leader>rr and <leader>ra
--- (opts.ask). opts = { pick, args, ask }. Something to pick (several Java mains
+-- (opts.ask). opts = { pick, args, args_shown, named, ask }. Something to pick (several Java mains
 -- and the cursor in none, package.json scripts) ==> menu, and the choice comes
 -- back as opts.pick on the retry; then the args, when asked for.
 local function run_file(file, opts)
@@ -591,19 +553,21 @@ local function run_file(file, opts)
     return
   end
   if opts.ask and not opts.args then
-    ask_args(file, spec, function(args)
-      run_file(file, vim.tbl_extend("force", opts, { args = args }))
+    ask_args(file, spec, function(args, shown, named)
+      run_file(file, vim.tbl_extend("force", opts, { args = args, args_shown = shown, named = named }))
     end)
     return
   end
 
-  if opts.args then
+  if opts.named then
+    memory.set(spec.memo, "named", spec.key, opts.named)
+  elseif opts.args then
     memory.set(spec.memo, "args", spec.key, opts.args)
   end
   local label = spec.shown or (name .. "." .. ext)
   local project = spec.memo == file and vim.fn.fnamemodify(file, ":h") or spec.memo
   procs.start(spec.slot, {
-    cmd = with_banner(spec.cmd, label, opts.args),
+    cmd = with_banner(spec.cmd, label, opts.args_shown or opts.args),
     label = label,
     project = vim.fn.fnamemodify(project, ":t"),
     win = {

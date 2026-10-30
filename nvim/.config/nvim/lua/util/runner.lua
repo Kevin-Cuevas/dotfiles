@@ -512,26 +512,37 @@ end
 -- (or menu) per arg, validated and shell-escaped, see util/runner_args.lua.
 -- Else free text, passed as typed (shell syntax allowed). Both pre-filled with
 -- the last answers for that item. <Esc> cancels; empty runs without args.
+-- `reuse` (<leader>rA) skips the prompts when there are last answers; without
+-- them it asks like <leader>ra.
 -- on_args(argv, shown, named): named = { name = value } for @args, else nil.
-local function ask_args(file, spec, on_args)
+local function ask_args(file, spec, reuse, on_args)
   local declared = spec.key:match("^file") and args_meta.parse(file) or nil
   if declared then
-    args_meta.ask(declared, memory.get(spec.memo, "named", spec.key), on_args)
+    local last = memory.get(spec.memo, "named", spec.key)
+    if reuse and last then
+      args_meta.reuse(declared, last, on_args)
+    else
+      args_meta.ask(declared, last, on_args)
+    end
     return
   end
   local target = spec.shown or vim.fn.fnamemodify(file, ":t")
-  local last = memory.get(spec.memo, "args", spec.key) or ""
-  vim.ui.input({ prompt = " Args · " .. target .. " ", default = last }, function(args)
+  local last = memory.get(spec.memo, "args", spec.key)
+  if reuse and last then
+    return on_args(last)
+  end
+  vim.ui.input({ prompt = " Args · " .. target .. " ", default = last or "" }, function(args)
     if args then
       on_args(vim.trim(args))
     end
   end)
 end
 
--- Run a file in a floating terminal ==> shared by <leader>rr and <leader>ra
--- (opts.ask). opts = { pick, args, args_shown, named, ask }. Something to pick (several Java mains
--- and the cursor in none, package.json scripts) ==> menu, and the choice comes
--- back as opts.pick on the retry; then the args, when asked for.
+-- Run a file in a floating terminal ==> shared by <leader>rr, <leader>ra (opts.ask)
+-- and <leader>rA (opts.ask + opts.reuse). opts = { pick, args, args_shown, named,
+-- ask, reuse }. Something to pick (several Java mains and the cursor in none,
+-- package.json scripts) ==> menu, and the choice comes back as opts.pick on the
+-- retry; then the args, when asked for.
 local function run_file(file, opts)
   local ext, name = vim.fn.fnamemodify(file, ":e"), vim.fn.fnamemodify(file, ":t:r")
   local row = vim.api.nvim_buf_get_name(0) == file and (vim.api.nvim_win_get_cursor(0)[1] - 1) or nil
@@ -553,7 +564,7 @@ local function run_file(file, opts)
     return
   end
   if opts.ask and not opts.args then
-    ask_args(file, spec, function(args, shown, named)
+    ask_args(file, spec, opts.reuse, function(args, shown, named)
       run_file(file, vim.tbl_extend("force", opts, { args = args, args_shown = shown, named = named }))
     end)
     return
@@ -599,6 +610,14 @@ function M.run_with_args()
   local file = current_file()
   if file then
     run_file(file, { ask = true })
+  end
+end
+
+-- <leader>rA / Shift+F6 ==> like <leader>ra but with the last args, no prompts
+function M.run_last_args()
+  local file = current_file()
+  if file then
+    run_file(file, { ask = true, reuse = true })
   end
 end
 

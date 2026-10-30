@@ -180,36 +180,6 @@ function M.build(args, values)
   return table.concat(vim.list_extend(argv, flag_argv), " "), table.concat(vim.list_extend(shown, flag_shown), " ")
 end
 
--- Re-run with the last answers ==> no prompts: every arg takes its memory, else
--- its default. Only the ones left without a valid value get asked (a required
--- arg added to the header since the last run, or one whose type changed).
--- Same on_done as M.ask.
-function M.reuse(args, last, on_done)
-  last = type(last) == "table" and last or {}
-  local values, missing = {}, {}
-  for _, arg in ipairs(args) do
-    local v = last[arg.name] or arg.default or ""
-    if invalid(arg, v) then
-      table.insert(missing, arg)
-    else
-      values[arg.name] = v
-    end
-  end
-  local function finish()
-    local argv, shown = M.build(args, values)
-    on_done(argv, shown, values)
-  end
-  if #missing == 0 then
-    return finish()
-  end
-  M.ask(missing, last, function(_, _, asked)
-    for name, v in pairs(asked) do
-      values[name] = v
-    end
-    finish()
-  end)
-end
-
 -- Ask every arg in order ==> on_done(argv, shown, values) with values = { name
 -- = raw answer } for the memory. `last` is that table from the previous run.
 -- Nothing runs if any prompt is cancelled.

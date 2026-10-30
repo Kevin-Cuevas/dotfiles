@@ -77,19 +77,6 @@ return {
       },
       { "<F6>", "<leader>ra", remap = true, desc = "Run with args" },
 
-      -- REPEAT ARGS ==> <leader> + r + A (alias: Shift+F6): the last args of
-      -- that file/item, without prompts. Shift+F6 reaches nvim as <F18> in some
-      -- terminals (kitty inside tmux), so both are mapped.
-      {
-        "<leader>rA",
-        function()
-          require("util.runner").run_last_args()
-        end,
-        desc = "Run with last args",
-      },
-      { "<S-F6>", "<leader>rA", remap = true, desc = "Run with last args" },
-      { "<F18>", "<leader>rA", remap = true, desc = "which_key_ignore" },
-
       -- PROCESS LIST ==> <leader> + r + l: what the runner launched, to show,
       -- kill (<C-x>) or restart (<C-e>) it, see util/runner_procs.lua
       {

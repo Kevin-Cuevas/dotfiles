@@ -14,11 +14,24 @@ vim.api.nvim_create_autocmd("TermEnter", {
   end,
 })
 
-vim.api.nvim_create_autocmd({ "BufWritePre" }, {
-  pattern = { "*.html", "*.js", "*.css" },
+-- Watchers (live-server, vite, node --watch) ==> con backupcopy=auto nvim a veces
+-- guarda renombrando: el archivo queda con otro inode, el watcher sigue mirando
+-- el viejo y no recarga (o recarga dos veces). "yes" sobrescribe en el sitio.
+-- Antes esto apagaba writebackup/swapfile con vim.opt en BufWritePre: esas
+-- opciones son globales, así que el primer :w de un .js las apagaba en toda la
+-- sesión (Java incluido). opt_local no sirve para ellas; backupcopy sí es local.
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = {
+    "html",
+    "css",
+    "scss",
+    "javascript",
+    "javascriptreact",
+    "typescript",
+    "typescriptreact",
+    "json",
+  },
   callback = function()
-    vim.opt.backup = false
-    vim.opt.writebackup = false
-    vim.opt.swapfile = false
+    vim.opt_local.backupcopy = "yes"
   end,
 })

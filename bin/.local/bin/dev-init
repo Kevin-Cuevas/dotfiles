@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 
 # Uso: newproj <NombreProyecto> <tipo: frontend|backend> [--git]
@@ -25,7 +24,7 @@ else
   exit 1
 fi
 
-find "$DEST" -type f | while read f; do
+find "$DEST" -type f | while IFS= read -r f; do
   sed -i "s/{{PROJECT_NAME}}/$PROJECT_NAME/g" "$f"
 done
 

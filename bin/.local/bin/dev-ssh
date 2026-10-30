@@ -141,11 +141,12 @@ ensure_config_local() {
 # preserves everything outside the markers.
 ssh_upsert_hosts() {
   local gid="${1:-}"
-  local replace="${2:-}"   # "replace" = remove existing hosts in gid not in new set
+  local replace="${2:-}" # "replace" = remove existing hosts in gid not in new set
   ensure_config_local
   local cfg="$TARGET/.ssh/config.local"
 
-  local newblocks; newblocks="$(cat)"
+  local newblocks
+  newblocks="$(cat)"
   if [[ -z "${newblocks//[$' \t\n']/}" ]]; then
     if [[ "$replace" != "replace" ]]; then
       warn "Nothing to add."
@@ -155,7 +156,8 @@ ssh_upsert_hosts() {
   fi
 
   local newfile tmp
-  newfile="$(mktemp)"; tmp="$(mktemp)"
+  newfile="$(mktemp)"
+  tmp="$(mktemp)"
   printf '%s\n' "$newblocks" >"$newfile"
 
   awk -v B="$SSH_MARK_BEGIN" -v E="$SSH_MARK_END" -v G="$gid" -v REPL="$replace" '
@@ -230,7 +232,8 @@ for p in (d.get("Peer") or {}).values():
         print("%s\t%s" % (label, "online" if p.get("Online") else "offline"))
 '
   else
-    local self_ip; self_ip="$(tailscale ip -4 2>/dev/null | head -1)"
+    local self_ip
+    self_ip="$(tailscale ip -4 2>/dev/null | head -1)"
     tailscale status 2>/dev/null \
       | awk -v self="$self_ip" '$1 ~ /^100\./ && $1 != self { printf "%s\t?\n", $2 }'
   fi
@@ -262,7 +265,8 @@ ssh_hist_file() { printf '%s\n' "$TARGET/.ssh/.ssh_user_history"; }
 # Distinct usernames for (tailnet, node), most recent first.
 # Handles both 4-field (old: no port) and 5-field (new: with port) formats.
 ssh_hist_users() { # $1=tailnet  $2=node
-  local f; f="$(ssh_hist_file)"
+  local f
+  f="$(ssh_hist_file)"
   [[ -f "$f" ]] || return 0
   awk -F'\t' -v t="$1" -v n="$2" \
     '$1==t && $2==n { epoch=(NF>=5)?$5:$4; print epoch"\t"NR"\t"$3 }' "$f" \
@@ -274,7 +278,8 @@ ssh_hist_users() { # $1=tailnet  $2=node
 # Format (5 fields): tailnet \t node \t username \t port \t epoch
 ssh_hist_record() { # $1=tailnet  $2=node  $3=username  $4=port
   [[ -z "$3" ]] && return 0
-  local f; f="$(ssh_hist_file)"
+  local f
+  f="$(ssh_hist_file)"
   mkdir -p "$(dirname "$f")"
   printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-22}" "$(date +%s)" >>"$f"
   chmod 600 "$f" 2>/dev/null || true
@@ -283,8 +288,12 @@ ssh_hist_record() { # $1=tailnet  $2=node  $3=username  $4=port
 # Most recent port for (tailnet, node); "22" if no record exists.
 # Only reads 5-field entries; 4-field (old format) entries have no port → falls back to 22.
 ssh_hist_port() { # $1=tailnet  $2=node
-  local f; f="$(ssh_hist_file)"
-  [[ -f "$f" ]] || { printf '22'; return 0; }
+  local f
+  f="$(ssh_hist_file)"
+  [[ -f "$f" ]] || {
+    printf '22'
+    return 0
+  }
   local p
   p=$(awk -F'\t' -v t="$1" -v n="$2" \
     '$1==t && $2==n && NF>=5 { print $5"\t"NR"\t"$4 }' "$f" \
@@ -311,7 +320,10 @@ ssh_group_hosts() { # $1=group
 # Manual host entry (form). Everything optional except Host.
 ssh_add_manual() {
   sep
-  command -v dialog &>/dev/null || { warn "dialog not available"; return; }
+  command -v dialog &>/dev/null || {
+    warn "dialog not available"
+    return
+  }
 
   local out
   out=$(dialog \
@@ -320,16 +332,26 @@ ssh_add_manual() {
     --title " SSH · Manual " \
     --form "Define a host. Only 'Host' is required.\n(empty HostName = Host · empty User = $USER)" \
     16 64 5 \
-    "Host"         1 1 "" 1 16 40 0 \
-    "HostName"     2 1 "" 2 16 40 0 \
-    "User"         3 1 "" 3 16 40 0 \
-    "Port"         4 1 "" 4 16 40 0 \
+    "Host" 1 1 "" 1 16 40 0 \
+    "HostName" 2 1 "" 2 16 40 0 \
+    "User" 3 1 "" 3 16 40 0 \
+    "Port" 4 1 "" 4 16 40 0 \
     "IdentityFile" 5 1 "" 5 16 40 0 \
-    3>&1 1>&2 2>&3) || { clear; skip "Cancelled."; return; }
+    3>&1 1>&2 2>&3) || {
+    clear
+    skip "Cancelled."
+    return
+  }
   clear
 
   local host hostname user port idfile
-  { IFS= read -r host; IFS= read -r hostname; IFS= read -r user; IFS= read -r port; IFS= read -r idfile; } <<<"$out"
+  {
+    IFS= read -r host
+    IFS= read -r hostname
+    IFS= read -r user
+    IFS= read -r port
+    IFS= read -r idfile
+  } <<<"$out"
   host="$(trim "$host")"
   hostname="$(trim "$hostname")"
   user="$(trim "$user")"
@@ -356,18 +378,24 @@ ssh_add_manual() {
 # ------------------------------------------------------------------------------
 ssh_add_tailscale() {
   sep
-  command -v dialog &>/dev/null || { warn "dialog not available"; return; }
-  command -v tailscale &>/dev/null || { warn "tailscale is not installed"; return; }
+  command -v dialog &>/dev/null || {
+    warn "dialog not available"
+    return
+  }
+  command -v tailscale &>/dev/null || {
+    warn "tailscale is not installed"
+    return
+  }
 
   # --- pick a tailnet (profile) --------------------------------------------
   # `tailscale switch --list`: ID  Tailnet(name)  Account(* = active).
   # tailscale está instalado pero a veces no se ven las tailnets porque el
   # usuario no es 'operator'. Si pasa, ejecutamos 'sudo tailscale set
   # --operator' una vez y reintentamos la detección.
-  local cur_id="" sw line lid lname attempt operator_fixed=false
+  local cur_id="" sw line lid lname operator_fixed=false
   local ts_items=()
   local -A TS_NAME=()
-  for attempt in 1 2; do
+  for _ in 1 2; do
     ts_items=()
     TS_NAME=()
     if tailscale status &>/dev/null; then
@@ -401,7 +429,7 @@ ssh_add_tailscale() {
 
   local chosen_id
   if [[ ${#ts_items[@]} -eq 2 ]]; then
-    chosen_id="${ts_items[0]}"     # single profile: use it without asking
+    chosen_id="${ts_items[0]}" # single profile: use it without asking
   else
     chosen_id=$(dialog \
       --clear --colors \
@@ -411,7 +439,11 @@ ssh_add_tailscale() {
       --menu "Pick the tailnet whose nodes you want to autodetect:" \
       14 70 6 \
       "${ts_items[@]}" \
-      3>&1 1>&2 2>&3) || { clear; skip "Cancelled."; return; }
+      3>&1 1>&2 2>&3) || {
+      clear
+      skip "Cancelled."
+      return
+    }
     clear
   fi
 
@@ -428,7 +460,8 @@ ssh_add_tailscale() {
     ok "Active tailnet now: $tailnet_name"
   fi
 
-  local peers; peers="$(ssh_tailscale_peers)"
+  local peers
+  peers="$(ssh_tailscale_peers)"
   if [[ -z "${peers//[$' \t\n']/}" ]]; then
     warn "No peers found in your tailnet."
     return
@@ -464,7 +497,11 @@ ssh_add_tailscale() {
     "Select the nodes to add  [SPACE=toggle  ENTER=confirm]\n\nYou'll then set the User and Port for each node (with carry-over)." \
     "$win_height" 64 "$list_height" \
     "${items[@]}" \
-    3>&1 1>&2 2>&3) || { clear; skip "Cancelled."; return; }
+    3>&1 1>&2 2>&3) || {
+    clear
+    skip "Cancelled."
+    return
+  }
   clear
 
   local chosen=()
@@ -512,7 +549,11 @@ ssh_add_tailscale() {
         --menu "User for '$n'   ($idx/$total)\n\nPick a username already used on this node, or type another:" \
         "$win" 64 "$lh" \
         "${menu_items[@]}" \
-        3>&1 1>&2 2>&3) || { clear; skip "Cancelled."; return; }
+        3>&1 1>&2 2>&3) || {
+        clear
+        skip "Cancelled."
+        return
+      }
       clear
 
       if [[ "$pick" == "+" ]]; then
@@ -522,7 +563,11 @@ ssh_add_tailscale() {
           --title " SSH · Tailscale " \
           --inputbox "New User for '$n'   ($idx/$total)" \
           9 64 "$recent" \
-          3>&1 1>&2 2>&3) || { clear; skip "Cancelled."; return; }
+          3>&1 1>&2 2>&3) || {
+          clear
+          skip "Cancelled."
+          return
+        }
         clear
       else
         u="$pick"
@@ -534,7 +579,11 @@ ssh_add_tailscale() {
         --title " SSH · Tailscale " \
         --inputbox "User for '$n'   ($idx/$total)\n\n(no history for this node · Enter = '$last_user')" \
         10 64 "$last_user" \
-        3>&1 1>&2 2>&3) || { clear; skip "Cancelled."; return; }
+        3>&1 1>&2 2>&3) || {
+        clear
+        skip "Cancelled."
+        return
+      }
       clear
     fi
 
@@ -543,7 +592,8 @@ ssh_add_tailscale() {
     last_user="$u"
 
     # Port prompt — pre-filled with history value or 22
-    local hist_port; hist_port="$(ssh_hist_port "$tailnet_name" "$n")"
+    local hist_port
+    hist_port="$(ssh_hist_port "$tailnet_name" "$n")"
     local p
     p=$(dialog \
       --clear --colors \
@@ -551,7 +601,11 @@ ssh_add_tailscale() {
       --title " SSH · Tailscale " \
       --inputbox "Port for '$n'   ($idx/$total)\n\n(SSH port · Enter = '${hist_port}')" \
       9 64 "$hist_port" \
-      3>&1 1>&2 2>&3) || { clear; skip "Cancelled."; return; }
+      3>&1 1>&2 2>&3) || {
+      clear
+      skip "Cancelled."
+      return
+    }
     clear
     p="$(trim "$p")"
     [[ -z "$p" ]] && p="$hist_port"
@@ -586,10 +640,10 @@ ssh_menu() {
 
     print_header
     case "$choice" in
-    1) (setup_ssh) || true ;;
-    2) (ssh_add_manual) || true ;;
-    3) (ssh_add_tailscale) || true ;;
-    b | B) break ;;
+      1) (setup_ssh) || true ;;
+      2) (ssh_add_manual) || true ;;
+      3) (ssh_add_tailscale) || true ;;
+      b | B) break ;;
     esac
 
     [[ "$choice" == "b" || "$choice" == "B" ]] && break
@@ -603,13 +657,13 @@ ssh_menu() {
 # ------------------------------------------------------------------------------
 main() {
   case "$MODE" in
-  setup)
-    setup_ssh
-    ;;
-  menu)
-    command -v dialog &>/dev/null || die "dialog not found. Install it: sudo apt install dialog"
-    ssh_menu
-    ;;
+    setup)
+      setup_ssh
+      ;;
+    menu)
+      command -v dialog &>/dev/null || die "dialog not found. Install it: sudo apt install dialog"
+      ssh_menu
+      ;;
   esac
 }
 

@@ -5,6 +5,10 @@
 # Only hard deps: zsh + git (zinit self-installs on first run).
 # ===============================================================================
 
+# `ZPROF=1 zsh` (o `just profile`) => perfil de funciones del arranque al final
+# del archivo. Sin la variable no carga nada.
+if [[ -n $ZPROF ]]; then zmodload zsh/zprof; fi
+
 export LC_TIME="en_US.UTF-8"
 
 # MOTD Tailscale
@@ -63,25 +67,37 @@ if [[ " ${fpath[*]} " != *" $HOME/.zsh/completions "* ]]; then
   fpath=("$HOME/.zsh/completions" $fpath)
 fi
 
-# Use the fast path (compinit -C: load the dump, no fpath rescan) only when the
-# dump is from today AND newer than the ~/.zsh/completions dir itself. That
-# dir's mtime bumps whenever an entry is added/removed — a stow symlink (whose
-# repo target may have an old mtime) or a file a dev-* CLI drops in — so a new
-# completion is picked up on the next shell instead of a day later. Editing an
-# existing _* file's body needs no rescan: zsh autoloads it fresh when it fires.
-# Anything else (dump missing or stale) forces a full rescan. Wrapped in an anon
-# function so $zcd / $cdir don't leak into the interactive shell.
+# Fast path (compinit -C: load the dump, no fpath rescan) unless the dump is
+# missing or ANY $fpath dir is newer than it. A dir's mtime bumps whenever an
+# entry is added/removed: a stow symlink in ~/.zsh/completions (whose repo
+# target may have an old mtime), a file a dev-* CLI drops in, apt installing
+# into /usr/share/zsh/vendor-completions, a zinit plugin update... so a new
+# completion shows up on the very next shell. It's ~25 stat() calls, ~free.
+# Editing an existing _* file's body needs no rescan: zsh autoloads it fresh.
+# This replaced a "dump is from today" rule that paid a full ~650 ms rescan on
+# the first shell of every day and still missed same-day apt installs.
+# After a full rescan the dump is touched: compinit only rewrites it when the
+# file count changes, and an untouched old dump would rescan on every shell.
+# The dump is then zcompile'd in the background (`&!`: never waited on); zsh
+# loads the .zwc instead whenever it's newer. Anon function: no leaked vars.
 autoload -Uz compinit
 () {
-  local zcd="${ZDOTDIR:-$HOME}/.zcompdump"
-  local cdir="$HOME/.zsh/completions"
+  local zcd="${ZDOTDIR:-$HOME}/.zcompdump" dir
+  local -i stale=0
 
-  if [[ -f $zcd && $(date +'%j') == $(date -r "$zcd" +'%j' 2>/dev/null) \
-     && ( ! -d $cdir || $zcd -nt $cdir ) ]]; then
-    compinit -C -d "$zcd"
+  [[ -f $zcd ]] || stale=1
+  for dir in $fpath; do
+    (( stale )) && break
+    [[ $dir -nt $zcd ]] && stale=1
+  done
+
+  if (( stale )); then
+    compinit -d "$zcd" && touch "$zcd"
   else
-    compinit -d "$zcd"
+    compinit -C -d "$zcd"
   fi
+
+  { [[ -s $zcd && ( ! -s $zcd.zwc || $zcd -nt $zcd.zwc ) ]] && zcompile "$zcd" } &!
 }
 (( ${+functions[zinit]} )) && zinit cdreplay -q
 
@@ -92,40 +108,69 @@ autoload -Uz compinit
 export EDITOR="nvim"
 export VISUAL="$EDITOR"
 export SYSTEMD_EDITOR="$EDITOR"
-export SUDO_EDITOR="/opt/nvim/bin/nvim"
 
+SDKMAN_DIR="$HOME/.sdkman"
+
+# Every entry ends in (N-/): a dir that doesn't exist on this machine is simply
+# dropped (no per-tool `if`), and the globs match any version (ruby gems,
+# every SDKMAN candidate's `current`). Unquoted on purpose so they expand.
 typeset -U path
 path=(
-  "$HOME/.local/bin"
-  "$HOME/.cargo/bin"
-  "$HOME/.local/share/gem/ruby/3.3.0/bin"
-  "$HOME/.fzf/bin"
-  "$HOME/.opencode/bin"
-  "/opt/nvim/bin"
-  "/opt/tmux/bin"
-  "/sbin"
-  "/usr/sbin"
+  $HOME/.local/bin(N-/)
+  $HOME/.cargo/bin(N-/)
+  $HOME/.bun/bin(N-/)
+  $HOME/.local/share/gem/ruby/*/bin(N-/)
+  $SDKMAN_DIR/candidates/*/current/bin(N-/)
+  $HOME/.fzf/bin(N-/)
+  $HOME/.opencode/bin(N-/)
+  /opt/nvim/bin(N-/)
+  /opt/tmux/bin(N-/)
+  /sbin(N-/)
+  /usr/sbin(N-/)
   $path
 )
 
-# FNM path
+# sudoedit needs an absolute path (sudo's secure_path doesn't know /opt/nvim).
+# $commands is zsh's command hash: resolves wherever nvim lives on this host.
+export SUDO_EDITOR="${commands[nvim]:-nvim}"
+
+# FNM path. `fnm env` costs ~40 ms (a process + a per-shell "multishell"
+# symlink, so its output can't be cached): it runs in zinit turbo, right after
+# the first prompt. Without zinit it just runs inline.
 FNM_PATH="$HOME/.local/share/fnm"
 if [[ -d "$FNM_PATH" ]]; then
   path=("$FNM_PATH" $path)
-  eval "$(fnm env)"
+  if (( ${+functions[zinit]} )); then
+    zinit ice wait lucid id-as'fnm-env' atload'eval "$(fnm env)"'
+    zinit light zdharma-continuum/null
+  else
+    eval "$(fnm env)"
+  fi
 fi
 
 # CARGO (RUST) path
 [[ -d "$HOME/.cargo" ]] && export CARGO_INCREMENTAL=1 RUST_LOG=info
 
-# BUN path
-export BUN_INSTALL="$HOME/.bun"
-export PATH="$BUN_INSTALL/bin:$PATH"
+# BUN (its bin is in the path block above)
+[[ -d "$HOME/.bun" ]] && export BUN_INSTALL="$HOME/.bun"
 [[ -f "$HOME/.deno/env" ]] && source "$HOME/.deno/env"
 
-# SDKMAN (java)
-export SDKMAN_DIR="$HOME/.sdkman"
-[[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
+# SDKMAN (java). PATH (path block above) and JAVA_HOME are static: they point
+# at candidates/<x>/current, the symlink `sdk default` repoints, so `java`
+# resolves exactly as it did with sdkman-init. Only the `sdk` command is lazy:
+# its ~30 ms init runs the first time you call it, then the stub is replaced.
+# Nothing else is lost while sdkman_auto_env=false (~/.sdkman/etc/config); if
+# that ever changes, source sdkman-init.sh here again instead.
+if [[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]]; then
+  export SDKMAN_DIR
+  [[ -d "$SDKMAN_DIR/candidates/java/current" ]] \
+    && export JAVA_HOME="$SDKMAN_DIR/candidates/java/current"
+  sdk() {
+    unfunction sdk
+    source "$SDKMAN_DIR/bin/sdkman-init.sh"
+    sdk "$@"
+  }
+fi
 
 # TMUXP path
 export TMUXP_CONFIGDIR="$HOME/dev/infra/tmuxp"
@@ -137,7 +182,6 @@ export TMUXP_CONFIGDIR="$HOME/dev/infra/tmuxp"
 HISTSIZE=50000
 SAVEHIST=50000
 HISTFILE=~/.zsh_history
-HISTDUP=erase
 
 setopt appendhistory sharehistory
 setopt hist_ignore_space hist_ignore_all_dups
@@ -166,7 +210,7 @@ zstyle ':fzf-tab:*' switch-group '<' '>'
 # it has to be scanned before compinit runs)
 
 # BUN completions
-[ -s "/home/nivek/.bun/_bun" ] && source "/home/nivek/.bun/_bun"
+[[ -s "$HOME/.bun/_bun" ]] && source "$HOME/.bun/_bun"
 
 # ===============================================================================
 # FUNCTIONS
@@ -255,3 +299,6 @@ bindkey '^n' history-search-forward
 
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
 [[ -f "${ZDOTDIR:-$HOME}/.zshrc.local" ]] && source "${ZDOTDIR:-$HOME}/.zshrc.local"
+
+# `if`, not `&&`: a trailing false test would leave $? = 1 for the first prompt.
+if [[ -n $ZPROF ]]; then zprof; fi

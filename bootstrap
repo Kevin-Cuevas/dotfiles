@@ -40,7 +40,10 @@ BACKTITLE="DOTFILES BOOTSTRAP · $(hostname) · $(date '+%Y-%m-%d %H:%M')"
 # from there.
 for _module in "$DOTFILES_DIR"/bootstrap.d/*.sh; do
   # shellcheck source=/dev/null
-  source "$_module" || { echo "Failed to load $_module" >&2; exit 1; }
+  source "$_module" || {
+    echo "Failed to load $_module" >&2
+    exit 1
+  }
 done
 unset _module
 
@@ -49,7 +52,7 @@ run_all() {
   run_dev_packages || warn "dev-packages encountered errors — check output above"
   set_permissions
   stow_packages
-  run_dev_motd  || warn "dev-motd encountered errors — check output above"
+  run_dev_motd || warn "dev-motd encountered errors — check output above"
   install_fonts
   setup_tw_hook || warn "Timewarrior hook setup failed — check output above"
   install_tpm
@@ -92,19 +95,19 @@ main_menu() {
 
     print_header
     case "$choice" in
-    1) (run_all) || true ;;
-    2) (install_packages) || true ;;
-    3) (set_permissions) || true ;;
-    4) (stow_packages) || true ;;
-    5) (run_dev_packages) || true ;;
-    6) (run_dev_motd) || true ;;
-    7) (install_fonts) || true ;;
-    8) (setup_tw_hook) || true ;;
-    9) (install_tpm) || true ;;
-    10) (run_dev_ssh) || true ;;
-    11) (set_default_shell) || true ;;
-    12) (install_runtimes) || true ;;
-    q | Q) break ;;
+      1) (run_all) || true ;;
+      2) (install_packages) || true ;;
+      3) (set_permissions) || true ;;
+      4) (stow_packages) || true ;;
+      5) (run_dev_packages) || true ;;
+      6) (run_dev_motd) || true ;;
+      7) (install_fonts) || true ;;
+      8) (setup_tw_hook) || true ;;
+      9) (install_tpm) || true ;;
+      10) (run_dev_ssh) || true ;;
+      11) (set_default_shell) || true ;;
+      12) (install_runtimes) || true ;;
+      q | Q) break ;;
     esac
 
     echo

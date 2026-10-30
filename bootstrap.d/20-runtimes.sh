@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # bootstrap.d/20-runtimes.sh — language runtimes (rust, node, deno, bun, java)
 # ==============================================================================
 # RUNTIME_KEYS/LABEL/FN + install_runtimes() drive menu option 12's
@@ -30,12 +31,12 @@ declare -A RUNTIME_FN=(
 # Para agregar uno: añade su clave aquí y su etiqueta + spec npm en los mapas.
 NPM_GLOBAL_KEYS=(live-server commitizen angular)
 declare -A NPM_GLOBAL_LABEL=(
-  [live-server]="live-server"
+  ["live-server"]="live-server"
   [commitizen]="commitizen"
   [angular]="Angular CLI"
 )
 declare -A NPM_GLOBAL_PKG=(
-  [live-server]="live-server"
+  ["live-server"]="live-server"
   [commitizen]="commitizen cz-conventional-changelog"
   [angular]="@angular/cli"
 )
@@ -163,7 +164,7 @@ install_node_globals() {
 
     while IFS= read -r key; do
       [[ -n "$key" ]] && chosen+=("$key")
-    done <<< "$raw"
+    done <<<"$raw"
 
     if [[ ${#chosen[@]} -eq 0 ]]; then
       skip "No global npm packages selected."
@@ -171,12 +172,15 @@ install_node_globals() {
     fi
   fi
 
-  local key pkg sub all_present
+  local key pkg sub all_present specs
   for key in "${chosen[@]}"; do
     pkg="${NPM_GLOBAL_PKG[$key]}"
+    # Una clave puede traer varios specs npm separados por espacio
+    # (commitizen + su adapter): se parten una sola vez, a un array.
+    read -ra specs <<<"$pkg"
 
     all_present=true
-    for sub in $pkg; do
+    for sub in "${specs[@]}"; do
       fnm exec --using="$using" npm ls -g --depth=0 "$sub" &>/dev/null || all_present=false
     done
 
@@ -184,7 +188,7 @@ install_node_globals() {
       skip "$pkg already installed globally"
     else
       info "npm install -g $pkg ..."
-      if fnm exec --using="$using" npm install -g $pkg &>/dev/null; then
+      if fnm exec --using="$using" npm install -g "${specs[@]}" &>/dev/null; then
         ok "Installed global: $pkg"
       else
         warn "Failed to install global: $pkg"
@@ -199,7 +203,7 @@ install_node_globals() {
 # siempre que el usuario elija instalar commitizen, sin importar si el
 # 'npm install -g' de arriba se ejecutó, falló, o se saltó por ya-instalado.
 write_czrc() {
-  echo '{ "path": "cz-conventional-changelog" }' > "$HOME/.czrc"
+  echo '{ "path": "cz-conventional-changelog" }' >"$HOME/.czrc"
   ok "Wrote $HOME/.czrc"
 }
 
@@ -276,9 +280,9 @@ jdk_works() {
   out="$(
     cd "$tmp" || exit 1
     ulimit -c 0
-    printf 'public class Hello { public static void main(String[] a) { System.out.println("ok"); } }\n' > Hello.java
-    timeout 60 "$home/bin/javac" -J-XX:ErrorFile=/dev/null Hello.java &>/dev/null &&
-      timeout 60 "$home/bin/java" -XX:ErrorFile=/dev/null -cp . Hello 2>/dev/null
+    printf 'public class Hello { public static void main(String[] a) { System.out.println("ok"); } }\n' >Hello.java
+    timeout 60 "$home/bin/javac" -J-XX:ErrorFile=/dev/null Hello.java &>/dev/null \
+      && timeout 60 "$home/bin/java" -XX:ErrorFile=/dev/null -cp . Hello 2>/dev/null
   )"
   rm -rf "$tmp"
   [[ "$out" == "ok" ]]
@@ -293,7 +297,7 @@ install_jdk_major() {
   local major="$1" dist id tried=()
   JDK_NEW_ID=""
   for dist in "${JDK_DISTS[@]}"; do
-    id="${avail[$major:$dist]:-}"
+    id="${avail["$major:$dist"]:-}"
     # Si ya hay un build roto de esta distribución, ni se descarga otro
     [[ -z "$id" || " ${broken[$major]:-} " == *"-$dist "* ]] && continue
     tried+=("$id")
@@ -301,7 +305,7 @@ install_jdk_major() {
     info "Installing Java $id..."
     # "n" responde a "¿usar como default?"; el default se decide al final. Si
     # es el primer JDK, sdk lo pone de default sin preguntar.
-    if ! sdk_run install java "$id" <<< "n"; then
+    if ! sdk_run install java "$id" <<<"n"; then
       warn "Failed to install Java $id"
       return 1
     fi
@@ -359,12 +363,13 @@ install_java_jdks() {
     IFS='|'
     echo "${JDK_DISTS[*]}"
   ))\$"
+  # shellcheck disable=SC2209 # PAGER=cat es una variable de entorno para sdk_run, no una asignación
   while IFS= read -r id; do
     major="${id%%[.+-]*}"
     dist="${id##*-}"
-    [[ -n "$major" && -z "${avail[$major:$dist]:-}" ]] && avail[$major:$dist]="$id"
-  done < <(PAGER=cat sdk_run list java 2>/dev/null |
-    awk -F'|' -v re="$dist_re" '{gsub(/ /, "", $4)} $4 ~ re {print $4}')
+    [[ -n "$major" && -z "${avail["$major:$dist"]:-}" ]] && avail["$major:$dist"]="$id"
+  done < <(PAGER=cat sdk_run list java 2>/dev/null \
+    | awk -F'|' -v re="$dist_re" '{gsub(/ /, "", $4)} $4 ~ re {print $4}')
 
   # Unión de mayores de todas las distribuciones, de 8 en adelante (zulu aún
   # ofrece 6 y 7)
@@ -381,8 +386,8 @@ install_java_jdks() {
   if [[ "$NONINTERACTIVE" == "true" ]]; then
     [[ -n "$newest" ]] && chosen=("$newest")
     for major in "${majors[@]}"; do
-      [[ -n "${broken[$major]:-}" && -z "${installed[$major]:-}" && "$major" != "$newest" ]] &&
-        chosen+=("$major")
+      [[ -n "${broken[$major]:-}" && -z "${installed[$major]:-}" && "$major" != "$newest" ]] \
+        && chosen+=("$major")
     done
     info "Non-interactive mode — JDK(s): ${chosen[*]:-ninguno}"
   elif [[ ${#majors[@]} -gt 0 ]]; then
@@ -399,7 +404,7 @@ install_java_jdks() {
       else
         pref=""
         for dist in "${JDK_DISTS[@]}"; do
-          pref="${avail[$major:$dist]:-}"
+          pref="${avail["$major:$dist"]:-}"
           [[ -n "$pref" ]] && break
         done
         label="Java $major  ($pref)"
@@ -432,7 +437,7 @@ install_java_jdks() {
 
     while IFS= read -r major; do
       [[ -n "$major" ]] && chosen+=("$major")
-    done <<< "$raw"
+    done <<<"$raw"
   fi
 
   local old
@@ -602,7 +607,7 @@ install_runtimes() {
 
     while IFS= read -r item; do
       [[ -n "$item" ]] && chosen+=("$item")
-    done <<< "$raw"
+    done <<<"$raw"
 
     if [[ ${#chosen[@]} -eq 0 ]]; then
       warn "No runtimes selected."

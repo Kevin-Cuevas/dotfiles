@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # bootstrap.d/10-packages.sh — apt packages (menu option 2)
 # ==============================================================================
 # APT_PKGS + install_packages() handle menu option 2 — plain apt packages

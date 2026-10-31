@@ -286,6 +286,32 @@ alias lavat="lavat -c cyan -k magenta -R 3"
 command -v zoxide &>/dev/null && eval "$(zoxide init zsh)"
 command -v direnv &>/dev/null && eval "$(direnv hook zsh)"
 
+# tmux status bar: host/user of the ssh running in this pane (@ssh_host,
+# @ssh_user, read by ~/.tmux-theme.conf). Set here right before ssh starts,
+# not by ssh's LocalCommand: that only runs when a *new* master connection is
+# made, so a reused ControlMaster connection ("Shared connection to ...")
+# left the bar with "…". `ssh -G` resolves the alias/user from ~/.ssh/config
+# without connecting; it only runs for ssh commands. $3 = the line with
+# aliases expanded, -t "$TMUX_PANE" = this pane, not tmux's "current" one.
+if [[ -n $TMUX ]]; then
+  _tmux_ssh_meta() {
+    local -a words=(${(z)3})
+    [[ ${words[1]} == ssh ]] || return
+    local line host user
+    for line in ${(f)"$(command ssh -G ${words[2,-1]} 2>/dev/null)"}; do
+      case $line in
+        host\ *) host=${line#host } ;;
+        user\ *) user=${line#user } ;;
+      esac
+    done
+    [[ -n $host ]] || return
+    tmux set-option -p -t "$TMUX_PANE" @ssh_host "$host" \; \
+      set-option -p -t "$TMUX_PANE" @ssh_user "$user" 2>/dev/null
+  }
+  autoload -Uz add-zsh-hook
+  add-zsh-hook preexec _tmux_ssh_meta
+fi
+
 # ===============================================================================
 # KEYBINDINGS
 # ===============================================================================

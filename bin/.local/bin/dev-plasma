@@ -23,6 +23,9 @@
 #                    .colors y el wallpaper como copias (kpackagetool6 no sabe
 #                    instalar wallpapers de imágenes: Wallpaper/Images no tiene
 #                    carpeta raíz y su -u/-r fallan). Solo toca lo que difiere.
+#                    También el icono del lanzador (nivek-debian, a hicolor).
+#                    Los temas NO traen layout (contents/layouts): un layout
+#                    reemplaza el panel entero, y con él las apps fijadas.
 #   - icons       -> papirus-icon-theme por apt + papirus-folders (GitHub) con
 #                    carpetas "nordic". apt instala Papirus con carpetas azules
 #                    y vuelve a dejarlas así en cada upgrade del paquete, así
@@ -37,7 +40,11 @@
 #   - apply       -> aplica el tema que corresponda al modo actual y registra
 #                    el par claro/oscuro en kdeglobals. NO toca el interruptor
 #                    "Switch to Dark Mode at Night" (lo deja como estaba) ni el
-#                    panel, salvo con --reset-layout.
+#                    panel.
+#   - launcher-icon -> pone el icono nivek-debian en el lanzador (Kickoff) del
+#                    panel que ya tienes, vía el scripting de plasmashell, y no
+#                    toca nada más: ni apps fijadas ni widgets. Como el
+#                    wallpaper: un icono elegido a mano se respeta en --all.
 #   - wallpaper   -> pone Nord Flare (tiene variante clara y oscura) solo si el
 #                    wallpaper actual es el de serie de KDE. Uno elegido a mano
 #                    se respeta en --all; se pisa solo si eliges esta key.
@@ -49,8 +56,6 @@
 #   dev-plasma --all           todas las keys, sin diálogo
 #   dev-plasma --only=a,b,c    solo esas keys, sin diálogo
 #   dev-plasma --doctor        solo revisa (no instala ni cambia nada)
-#   dev-plasma --reset-layout  con la key apply: aplica también el layout del
-#                              tema (panel + wallpaper); reemplaza tu panel
 #   dev-plasma --dark=ID       Global Theme oscuro (default: NivekDarkNord)
 #   dev-plasma --light=ID      Global Theme claro  (default: NivekLightNord)
 #   dev-plasma -h | --help     esta ayuda
@@ -85,7 +90,7 @@ THEME_DARK="${DEV_PLASMA_DARK:-NivekDarkNord}"
 THEME_LIGHT="${DEV_PLASMA_LIGHT:-NivekLightNord}"
 FOLDER_COLOR="${DEV_PLASMA_FOLDER_COLOR:-nordic}"
 WALLPAPER="Nord-flare"
-RESET_LAYOUT=false
+LAUNCHER_ICON="nivek-debian"
 # true si las keys se eligieron a mano (checklist o --only), false en --all:
 # decide si el wallpaper puede pisar uno puesto a mano.
 EXPLICIT=true
@@ -105,7 +110,7 @@ SDDM_DROPIN=/etc/sddm.conf.d/dev-plasma.conf
 # ─── registro ─────────────────────────────────────────────────────────────
 # El orden de PKG_KEYS es el orden de ejecución (sin importar el de --only):
 # las piezas externas primero, luego aplicar el tema que las usa.
-PKG_KEYS=(themes icons splash sddm-cursor apply wallpaper)
+PKG_KEYS=(themes icons splash sddm-cursor apply wallpaper launcher-icon)
 declare -A PKG_LABEL=(
   [themes]="Global Themes + colores + Nord Flare desde el repo (kpackagetool6)"
   [icons]="Papirus por apt + carpetas $FOLDER_COLOR (papirus-folders)"
@@ -113,6 +118,7 @@ declare -A PKG_LABEL=(
   ["sddm-cursor"]="Cursor del tema también en el login (SDDM, sudo)"
   [apply]="Aplicar $THEME_DARK / $THEME_LIGHT según el modo actual"
   [wallpaper]="Wallpaper Nord Flare (si tienes el de serie)"
+  ["launcher-icon"]="Icono $LAUNCHER_ICON en el lanzador (solo el icono)"
 )
 declare -A PKG_FN=(
   [themes]="install_themes"
@@ -121,6 +127,7 @@ declare -A PKG_FN=(
   ["sddm-cursor"]="install_sddm_cursor"
   [apply]="apply_theme"
   [wallpaper]="apply_wallpaper"
+  ["launcher-icon"]="set_launcher_icon"
 )
 
 # ─── utilidades ──────────────────────────────────────────────────────────────
@@ -307,6 +314,12 @@ install_themes() {
     src="${src%/}"
     sync_copy "$src" "$HOME/.local/share/wallpapers/$(basename "$src")" || rc=1
   done
+  # Iconos propios (archivo por archivo: ~/.local/share/icons/hicolor ya
+  # tiene iconos de otras apps). hicolor es el fallback de todo tema de
+  # iconos, así que nivek-debian se ve con Papirus, Breeze o cualquiera.
+  while IFS= read -r -d '' f; do
+    sync_copy "$f" "$HOME/.local/share/icons/${f#"$SRC_DIR/icons/"}" || rc=1
+  done < <(find "$SRC_DIR/icons" -type f -print0 2>/dev/null)
   return "$rc"
 }
 
@@ -552,23 +565,19 @@ apply_theme() {
   local target="$THEME_DARK" current
   is_light_mode && target="$THEME_LIGHT"
   current="$(kreadconfig6 --file kdeglobals --group KDE --key LookAndFeelPackage 2>/dev/null)"
-  if [[ "$current" == "$target" && "$RESET_LAYOUT" == false ]]; then
+  if [[ "$current" == "$target" ]]; then
     skip "$target ya está aplicado"
     link_pair
     return 0
   fi
 
-  local args=(-a "$target") note="" automatic
-  if [[ "$RESET_LAYOUT" == true ]]; then
-    args+=(--resetLayout)
-    note=" (con layout: reemplaza tu panel)"
-  fi
+  local automatic
   # plasma-apply-lookandfeel -a borra AutomaticLookAndFeel (elegir un tema a
   # mano apaga el modo automático). Se guarda antes y se repone después para
   # dejar el interruptor exactamente como estaba.
   automatic="$(kreadconfig6 --file kdeglobals --group KDE --key AutomaticLookAndFeel 2>/dev/null)"
-  info "Aplicando $target$note..."
-  plasma-apply-lookandfeel "${args[@]}" || {
+  info "Aplicando $target..."
+  plasma-apply-lookandfeel -a "$target" || {
     err "plasma-apply-lookandfeel falló"
     return 1
   }
@@ -615,6 +624,59 @@ apply_wallpaper() {
     return 1
   }
   ok "Wallpaper: $WALLPAPER (cambia solo entre claro/oscuro)"
+}
+
+# ─── launcher-icon ───────────────────────────────────────────────────────────
+# Cambia solo la clave General/icon de cada lanzador (Kickoff, Kicker, Kicker
+# Dash) de cada panel, con el scripting de plasmashell por DBus: el resto del
+# panel (apps fijadas, widgets, posición) no se toca. El script imprime
+# "cambiados iguales propios"; un icono propio (ni vacío, ni start-here-*,
+# ni el nuestro) solo se pisa si la key se eligió a mano.
+set_launcher_icon() {
+  sep
+  [[ -f "$HOME/.local/share/icons/hicolor/scalable/apps/$LAUNCHER_ICON.svg" ]] || {
+    err "$LAUNCHER_ICON no está instalado (dev-plasma --only=themes)"
+    return 1
+  }
+  if ! has_session; then
+    skip "Sin sesión gráfica — no se puede cambiar el icono del lanzador"
+    return 0
+  fi
+  need_cmd qdbus6 qdbus-qt6 || return 1
+
+  local force=false
+  [[ "$EXPLICIT" == true ]] && force=true
+  local script out
+  script="var icon = '$LAUNCHER_ICON', force = $force, changed = 0, same = 0, custom = 0;
+var launchers = ['org.kde.plasma.kickoff', 'org.kde.plasma.kicker', 'org.kde.plasma.kickerdash'];
+panels().forEach(function (p) {
+  p.widgets().forEach(function (w) {
+    if (launchers.indexOf(w.type) < 0) return;
+    w.currentConfigGroup = ['General'];
+    var cur = String(w.readConfig('icon', ''));
+    if (cur === icon) { same++; return; }
+    if (cur !== '' && cur.indexOf('start-here') !== 0 && !force) { custom++; return; }
+    w.writeConfig('icon', icon);
+    w.reloadConfig();
+    changed++;
+  });
+});
+print(changed + ' ' + same + ' ' + custom);"
+  out="$(qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$script" 2>&1)" || {
+    err "plasmashell no aceptó el script: $out"
+    return 1
+  }
+  local changed same custom
+  read -r changed same custom <<<"$out"
+  if [[ "${changed:-0}" -gt 0 ]]; then
+    ok "Icono $LAUNCHER_ICON en $changed lanzador(es); el resto del panel quedó igual"
+  elif [[ "${custom:-0}" -gt 0 ]]; then
+    skip "El lanzador tiene un icono elegido a mano — lo respeto (dev-plasma --only=launcher-icon para cambiarlo)"
+  elif [[ "${same:-0}" -gt 0 ]]; then
+    skip "El lanzador ya usa $LAUNCHER_ICON"
+  else
+    skip "No hay ningún lanzador (Kickoff/Kicker) en tus paneles"
+  fi
 }
 
 # ─── doctor ──────────────────────────────────────────────────────────────────
@@ -700,6 +762,11 @@ run_doctor() {
   doctor_theme "$THEME_LIGHT"
 
   local v
+  if [[ -f "$HOME/.local/share/icons/hicolor/scalable/apps/$LAUNCHER_ICON.svg" ]]; then
+    doc_ok "icono $LAUNCHER_ICON"
+  else
+    doc_warn "icono $LAUNCHER_ICON no instalado (dev-plasma --only=themes)"
+  fi
   if [[ -f "$HOME/.local/share/wallpapers/$WALLPAPER/metadata.json" ]]; then
     if v="$(kpackage_escape "$HOME/.local/share/wallpapers/$WALLPAPER")"; then
       doc_fail "wallpaper $WALLPAPER: $v está fuera del paquete (dev-plasma --only=themes)"
@@ -773,7 +840,6 @@ for arg in "$@"; do
     --all) NONINTERACTIVE=true ;;
     --only=*) IFS=',' read -ra ONLY_KEYS <<<"${arg#--only=}" ;;
     --doctor) DOCTOR_ONLY=true ;;
-    --reset-layout) RESET_LAYOUT=true ;;
     --dark=*) THEME_DARK="${arg#--dark=}" ;;
     --light=*) THEME_LIGHT="${arg#--light=}" ;;
     -h | --help)

@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
 # dev-plasma — deja KDE Plasma con los Global Themes de los dotfiles
-# (NivekDarkNord / NivekLightNord): instala lo que esos temas referencian pero
-# que no vive en el repo, los aplica como par claro/oscuro y revisa que no
-# quede ninguna referencia rota. Standalone, igual que dev-packages/dev-ssh:
-# no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR.
+# (NivekDarkNord / NivekLightNord): los instala desde plasma/ del repo, instala
+# lo que esos temas referencian, los aplica como par claro/oscuro y revisa que
+# no quede ninguna referencia rota. Standalone, igual que dev-packages/dev-ssh:
+# no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR (plasma/ se ubica desde
+# la ruta real de este mismo script).
 #
-# Los temas, sus esquemas de color y el wallpaper Nord Flare llegan por stow
-# (paquete plasma/). Un Global Theme solo NOMBRA sus piezas (ColorScheme=,
-# Icons Theme=, cursorTheme=, KSplash Theme=...) y Plasma no avisa si una
-# falta: aplica el resto en silencio y deja lo anterior. Por eso cada key
-# instala una pieza externa y --doctor comprueba que todas existan:
+# plasma/ NO se stowea: Plasma lee los Global Themes con KPackage, que rechaza
+# cualquier archivo cuyo path real quede fuera de la carpeta del paquete
+# ("kf.package: Path traversal attempt detected"). Con symlinks hacia
+# ~/dotfiles ignoraba contents/defaults y aplicaba Breeze en silencio. Así
+# que se instalan COPIAS, como cualquier tema de "Get New…": el repo es la
+# fuente y se edita ahí (la skill nivek-plasma-global-theme lo hace); luego
+# `dev-plasma --only=themes` reinstala lo que cambió.
+#
+# Un Global Theme solo NOMBRA sus piezas (ColorScheme=, Icons Theme=,
+# cursorTheme=, KSplash Theme=...) y Plasma no avisa si una falta: aplica el
+# resto en silencio. Por eso cada key instala una pieza y --doctor comprueba
+# que todas existan:
+#   - themes      -> los Global Themes con kpackagetool6 (el instalador oficial
+#                    de paquetes de Plasma: -i o -u según haga falta), y los
+#                    .colors y el wallpaper como copias (kpackagetool6 no sabe
+#                    instalar wallpapers de imágenes: Wallpaper/Images no tiene
+#                    carpeta raíz y su -u/-r fallan). Solo toca lo que difiere.
 #   - icons       -> papirus-icon-theme por apt + papirus-folders (GitHub) con
 #                    carpetas "nordic". apt instala Papirus con carpetas azules
 #                    y vuelve a dejarlas así en cada upgrade del paquete, así
@@ -21,9 +34,10 @@
 #                    como el usuario `sddm`, que no puede entrar a un home con
 #                    permisos 0710, así que en el login no veía Bibata aunque
 #                    estuviera configurado.
-#   - theme       -> vincula el par claro/oscuro (modo Automatic) y aplica el
-#                    que corresponda al modo actual. NO resetea el panel salvo
-#                    con --reset-layout.
+#   - apply       -> aplica el tema que corresponda al modo actual y registra
+#                    el par claro/oscuro en kdeglobals. NO toca el interruptor
+#                    "Switch to Dark Mode at Night" (lo deja como estaba) ni el
+#                    panel, salvo con --reset-layout.
 #   - wallpaper   -> pone Nord Flare (tiene variante clara y oscura) solo si el
 #                    wallpaper actual es el de serie de KDE. Uno elegido a mano
 #                    se respeta en --all; se pisa solo si eliges esta key.
@@ -35,7 +49,7 @@
 #   dev-plasma --all           todas las keys, sin diálogo
 #   dev-plasma --only=a,b,c    solo esas keys, sin diálogo
 #   dev-plasma --doctor        solo revisa (no instala ni cambia nada)
-#   dev-plasma --reset-layout  con la key theme: aplica también el layout del
+#   dev-plasma --reset-layout  con la key apply: aplica también el layout del
 #                              tema (panel + wallpaper); reemplaza tu panel
 #   dev-plasma --dark=ID       Global Theme oscuro (default: NivekDarkNord)
 #   dev-plasma --light=ID      Global Theme claro  (default: NivekLightNord)
@@ -61,6 +75,9 @@ skip() { printf "${CYN}[SKIP]${RST}  %s\n" "$*"; }
 sep() { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
 
 NONINTERACTIVE="${NONINTERACTIVE:-false}"
+# plasma/ del repo, desde la ruta real del script (bin/.local/bin/dev-plasma,
+# stoweado per-file a ~/.local/bin). DEV_PLASMA_SRC lo pisa.
+SRC_DIR="${DEV_PLASMA_SRC:-$(cd "$(dirname "$(readlink -f "$0")")/../../.." && pwd)/plasma}"
 BACKTITLE="${DEV_PLASMA_BACKTITLE:-dev-plasma · $(hostname) · $(date '+%Y-%m-%d %H:%M')}"
 STATE_DIR="$HOME/.local/share/dev-plasma"
 
@@ -88,19 +105,21 @@ SDDM_DROPIN=/etc/sddm.conf.d/dev-plasma.conf
 # ─── registro ─────────────────────────────────────────────────────────────
 # El orden de PKG_KEYS es el orden de ejecución (sin importar el de --only):
 # las piezas externas primero, luego aplicar el tema que las usa.
-PKG_KEYS=(icons splash sddm-cursor theme wallpaper)
+PKG_KEYS=(themes icons splash sddm-cursor apply wallpaper)
 declare -A PKG_LABEL=(
+  [themes]="Global Themes + colores + Nord Flare desde el repo (kpackagetool6)"
   [icons]="Papirus por apt + carpetas $FOLDER_COLOR (papirus-folders)"
   [splash]="Splash Kuro (git, sha-checked)"
   ["sddm-cursor"]="Cursor del tema también en el login (SDDM, sudo)"
-  [theme]="Par claro/oscuro $THEME_LIGHT / $THEME_DARK + aplicar"
+  [apply]="Aplicar $THEME_DARK / $THEME_LIGHT según el modo actual"
   [wallpaper]="Wallpaper Nord Flare (si tienes el de serie)"
 )
 declare -A PKG_FN=(
+  [themes]="install_themes"
   [icons]="install_icons"
   [splash]="install_splash"
   ["sddm-cursor"]="install_sddm_cursor"
-  [theme]="apply_theme"
+  [apply]="apply_theme"
   [wallpaper]="apply_wallpaper"
 )
 
@@ -202,7 +221,7 @@ folder_color() {
 # Misma regla que KPackage: todo archivo del paquete, ya resuelto (symlinks
 # incluidos), tiene que quedar dentro de la raíz resuelta del paquete. Si no,
 # Plasma lo ignora ("kf.package: Path traversal attempt detected") y aplica
-# Breeze en silencio. Pasa con un stow per-file: cada archivo es un symlink
+# Breeze en silencio. Pasaba con el stow per-file de antes: cada archivo era un symlink
 # hacia ~/dotfiles pero la carpeta del tema es real. Imprime el primer
 # archivo que se sale.
 kpackage_escape() {
@@ -220,6 +239,75 @@ kpackage_escape() {
 
 remote_head_sha() {
   git ls-remote "$1" HEAD 2>/dev/null | awk '{print $1}'
+}
+
+# ─── themes ──────────────────────────────────────────────────────────────────
+# ¿$2 es una copia fiel de $1? Además de comparar contenido exige que no haya
+# symlinks: un resto del stow de antes tendría el mismo contenido (diff sigue
+# los links) pero KPackage lo seguiría rechazando.
+same_tree() {
+  [[ -e "$2" && ! -L "$2" ]] || return 1
+  [[ -d "$2" && -n "$(find "$2" -type l -print -quit)" ]] && return 1
+  diff -rq "$1" "$2" &>/dev/null
+}
+
+# Copia $1 a $2 (archivo o carpeta) si no es ya una copia fiel; reemplaza
+# entero lo que hubiera (incluido un symlink del stow de antes).
+sync_copy() {
+  local src="$1" dst="$2"
+  if same_tree "$src" "$dst"; then
+    skip "$(basename "$dst") ya está al día"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dst")"
+  rm -rf -- "${dst:?}"
+  cp -r "$src" "$dst" || {
+    err "No se pudo copiar $src a $dst"
+    return 1
+  }
+  ok "$(basename "$dst") instalado -> $dst"
+}
+
+install_themes() {
+  sep
+  [[ -d "$SRC_DIR/look-and-feel" ]] || {
+    err "No encuentro los temas en $SRC_DIR (DEV_PLASMA_SRC=<repo>/plasma para indicarlo)"
+    return 1
+  }
+  need_cmd kpackagetool6 || return 1
+
+  local src id dst op rc=0
+  for src in "$SRC_DIR"/look-and-feel/*/; do
+    src="${src%/}"
+    id="$(basename "$src")"
+    dst="${LNF_DIRS[0]}/$id"
+    if same_tree "$src" "$dst"; then
+      skip "$id ya está al día"
+      continue
+    fi
+    # Un symlink (del stow de antes) se quita como link, sin tocar el repo.
+    [[ -L "$dst" ]] && rm -f -- "$dst"
+    op=--install
+    [[ -d "$dst" ]] && op=--upgrade
+    if kpackagetool6 -t Plasma/LookAndFeel "$op" "$src" &>/dev/null; then
+      ok "$id instalado (kpackagetool6 $op)"
+    else
+      err "kpackagetool6 $op $id falló"
+      rc=1
+    fi
+  done
+
+  local f
+  for f in "$SRC_DIR"/color-schemes/*.colors; do
+    [[ -f "$f" ]] || continue
+    sync_copy "$f" "${SCHEME_DIRS[0]}/$(basename "$f")" || rc=1
+  done
+  for src in "$SRC_DIR"/wallpapers/*/; do
+    [[ -d "$src" ]] || continue
+    src="${src%/}"
+    sync_copy "$src" "$HOME/.local/share/wallpapers/$(basename "$src")" || rc=1
+  done
+  return "$rc"
 }
 
 # ─── icons ───────────────────────────────────────────────────────────────────
@@ -364,7 +452,7 @@ install_sddm_cursor() {
   local cursor src dst
   cursor="$(lnf_default "$THEME_DARK" kcminputrc Mouse cursorTheme)"
   [[ -n "$cursor" ]] || {
-    err "$THEME_DARK no define cursorTheme (¿está stoweado el paquete plasma?)"
+    err "$THEME_DARK no define cursorTheme (dev-plasma --only=themes)"
     return 1
   }
   dst="$SYSTEM_ICONS/$cursor"
@@ -424,7 +512,7 @@ sddm_value() {
   echo "$val"
 }
 
-# ─── theme ───────────────────────────────────────────────────────────────────
+# ─── apply ───────────────────────────────────────────────────────────────────
 # ¿El sistema está en modo claro? Se mira el fondo de ventana del esquema
 # activo (no el nombre del tema, que puede ser cualquiera).
 is_light_mode() {
@@ -435,14 +523,12 @@ is_light_mode() {
   ((r * 299 + g * 587 + b * 114 > 128000))
 }
 
-# El par se vincula DESPUÉS de aplicar: plasma-apply-lookandfeel -a borra
-# AutomaticLookAndFeel de kdeglobals (elegir un tema a mano apaga el modo
-# automático), así que escrito antes no sobrevivía.
+# Registra el par (los temas que usaría "Switch to Dark Mode at Night"), pero
+# el interruptor en sí es decisión del usuario: no se toca.
 link_pair() {
   kwriteconfig6 --file kdeglobals --group KDE --key DefaultDarkLookAndFeel "$THEME_DARK"
   kwriteconfig6 --file kdeglobals --group KDE --key DefaultLightLookAndFeel "$THEME_LIGHT"
-  kwriteconfig6 --file kdeglobals --group KDE --key AutomaticLookAndFeel true
-  ok "Par vinculado: claro=$THEME_LIGHT oscuro=$THEME_DARK (Automatic)"
+  ok "Par registrado: claro=$THEME_LIGHT oscuro=$THEME_DARK"
 }
 
 apply_theme() {
@@ -452,7 +538,7 @@ apply_theme() {
   local t
   for t in "$THEME_DARK" "$THEME_LIGHT"; do
     lnf_dir "$t" >/dev/null || {
-      err "Global Theme $t no instalado (¿está stoweado el paquete plasma?)"
+      err "Global Theme $t no instalado (dev-plasma --only=themes)"
       return 1
     }
   done
@@ -472,16 +558,22 @@ apply_theme() {
     return 0
   fi
 
-  local args=(-a "$target") note=""
+  local args=(-a "$target") note="" automatic
   if [[ "$RESET_LAYOUT" == true ]]; then
     args+=(--resetLayout)
     note=" (con layout: reemplaza tu panel)"
   fi
+  # plasma-apply-lookandfeel -a borra AutomaticLookAndFeel (elegir un tema a
+  # mano apaga el modo automático). Se guarda antes y se repone después para
+  # dejar el interruptor exactamente como estaba.
+  automatic="$(kreadconfig6 --file kdeglobals --group KDE --key AutomaticLookAndFeel 2>/dev/null)"
   info "Aplicando $target$note..."
   plasma-apply-lookandfeel "${args[@]}" || {
     err "plasma-apply-lookandfeel falló"
     return 1
   }
+  [[ -n "$automatic" ]] \
+    && kwriteconfig6 --file kdeglobals --group KDE --key AutomaticLookAndFeel "$automatic"
   ok "$target aplicado"
   link_pair
 }
@@ -491,7 +583,7 @@ apply_wallpaper() {
   sep
   local pkg="$HOME/.local/share/wallpapers/$WALLPAPER"
   [[ -f "$pkg/metadata.json" ]] || {
-    err "$WALLPAPER no está en $pkg (¿está stoweado el paquete plasma?)"
+    err "$WALLPAPER no está en $pkg (dev-plasma --only=themes)"
     return 1
   }
   if ! has_session; then
@@ -539,17 +631,23 @@ doc_fail() {
 doctor_theme() {
   local id="$1" dir v f
   dir="$(lnf_dir "$id")" || {
-    doc_fail "$id: Global Theme no instalado"
+    doc_fail "$id: Global Theme no instalado (dev-plasma --only=themes)"
     return
   }
   doc_ok "$id: $dir"
   if v="$(kpackage_escape "$dir")"; then
-    doc_fail "  KPackage  $v está fuera del paquete: Plasma ignora el tema y aplica Breeze (re-stowea plasma)"
+    doc_fail "  KPackage  $v está fuera del paquete: Plasma ignora el tema y aplica Breeze (dev-plasma --only=themes)"
+  fi
+  if [[ -d "$SRC_DIR/look-and-feel/$id" ]] && ! same_tree "$SRC_DIR/look-and-feel/$id" "$dir"; then
+    doc_warn "  repo      lo instalado difiere de $SRC_DIR/look-and-feel/$id (dev-plasma --only=themes)"
   fi
 
   v="$(lnf_default "$id" kdeglobals General ColorScheme)"
   if f="$(scheme_file "$v")"; then
     doc_ok "  colores   $v ($f)"
+    if [[ -f "$SRC_DIR/color-schemes/$(basename "$f")" ]] && ! same_tree "$SRC_DIR/color-schemes/$(basename "$f")" "$f"; then
+      doc_warn "            difiere del repo (dev-plasma --only=themes)"
+    fi
   else
     doc_fail "  colores   $v — no hay ningún .colors con ese id"
   fi
@@ -604,12 +702,14 @@ run_doctor() {
   local v
   if [[ -f "$HOME/.local/share/wallpapers/$WALLPAPER/metadata.json" ]]; then
     if v="$(kpackage_escape "$HOME/.local/share/wallpapers/$WALLPAPER")"; then
-      doc_fail "wallpaper $WALLPAPER: $v está fuera del paquete (re-stowea plasma)"
+      doc_fail "wallpaper $WALLPAPER: $v está fuera del paquete (dev-plasma --only=themes)"
+    elif ! same_tree "$SRC_DIR/wallpapers/$WALLPAPER" "$HOME/.local/share/wallpapers/$WALLPAPER"; then
+      doc_warn "wallpaper $WALLPAPER difiere del repo (dev-plasma --only=themes)"
     else
       doc_ok "wallpaper $WALLPAPER"
     fi
   else
-    doc_fail "wallpaper $WALLPAPER no está (paquete plasma de los dotfiles)"
+    doc_fail "wallpaper $WALLPAPER no está (dev-plasma --only=themes)"
   fi
 
   v="$(sddm_value CursorTheme)"
@@ -626,9 +726,9 @@ run_doctor() {
   light="$(kreadconfig6 --file kdeglobals --group KDE --key DefaultLightLookAndFeel 2>/dev/null)"
   auto="$(kreadconfig6 --file kdeglobals --group KDE --key AutomaticLookAndFeel 2>/dev/null)"
   if [[ "$dark" == "$THEME_DARK" && "$light" == "$THEME_LIGHT" ]]; then
-    doc_ok "par claro/oscuro vinculado (Automatic=${auto:-false})"
+    doc_ok "par claro/oscuro registrado (Switch to Dark Mode at Night: ${auto:-false})"
   else
-    doc_warn "par actual: claro=${light:-?} oscuro=${dark:-?} (dev-plasma --only=theme)"
+    doc_warn "par actual: claro=${light:-?} oscuro=${dark:-?} (dev-plasma --only=apply)"
   fi
 
   sep

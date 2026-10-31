@@ -43,7 +43,7 @@ dotfiles/
 ├── konsole/      -> ~/.local/share/konsole  Konsole/Yakuake profiles + Nordic colorschemes  [per-file]
 ├── nvim/         -> ~/.config/nvim        LazyVim config
 ├── peaclock/     -> ~/.peaclock
-├── plasma/       -> ~/.local/share        KDE Plasma Global Themes + color schemes + Nord Flare wallpaper  [per-file]
+├── plasma/       -> ~/.local/share        KDE Plasma Global Themes + color schemes + Nord Flare wallpaper  [per-package]
 ├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local [per-file]
 ├── system/                                MOTD + systemd --user units (not stowed)
 │   ├── motd/                              root-run MOTD scripts
@@ -60,14 +60,15 @@ dotfiles/
 ```
 
 `[per-file]` marks the packages stowed one-symlink-per-file instead of
-one symlink for the whole directory — see **Stow strategy** below.
+one symlink for the whole directory, and `[per-package]` one symlink per
+Plasma package — see **Stow strategy** below.
 
 ---
 
 ## Stow strategy
 
 Every top-level directory is a Stow package, but not all of them get stowed
-the same way — `stow_packages()` splits them into two groups
+the same way — `stow_packages()` splits them into three groups
 (`STOW_PER_FILE_PACKAGES` in `bootstrap.d/30-stow.sh`, right above the
 function):
 
@@ -77,13 +78,11 @@ a single symlink (e.g. `~/.config/nvim -> dotfiles/nvim/.config/nvim`).
 Simplest option, and correct here because nothing else ever needs to write
 into these directories.
 
-**Per-file** (`bin, konsole, plasma, ssh, zsh-completions`) — their target directories
+**Per-file** (`bin, konsole, ssh, zsh-completions`) — their target directories
 also receive files we don't track: new SSH keys, `ControlMaster` sockets in
 `~/.ssh`, binaries dropped by `pipx`/`curl` in `~/.local/bin`, new
 profiles/colorschemes Konsole creates from its GUI in
-`~/.local/share/konsole`, Global Themes / color schemes / wallpapers that
-Plasma's "Get New…" drops next to ours in `~/.local/share`, and completion
-files a `dev-*` CLI generates for
+`~/.local/share/konsole`, and completion files a `dev-*` CLI generates for
 itself on its own host (e.g. `dev-pagipage-domains --set-autocompletions` on
 `nivek-core` writes straight into `~/.zsh/completions/_dev-pagipage-domains`
 — that script lives only on that server, outside this repo on purpose, so its
@@ -96,8 +95,20 @@ the package is managed by stow. Add a new file to one of these packages and
 re-run the stow step: it links just that new file, it never re-folds the
 directory into a single symlink.
 
-`plasma` is only useful with KDE Plasma: on machines without `plasmashell`
-(servers, Termux) `--all` skips it and the checklist shows it unchecked.
+**Per-package** (`plasma`) — one symlink per Plasma package (each Global
+Theme folder, the `Nord-flare` wallpaper folder) and one per `.colors` file.
+Per-file does **not** work here: Plasma reads those packages through
+KPackage, which rejects any file whose real path falls outside the package
+folder (`kf.package: Path traversal attempt detected` in the journal). A theme
+made of per-file symlinks into `~/dotfiles` gets its `contents/defaults`
+ignored and Plasma silently applies Breeze. `stow_kpackage()` first creates
+the shared parents (`~/.local/share/plasma/look-and-feel`, `color-schemes`,
+`wallpapers`) as real directories, so stow's folding lands exactly on each
+package and Plasma's "Get New…" downloads never end up inside the repo. It
+unstows and removes leftover empty folders before stowing, which also
+migrates a package that was previously stowed per-file. `plasma` is only
+useful with KDE Plasma: on machines without `plasmashell` (servers, Termux)
+`--all` skips it and the checklist shows it unchecked.
 
 For `zsh-completions` specifically, `zsh/.zshrc` prepends `~/.zsh/completions`
 to `fpath` **before** `compinit` — that ordering is what makes the tracked
@@ -360,8 +371,10 @@ dev-plasma --help           # usage + the list of keys
 | `icons`       | `papirus-icon-theme` from apt + [`papirus-folders`](https://github.com/PapirusDevelopmentTeam/papirus-folders) (not in apt) set to `nordic`. Offers to remove a Papirus copy in `~/.local/share/icons` (from "Get New…"), which would shadow the apt one. The folder color is re-checked every run, since an apt upgrade resets it to blue |
 | `splash`      | Kuro from [its git repo](https://github.com/bouteillerAlan/kuro) (GPLv3), remote HEAD sha compared like peaclock — not from the KDE store, whose download URLs expire |
 | `sddm-cursor` | copies the theme's cursor to `/usr/share/icons`: SDDM runs as the `sddm` user, which can't read a `0710` home, so the login screen never showed it. Writes `CursorTheme=` to `/etc/sddm.conf.d/dev-plasma.conf` only if nothing sets it yet (System Settings' `kde_settings.conf` sorts after it and still wins) |
-| `theme`       | links the light/dark pair in `kdeglobals` with Automatic on, and applies the one matching the current mode (light/dark is read from the active window background). Doesn't touch your panel unless `--reset-layout` |
+| `theme`       | applies the theme matching the current mode (light/dark is read from the active window background), then links the light/dark pair in `kdeglobals` with Automatic on — in that order, since applying a theme clears `AutomaticLookAndFeel`. Doesn't touch your panel unless `--reset-layout` |
 | `wallpaper`   | sets Nord Flare only if the current wallpaper is a stock KDE one; a hand-picked wallpaper is kept on `--all` and replaced only when this key is picked explicitly |
+
+The doctor also applies KPackage's own rule (every file must resolve inside its package folder), so a theme Plasma would silently ignore shows up as an error.
 
 Outside KDE Plasma `dev-plasma` does nothing and exits 0, so `--all` is safe
 on servers. A run always ends with the doctor.
@@ -377,7 +390,10 @@ cd ~/dotfiles
 # Whole-folder packages (one symlink per package)
 stow cava icons kitty nvim peaclock task templates tmux zsh
 # Per-file packages (--no-folding: real directory + one symlink per file)
-stow --no-folding bin konsole plasma ssh zsh-completions
+stow --no-folding bin konsole ssh zsh-completions
+# Per-package (plasma): real parent dirs first, then a normal (folding) stow
+mkdir -p ~/.local/share/plasma/look-and-feel ~/.local/share/color-schemes ~/.local/share/wallpapers
+stow plasma
 ```
 
 ---
@@ -396,7 +412,7 @@ stow --no-folding bin konsole plasma ssh zsh-completions
 
 - Optimized for Debian-based machines.
 - `stow` works best when each app lives in its own directory.
-- Per-package stow strategy (whole-folder vs per-file) and how `system/` is
+- Per-package stow strategy (whole-folder, per-file, per-package) and how `system/` is
   handled outside of stow is documented in **Stow strategy** above.
 - `bin/` only ever holds tools we actually maintain as dotfiles (`dev-*`,
   `tmux-theme-*`). Everything installed by a native installer (pipx, curl

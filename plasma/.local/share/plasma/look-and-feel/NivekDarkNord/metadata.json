@@ -1,0 +1,18 @@
+{
+    "KPackageStructure": "Plasma/LookAndFeel",
+    "KPlugin": {
+        "Id": "NivekDarkNord",
+        "Name": "NivekDarkNord",
+        "Description": "Tema oscuro de Kevin (Nord)",
+        "Authors": [
+            {
+                "Name": "Kevin",
+                "Email": "nivekcuevas936@gmail.com"
+            }
+        ],
+        "License": "CC-BY-SA-4.0"
+    },
+    "Keywords": "Desktop;Workspace;Appearance;Look and Feel;",
+    "X-Plasma-APIVersion": "2",
+    "X-Plasma-MainScript": "default"
+}

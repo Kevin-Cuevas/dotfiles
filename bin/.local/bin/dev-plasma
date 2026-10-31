@@ -199,6 +199,25 @@ folder_color() {
   echo "${icon##*-}"
 }
 
+# Misma regla que KPackage: todo archivo del paquete, ya resuelto (symlinks
+# incluidos), tiene que quedar dentro de la raíz resuelta del paquete. Si no,
+# Plasma lo ignora ("kf.package: Path traversal attempt detected") y aplica
+# Breeze en silencio. Pasa con un stow per-file: cada archivo es un symlink
+# hacia ~/dotfiles pero la carpeta del tema es real. Imprime el primer
+# archivo que se sale.
+kpackage_escape() {
+  local root f real
+  root="$(readlink -f "$1")" || return 1
+  while IFS= read -r -d '' f; do
+    real="$(readlink -f "$f")"
+    [[ "$real" == "$root"/* ]] || {
+      echo "${f#"$1"/} -> $real"
+      return 0
+    }
+  done < <(find -L "$1" -type f -print0 2>/dev/null)
+  return 1
+}
+
 remote_head_sha() {
   git ls-remote "$1" HEAD 2>/dev/null | awk '{print $1}'
 }
@@ -416,6 +435,16 @@ is_light_mode() {
   ((r * 299 + g * 587 + b * 114 > 128000))
 }
 
+# El par se vincula DESPUÉS de aplicar: plasma-apply-lookandfeel -a borra
+# AutomaticLookAndFeel de kdeglobals (elegir un tema a mano apaga el modo
+# automático), así que escrito antes no sobrevivía.
+link_pair() {
+  kwriteconfig6 --file kdeglobals --group KDE --key DefaultDarkLookAndFeel "$THEME_DARK"
+  kwriteconfig6 --file kdeglobals --group KDE --key DefaultLightLookAndFeel "$THEME_LIGHT"
+  kwriteconfig6 --file kdeglobals --group KDE --key AutomaticLookAndFeel true
+  ok "Par vinculado: claro=$THEME_LIGHT oscuro=$THEME_DARK (Automatic)"
+}
+
 apply_theme() {
   sep
   need_cmd plasma-apply-lookandfeel plasma-workspace || return 1
@@ -428,12 +457,8 @@ apply_theme() {
     }
   done
 
-  kwriteconfig6 --file kdeglobals --group KDE --key DefaultDarkLookAndFeel "$THEME_DARK"
-  kwriteconfig6 --file kdeglobals --group KDE --key DefaultLightLookAndFeel "$THEME_LIGHT"
-  kwriteconfig6 --file kdeglobals --group KDE --key AutomaticLookAndFeel true
-  ok "Par vinculado: claro=$THEME_LIGHT oscuro=$THEME_DARK (Automatic)"
-
   if ! has_session; then
+    link_pair
     skip "Sin sesión gráfica — el tema se aplica en el próximo login de Plasma"
     return 0
   fi
@@ -443,6 +468,7 @@ apply_theme() {
   current="$(kreadconfig6 --file kdeglobals --group KDE --key LookAndFeelPackage 2>/dev/null)"
   if [[ "$current" == "$target" && "$RESET_LAYOUT" == false ]]; then
     skip "$target ya está aplicado"
+    link_pair
     return 0
   fi
 
@@ -457,6 +483,7 @@ apply_theme() {
     return 1
   }
   ok "$target aplicado"
+  link_pair
 }
 
 # ─── wallpaper ───────────────────────────────────────────────────────────────
@@ -516,6 +543,9 @@ doctor_theme() {
     return
   }
   doc_ok "$id: $dir"
+  if v="$(kpackage_escape "$dir")"; then
+    doc_fail "  KPackage  $v está fuera del paquete: Plasma ignora el tema y aplica Breeze (re-stowea plasma)"
+  fi
 
   v="$(lnf_default "$id" kdeglobals General ColorScheme)"
   if f="$(scheme_file "$v")"; then
@@ -573,7 +603,11 @@ run_doctor() {
 
   local v
   if [[ -f "$HOME/.local/share/wallpapers/$WALLPAPER/metadata.json" ]]; then
-    doc_ok "wallpaper $WALLPAPER"
+    if v="$(kpackage_escape "$HOME/.local/share/wallpapers/$WALLPAPER")"; then
+      doc_fail "wallpaper $WALLPAPER: $v está fuera del paquete (re-stowea plasma)"
+    else
+      doc_ok "wallpaper $WALLPAPER"
+    fi
   else
     doc_fail "wallpaper $WALLPAPER no está (paquete plasma de los dotfiles)"
   fi

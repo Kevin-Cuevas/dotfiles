@@ -43,6 +43,7 @@ dotfiles/
 ├── konsole/      -> ~/.local/share/konsole  Konsole/Yakuake profiles + Nordic colorschemes  [per-file]
 ├── nvim/         -> ~/.config/nvim        LazyVim config
 ├── peaclock/     -> ~/.peaclock
+├── plasma/       -> ~/.local/share        KDE Plasma Global Themes + color schemes + Nord Flare wallpaper  [per-file]
 ├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local [per-file]
 ├── system/                                MOTD + systemd --user units (not stowed)
 │   ├── motd/                              root-run MOTD scripts
@@ -76,11 +77,13 @@ a single symlink (e.g. `~/.config/nvim -> dotfiles/nvim/.config/nvim`).
 Simplest option, and correct here because nothing else ever needs to write
 into these directories.
 
-**Per-file** (`bin, konsole, ssh, zsh-completions`) — their target directories
+**Per-file** (`bin, konsole, plasma, ssh, zsh-completions`) — their target directories
 also receive files we don't track: new SSH keys, `ControlMaster` sockets in
 `~/.ssh`, binaries dropped by `pipx`/`curl` in `~/.local/bin`, new
 profiles/colorschemes Konsole creates from its GUI in
-`~/.local/share/konsole`, and completion files a `dev-*` CLI generates for
+`~/.local/share/konsole`, Global Themes / color schemes / wallpapers that
+Plasma's "Get New…" drops next to ours in `~/.local/share`, and completion
+files a `dev-*` CLI generates for
 itself on its own host (e.g. `dev-pagipage-domains --set-autocompletions` on
 `nivek-core` writes straight into `~/.zsh/completions/_dev-pagipage-domains`
 — that script lives only on that server, outside this repo on purpose, so its
@@ -92,6 +95,9 @@ directory plus one symlink per tracked file — only what we explicitly put in
 the package is managed by stow. Add a new file to one of these packages and
 re-run the stow step: it links just that new file, it never re-folds the
 directory into a single symlink.
+
+`plasma` is only useful with KDE Plasma: on machines without `plasmashell`
+(servers, Termux) `--all` skips it and the checklist shows it unchecked.
 
 For `zsh-completions` specifically, `zsh/.zshrc` prepends `~/.zsh/completions`
 to `fpath` **before** `compinit` — that ordering is what makes the tracked
@@ -134,7 +140,7 @@ runs on its own:
 | `10-packages.sh` | apt packages only (menu option 2) — non-apt tools live in `dev-packages`, see below |
 | `20-runtimes.sh` | language runtimes: rust, node, deno, bun, java via SDKMAN (menu option 12) |
 | `30-stow.sh` | stow strategy (menu option 4) + systemd `--user` unit linking |
-| `40-misc.sh` | default shell, `dev-*` permissions, `dev-packages`/`dev-motd`/`dev-ssh` launchers, fonts, TPM, Timewarrior hook |
+| `40-misc.sh` | default shell, `dev-*` permissions, `dev-packages`/`dev-motd`/`dev-ssh`/`dev-plasma` launchers, fonts, TPM, Timewarrior hook |
 
 Modules are sourced in lexical order (`NN-` prefixes, stepped by 10 so a new
 one can slot in without renumbering) purely to guarantee `00-core.sh` loads
@@ -149,7 +155,7 @@ there. For a new non-apt tool, add it to `dev-packages` instead (see below).
 
 | #   | Action                                       |
 | --- | -------------------------------------------- |
-| 1   | Run everything (2 through 12)                |
+| 1   | Run everything (2 through 13)                |
 | 2   | Install apt packages                         |
 | 3   | Set permissions on `dev-*` scripts           |
 | 4   | Stow packages into `$HOME`                   |
@@ -161,6 +167,7 @@ there. For a new non-apt tool, add it to `dev-packages` instead (see below).
 | 10  | Configure SSH (control dir + servers)        |
 | 11  | Set zsh as default shell                     |
 | 12  | Install language runtimes (rust, node, ...)  |
+| 13  | KDE Plasma themes via `dev-plasma`           |
 
 **Test mode** — stow into a throwaway directory instead of `$HOME`:
 
@@ -311,6 +318,56 @@ directory that a trap removes on exit, Ctrl-C included.
 
 ---
 
+## KDE Plasma themes
+
+Two Global Themes travel with the repo, as a light/dark pair for Plasma's
+**Automatic** mode:
+
+| Global Theme     | Colors                 | Icons                    | Cursor              | Splash |
+| ---------------- | ---------------------- | ------------------------ | ------------------- | ------ |
+| `NivekDarkNord`  | `NivekDarkNordColors`  | Papirus-Dark (nordic folders)  | Bibata-Modern-Ice | Kuro |
+| `NivekLightNord` | `NivekLightNordColors` | Papirus-Light (nordic folders) | Bibata-Modern-Ice | Kuro |
+
+Application style, Plasma style and window decorations are Breeze; system
+sounds (Ocean) and the login screen (Debian Breeze) are left at their
+defaults — a Global Theme doesn't control either of them. Naming is
+`Nivek<Mode><Style>` / `Nivek<Mode><Style>Colors`, so other styles can sit
+next to Nord later. In each `.colors` file the filename, `[General]ColorScheme=`
+and `Name=` are the same id: Plasma resolves `ColorScheme=` against that id,
+and when they disagree it marks the Global Theme as applied while silently
+keeping the old colors.
+
+The themes, their color schemes and the **Nord Flare** wallpaper (a package
+with `images/` + `images_dark/`, so it follows light/dark on its own) come in
+through the `plasma/` stow package. The desktop/panel layout inside the themes
+has no absolute paths: the wallpaper path is computed with `userDataPath()`
+and the launcher uses the `start-here-debian` icon name.
+
+Everything the themes *reference* but don't contain is handled by
+**`dev-plasma`** (bootstrap menu option **13**):
+
+```bash
+dev-plasma                  # interactive checklist (dialog)
+dev-plasma --all            # every key, no prompts
+dev-plasma --only=icons     # just one key
+dev-plasma --doctor         # check that every referenced piece exists; changes nothing
+dev-plasma --reset-layout   # with the theme key: also apply the theme's panel + wallpaper layout
+dev-plasma --help           # usage + the list of keys
+```
+
+| Key           | What it does |
+| ------------- | ------------ |
+| `icons`       | `papirus-icon-theme` from apt + [`papirus-folders`](https://github.com/PapirusDevelopmentTeam/papirus-folders) (not in apt) set to `nordic`. Offers to remove a Papirus copy in `~/.local/share/icons` (from "Get New…"), which would shadow the apt one. The folder color is re-checked every run, since an apt upgrade resets it to blue |
+| `splash`      | Kuro from [its git repo](https://github.com/bouteillerAlan/kuro) (GPLv3), remote HEAD sha compared like peaclock — not from the KDE store, whose download URLs expire |
+| `sddm-cursor` | copies the theme's cursor to `/usr/share/icons`: SDDM runs as the `sddm` user, which can't read a `0710` home, so the login screen never showed it. Writes `CursorTheme=` to `/etc/sddm.conf.d/dev-plasma.conf` only if nothing sets it yet (System Settings' `kde_settings.conf` sorts after it and still wins) |
+| `theme`       | links the light/dark pair in `kdeglobals` with Automatic on, and applies the one matching the current mode (light/dark is read from the active window background). Doesn't touch your panel unless `--reset-layout` |
+| `wallpaper`   | sets Nord Flare only if the current wallpaper is a stock KDE one; a hand-picked wallpaper is kept on `--all` and replaced only when this key is picked explicitly |
+
+Outside KDE Plasma `dev-plasma` does nothing and exits 0, so `--all` is safe
+on servers. A run always ends with the doctor.
+
+---
+
 ## Manual stow
 
 If you prefer to skip the TUI and stow packages by hand:
@@ -320,7 +377,7 @@ cd ~/dotfiles
 # Whole-folder packages (one symlink per package)
 stow cava icons kitty nvim peaclock task templates tmux zsh
 # Per-file packages (--no-folding: real directory + one symlink per file)
-stow --no-folding bin konsole ssh zsh-completions
+stow --no-folding bin konsole plasma ssh zsh-completions
 ```
 
 ---

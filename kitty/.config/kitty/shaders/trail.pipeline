@@ -1,0 +1,11 @@
+# Cursor trail con motion blur, afinado (kitty.conf: custom_shaders trail).
+# Opciones en la cabecera de kitty/shaders/custom/cursor-trail-motion-blur.slang
+startgroup
+    animation_start cursor-trail-move
+    animation_stop cursor-trail-stop
+    # un solo trazo continuo hasta el cursor, sin la cola atrasada
+    var bool CONNECTED true
+    # más posiciones intermedias por cuadro: más suave (máx 64)
+    var int MOTION_BLUR_SAMPLES 32
+    shaders cursor-trail-motion-blur
+endgroup

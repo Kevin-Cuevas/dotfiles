@@ -341,9 +341,11 @@ the journal): a theme symlinked into `~/dotfiles` gets its `contents/defaults`
 ignored and Plasma silently applies Breeze. So they're installed as **copies**,
 like any "Get New…" theme — the repo is the source of truth, edits happen
 there (the `nivek-plasma-global-theme` skill does that) and
-`dev-plasma --only=themes` reinstalls whatever changed. The desktop/panel
-layout inside the themes has no absolute paths: the wallpaper path is computed
-with `userDataPath()` and the launcher uses the `start-here-debian` icon name.
+`dev-plasma --only=themes` reinstalls whatever changed. The themes carry
+**no desktop/panel layout** on purpose: a layout replaces the whole panel,
+pinned apps included. The launcher icon (`nivek-debian`, a Nord frost Debian
+swirl kept in `plasma/icons/hicolor`) is set by its own key instead, which
+changes only that icon.
 
 Installing the themes and everything they *reference* but don't contain is
 handled by **`dev-plasma`** (bootstrap menu option **13**). It finds `plasma/`
@@ -354,18 +356,18 @@ dev-plasma                  # interactive checklist (dialog)
 dev-plasma --all            # every key, no prompts
 dev-plasma --only=themes    # just one key
 dev-plasma --doctor         # check that every referenced piece exists; changes nothing
-dev-plasma --reset-layout   # with the apply key: also apply the theme's panel + wallpaper layout
 dev-plasma --help           # usage + the list of keys
 ```
 
 | Key           | What it does |
 | ------------- | ------------ |
-| `themes`      | installs the Global Themes from `plasma/look-and-feel` with `kpackagetool6` (Plasma's official package installer: `--install`, or `--upgrade` when it's already there), and copies the `.colors` files and the wallpaper (`kpackagetool6` can't install image wallpapers: `Wallpaper/Images` has no package root and its `--upgrade`/`--remove` fail). Only touches what differs from the repo; leftover symlinks from an older stow setup are replaced |
+| `themes`      | installs the Global Themes from `plasma/look-and-feel` with `kpackagetool6` (Plasma's official package installer: `--install`, or `--upgrade` when it's already there), and copies the `.colors` files, the wallpaper and the launcher icon (`kpackagetool6` can't install image wallpapers: `Wallpaper/Images` has no package root and its `--upgrade`/`--remove` fail). Only touches what differs from the repo; leftover symlinks from an older stow setup are replaced |
 | `icons`       | `papirus-icon-theme` from apt + [`papirus-folders`](https://github.com/PapirusDevelopmentTeam/papirus-folders) (not in apt) set to `nordic`. Offers to remove a Papirus copy in `~/.local/share/icons` (from "Get New…"), which would shadow the apt one. The folder color is re-checked every run, since an apt upgrade resets it to blue |
 | `splash`      | Kuro from [its git repo](https://github.com/bouteillerAlan/kuro) (GPLv3), remote HEAD sha compared like peaclock — not from the KDE store, whose download URLs expire |
 | `sddm-cursor` | copies the theme's cursor to `/usr/share/icons`: SDDM runs as the `sddm` user, which can't read a `0710` home, so the login screen never showed it. Writes `CursorTheme=` to `/etc/sddm.conf.d/dev-plasma.conf` only if nothing sets it yet (System Settings' `kde_settings.conf` sorts after it and still wins) |
-| `apply`       | applies the theme matching the current mode (light/dark is read from the active window background) and records the light/dark pair in `kdeglobals`. Leaves the "Switch to Dark Mode at Night" toggle exactly as it was (applying a theme clears it, so it's saved and restored), and doesn't touch your panel unless `--reset-layout` |
+| `apply`       | applies the theme matching the current mode (light/dark is read from the active window background) and records the light/dark pair in `kdeglobals`. Leaves the "Switch to Dark Mode at Night" toggle exactly as it was (applying a theme clears it, so it's saved and restored), and never touches your panel |
 | `wallpaper`   | sets Nord Flare only if the current wallpaper is a stock KDE one; a hand-picked wallpaper is kept on `--all` and replaced only when this key is picked explicitly |
+| `launcher-icon` | sets the `nivek-debian` icon on the launcher (Kickoff/Kicker) of your existing panels through plasmashell's scripting (DBus), changing only that key — pinned apps, widgets and layout stay as they are. Same rule as the wallpaper: a hand-picked icon is kept on `--all` |
 
 The doctor also applies KPackage's own rule (every file must resolve inside its package folder), so a theme Plasma would silently ignore shows up as an error, and warns when an installed theme, color scheme or wallpaper differs from the repo.
 

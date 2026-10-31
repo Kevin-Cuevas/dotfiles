@@ -323,6 +323,31 @@ install_themes() {
   return "$rc"
 }
 
+# ─── caché de iconos ─────────────────────────────────────────────────────────
+# Las apps abiertas (plasmashell incluido) guardan en memoria los iconos que
+# resolvieron al arrancar. Tras borrar una copia de Papirus, instalar la de apt,
+# cambiar el color de las carpetas o copiar un icono nuevo, siguen mostrando
+# iconos rotos o "?" hasta reiniciarse. Esto reconstruye la base de KDE
+# (sycoca), reinicia plasmashell UNA vez por corrida y avisa del resto.
+ICONS_CHANGED=false
+PLASMA_REFRESHED=false
+refresh_icon_caches() {
+  $PLASMA_REFRESHED && return 0
+  PLASMA_REFRESHED=true
+  command -v kbuildsycoca6 &>/dev/null && kbuildsycoca6 --noincremental &>/dev/null
+  if ! has_session; then
+    skip "Sin sesión gráfica — los iconos nuevos se verán en el próximo login"
+    return 0
+  fi
+  info "Reiniciando plasmashell para que cargue los iconos nuevos..."
+  if systemctl --user restart plasma-plasmashell.service 2>/dev/null; then
+    ok "plasmashell reiniciado (caché de iconos al día)"
+  else
+    warn "No se pudo reiniciar plasmashell — corre: systemctl --user restart plasma-plasmashell"
+  fi
+  warn "Las apps que ya estaban abiertas siguen con los iconos viejos: ciérralas y ábrelas, o cierra sesión."
+}
+
 # ─── icons ───────────────────────────────────────────────────────────────────
 # Copias de Papirus en ~/.local/share/icons (las deja "Get New…" de System
 # Settings) tapan a la de apt: Plasma y papirus-folders usan la primera que
@@ -346,6 +371,7 @@ remove_user_papirus() {
   for t in "${found[@]}"; do
     rm -rf -- "${user_dir:?}/$t" && ok "Borrado $user_dir/$t"
   done
+  ICONS_CHANGED=true
   warn "System Settings → Icons → Get New… puede seguir listando Papirus como instalado: no lo actualices desde ahí."
 }
 
@@ -391,6 +417,7 @@ install_icons() {
       return 1
     }
     ok "papirus-icon-theme instalado"
+    ICONS_CHANGED=true
   fi
 
   need_cmd curl || return 1
@@ -415,7 +442,11 @@ install_icons() {
       return 1
     }
     ok "$t: carpetas $FOLDER_COLOR"
+    ICONS_CHANGED=true
   done
+
+  $ICONS_CHANGED && refresh_icon_caches
+  return 0
 }
 
 # ─── splash ──────────────────────────────────────────────────────────────────
@@ -670,15 +701,9 @@ print(changed + ' ' + same + ' ' + custom);"
   read -r changed same custom <<<"$out"
   if [[ "${changed:-0}" -gt 0 ]]; then
     ok "Icono $LAUNCHER_ICON en $changed lanzador(es); el resto del panel quedó igual"
-    # plasmashell guarda en caché los iconos que vio al arrancar: uno recién
-    # copiado a hicolor sale como "?" hasta reiniciarlo (kiconfinder6 sí lo
-    # encuentra). Solo pasa cuando el icono cambia, o sea casi nunca.
-    info "Reiniciando plasmashell para que cargue el icono nuevo..."
-    if systemctl --user restart plasma-plasmashell.service 2>/dev/null; then
-      ok "plasmashell reiniciado"
-    else
-      warn "No se pudo reiniciar plasmashell — cierra sesión o corre: systemctl --user restart plasma-plasmashell"
-    fi
+    # Un icono recién copiado a hicolor sale como "?" hasta reiniciar
+    # plasmashell (kiconfinder6 sí lo encuentra). Solo pasa cuando cambia.
+    refresh_icon_caches
   elif [[ "${custom:-0}" -gt 0 ]]; then
     skip "El lanzador tiene un icono elegido a mano — lo respeto (dev-plasma --only=launcher-icon para cambiarlo)"
   elif [[ "${same:-0}" -gt 0 ]]; then

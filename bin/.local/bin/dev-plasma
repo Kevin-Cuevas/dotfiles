@@ -670,6 +670,15 @@ print(changed + ' ' + same + ' ' + custom);"
   read -r changed same custom <<<"$out"
   if [[ "${changed:-0}" -gt 0 ]]; then
     ok "Icono $LAUNCHER_ICON en $changed lanzador(es); el resto del panel quedó igual"
+    # plasmashell guarda en caché los iconos que vio al arrancar: uno recién
+    # copiado a hicolor sale como "?" hasta reiniciarlo (kiconfinder6 sí lo
+    # encuentra). Solo pasa cuando el icono cambia, o sea casi nunca.
+    info "Reiniciando plasmashell para que cargue el icono nuevo..."
+    if systemctl --user restart plasma-plasmashell.service 2>/dev/null; then
+      ok "plasmashell reiniciado"
+    else
+      warn "No se pudo reiniciar plasmashell — cierra sesión o corre: systemctl --user restart plasma-plasmashell"
+    fi
   elif [[ "${custom:-0}" -gt 0 ]]; then
     skip "El lanzador tiene un icono elegido a mano — lo respeto (dev-plasma --only=launcher-icon para cambiarlo)"
   elif [[ "${same:-0}" -gt 0 ]]; then

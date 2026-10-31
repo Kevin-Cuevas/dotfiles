@@ -26,14 +26,13 @@
 # from the GUI in ~/.local/share/konsole..., completion files dev-* CLIs
 # generate for themselves on their own host — e.g. `dev-pagipage-domains
 # --set-autocompletions` on nivek-core writes straight into
-# ~/.zsh/completions; Global Themes, color schemes and wallpapers that
-# Plasma's "Get New…" drops next to ours in ~/.local/share). Folding these into one symlink would mean anything
+# ~/.zsh/completions). Folding these into one symlink would mean anything
 # written there later lands physically inside ~/dotfiles instead of the
 # real directory. These get --no-folding: a REAL target directory plus one
 # symlink per tracked file, so only what we explicitly put in the package
 # is managed — adding a new file to the package and re-running the stow
 # step links just that file, it never re-folds the directory.
-STOW_PER_FILE_PACKAGES=(bin konsole plasma ssh zsh-completions)
+STOW_PER_FILE_PACKAGES=(bin konsole ssh zsh-completions)
 
 # Explicit target directory for each per-file package (relative to $TARGET),
 # so we can create it as a real directory ourselves before stowing — this
@@ -41,9 +40,23 @@ STOW_PER_FILE_PACKAGES=(bin konsole plasma ssh zsh-completions)
 declare -A STOW_PER_FILE_TARGET=(
   [bin]=".local/bin"
   [konsole]=".local/share/konsole"
-  [plasma]=".local/share"
   [ssh]=".ssh"
   ["zsh-completions"]=".zsh/completions"
+)
+
+# KPackage packages (plasma): a third strategy, one symlink PER Plasma package
+# (each Global Theme folder, the Nord-flare wallpaper folder) plus one per
+# .colors file. Per-file does NOT work here: KPackage rejects any file whose
+# canonical path falls outside the package root ("kf.package: Path traversal
+# attempt detected" in the journal), so a theme made of per-file symlinks into
+# ~/dotfiles gets its contents/defaults ignored and Plasma silently applies
+# Breeze instead. With the whole package folder symlinked, KPackage
+# canonicalizes the root too and everything is "inside". Plain stow folds at
+# the first directory missing in the target, so the shared parents listed
+# here are created as real directories first — that pins the fold exactly at
+# each package (and keeps "Get New…" downloads out of ~/dotfiles).
+declare -A STOW_KPACKAGE_PARENTS=(
+  [plasma]=".local/share/plasma/look-and-feel .local/share/color-schemes .local/share/wallpapers"
 )
 
 # Whole-folder packages: one symlink for the entire package directory.
@@ -64,6 +77,31 @@ stow_per_file() {
 # checklist sale desmarcado (se puede marcar a mano si se quiere igual).
 has_plasma() {
   command -v plasmashell &>/dev/null
+}
+
+stow_kpackage() {
+  local pkg="$1" dir
+  for dir in ${STOW_KPACKAGE_PARENTS[$pkg]}; do
+    mkdir -p "$TARGET/$dir"
+  done
+  # Unstow aparte y no --restow: --restow conserva un directorio que ya existe
+  # (p. ej. de un stow per-file anterior) y no lo vuelve a doblar en un
+  # symlink, así que el paquete seguiría roto para KPackage. -D quita los
+  # links, pero no siempre las carpetas que quedan vacías (a veces deja
+  # Nord-flare/contents/...), y una carpeta vacía impide doblar. Por eso se
+  # borran a mano, solo si están vacías: si alguien dejó un archivo ajeno
+  # adentro, el stow de después lo reporta como conflicto en vez de pisarlo.
+  stow --target="$TARGET" --dir="$DOTFILES_DIR" -D "$pkg" 2>/dev/null
+  local item target_item
+  for dir in ${STOW_KPACKAGE_PARENTS[$pkg]}; do
+    for item in "$DOTFILES_DIR/$pkg/$dir"/*/; do
+      [[ -d "$item" ]] || continue
+      target_item="$TARGET/$dir/$(basename "$item")"
+      [[ -d "$target_item" && ! -L "$target_item" ]] \
+        && find "$target_item" -depth -type d -empty -delete
+    done
+  done
+  stow --target="$TARGET" --dir="$DOTFILES_DIR" "$pkg"
 }
 
 stow_packages() {
@@ -152,6 +190,7 @@ stow_packages() {
   for pkg in "${chosen[@]}"; do
     local stow_err stow_fn=stow_whole_folder
     [[ " ${STOW_PER_FILE_PACKAGES[*]} " == *" $pkg "* ]] && stow_fn=stow_per_file
+    [[ -n "${STOW_KPACKAGE_PARENTS[$pkg]:-}" ]] && stow_fn=stow_kpackage
     if stow_err=$("$stow_fn" "$pkg" 2>&1); then
       ok "Stowed: $pkg"
       ((stowed++)) || true

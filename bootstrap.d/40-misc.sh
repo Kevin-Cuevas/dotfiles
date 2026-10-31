@@ -100,8 +100,9 @@ run_dev_motd() {
 }
 
 # dev-plasma sale solo (con 0) si no hay KDE Plasma, así que en --all se puede
-# llamar en cualquier máquina. Va después del stow: necesita los Global Themes
-# del paquete plasma/ ya enlazados en ~/.local/share.
+# llamar en cualquier máquina. Va después del stow: el cursor de los temas
+# llega con el paquete icons/ (los temas en sí los instala dev-plasma desde
+# plasma/, que no se stowea).
 run_dev_plasma() {
   sep
   local plasma_script="$DOTFILES_DIR/bin/.local/bin/dev-plasma"

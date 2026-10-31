@@ -44,21 +44,6 @@ declare -A STOW_PER_FILE_TARGET=(
   ["zsh-completions"]=".zsh/completions"
 )
 
-# KPackage packages (plasma): a third strategy, one symlink PER Plasma package
-# (each Global Theme folder, the Nord-flare wallpaper folder) plus one per
-# .colors file. Per-file does NOT work here: KPackage rejects any file whose
-# canonical path falls outside the package root ("kf.package: Path traversal
-# attempt detected" in the journal), so a theme made of per-file symlinks into
-# ~/dotfiles gets its contents/defaults ignored and Plasma silently applies
-# Breeze instead. With the whole package folder symlinked, KPackage
-# canonicalizes the root too and everything is "inside". Plain stow folds at
-# the first directory missing in the target, so the shared parents listed
-# here are created as real directories first — that pins the fold exactly at
-# each package (and keeps "Get New…" downloads out of ~/dotfiles).
-declare -A STOW_KPACKAGE_PARENTS=(
-  [plasma]=".local/share/plasma/look-and-feel .local/share/color-schemes .local/share/wallpapers"
-)
-
 # Whole-folder packages: one symlink for the entire package directory.
 stow_whole_folder() {
   stow --target="$TARGET" --dir="$DOTFILES_DIR" --restow "$1"
@@ -72,38 +57,6 @@ stow_per_file() {
   stow --no-folding --target="$TARGET" --dir="$DOTFILES_DIR" --restow "$pkg"
 }
 
-# plasma/ solo tiene sentido con KDE Plasma: en los servidores y en Termux
-# serían symlinks muertos en ~/.local/share. Ahí no se stowea en --all y en el
-# checklist sale desmarcado (se puede marcar a mano si se quiere igual).
-has_plasma() {
-  command -v plasmashell &>/dev/null
-}
-
-stow_kpackage() {
-  local pkg="$1" dir
-  for dir in ${STOW_KPACKAGE_PARENTS[$pkg]}; do
-    mkdir -p "$TARGET/$dir"
-  done
-  # Unstow aparte y no --restow: --restow conserva un directorio que ya existe
-  # (p. ej. de un stow per-file anterior) y no lo vuelve a doblar en un
-  # symlink, así que el paquete seguiría roto para KPackage. -D quita los
-  # links, pero no siempre las carpetas que quedan vacías (a veces deja
-  # Nord-flare/contents/...), y una carpeta vacía impide doblar. Por eso se
-  # borran a mano, solo si están vacías: si alguien dejó un archivo ajeno
-  # adentro, el stow de después lo reporta como conflicto en vez de pisarlo.
-  stow --target="$TARGET" --dir="$DOTFILES_DIR" -D "$pkg" 2>/dev/null
-  local item target_item
-  for dir in ${STOW_KPACKAGE_PARENTS[$pkg]}; do
-    for item in "$DOTFILES_DIR/$pkg/$dir"/*/; do
-      [[ -d "$item" ]] || continue
-      target_item="$TARGET/$dir/$(basename "$item")"
-      [[ -d "$target_item" && ! -L "$target_item" ]] \
-        && find "$target_item" -depth -type d -empty -delete
-    done
-  done
-  stow --target="$TARGET" --dir="$DOTFILES_DIR" "$pkg"
-}
-
 stow_packages() {
   sep
 
@@ -112,6 +65,10 @@ stow_packages() {
     local name
     name="$(basename "$d")"
     [[ "$name" == "system" ]] && continue
+    # plasma/ tampoco es de stow: Plasma lee los Global Themes con KPackage,
+    # que rechaza archivos symlinkeados fuera de la carpeta del paquete. Los
+    # instala dev-plasma (kpackagetool6 + copias), menú 13.
+    [[ "$name" == "plasma" ]] && continue
     [[ "$name" == "bootstrap"* ]] && continue
     [[ "$name" == "."* ]] && continue
     pkgs+=("$name")
@@ -125,20 +82,12 @@ stow_packages() {
   local chosen=()
 
   if [[ "$NONINTERACTIVE" == "true" ]]; then
-    for pkg in "${pkgs[@]}"; do
-      if [[ "$pkg" == "plasma" ]] && ! has_plasma; then
-        skip "plasma — KDE Plasma no está instalado"
-        continue
-      fi
-      chosen+=("$pkg")
-    done
+    chosen=("${pkgs[@]}")
     info "Non-interactive mode — stowing all ${#chosen[@]} package(s)"
   else
-    local items=() state
+    local items=()
     for pkg in "${pkgs[@]}"; do
-      state="on"
-      [[ "$pkg" == "plasma" ]] && ! has_plasma && state="off"
-      items+=("$pkg" "" "$state")
+      items+=("$pkg" "" "on")
     done
 
     local list_height="${#pkgs[@]}"
@@ -153,7 +102,7 @@ stow_packages() {
       --title " Stow Packages " \
       --separate-output \
       --checklist \
-      "Select packages to stow  [SPACE=toggle  ENTER=confirm]\n\nTarget: $TARGET\n\nNote: system/ is always excluded (use MOTD option instead)" \
+      "Select packages to stow  [SPACE=toggle  ENTER=confirm]\n\nTarget: $TARGET\n\nNote: system/ and plasma/ are always excluded (use the MOTD / dev-plasma options instead)" \
       "$win_height" 64 "$list_height" \
       "${items[@]}" \
       3>&1 1>&2 2>&3) || {
@@ -190,7 +139,6 @@ stow_packages() {
   for pkg in "${chosen[@]}"; do
     local stow_err stow_fn=stow_whole_folder
     [[ " ${STOW_PER_FILE_PACKAGES[*]} " == *" $pkg "* ]] && stow_fn=stow_per_file
-    [[ -n "${STOW_KPACKAGE_PARENTS[$pkg]:-}" ]] && stow_fn=stow_kpackage
     if stow_err=$("$stow_fn" "$pkg" 2>&1); then
       ok "Stowed: $pkg"
       ((stowed++)) || true

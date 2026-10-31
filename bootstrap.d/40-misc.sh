@@ -3,7 +3,7 @@
 # ==============================================================================
 # Small, mostly-independent menu-option implementations that don't warrant
 # their own file: default-shell + dev-* script permissions, thin launchers
-# for the standalone bin/.local/bin/dev-{packages,motd,ssh} scripts, Nerd
+# for the standalone bin/.local/bin/dev-{packages,motd,ssh,plasma} scripts, Nerd
 # Fonts, the Timewarrior hook, and TPM. Named "misc", not "system", to avoid
 # clashing with the repo's own system/ directory (MOTD + systemd units),
 # which is a different, unrelated thing.
@@ -97,6 +97,21 @@ run_dev_motd() {
   [[ -x "$motd_script" ]] || chmod +x "$motd_script"
   info "Launching dev-motd..."
   "$motd_script"
+}
+
+# dev-plasma sale solo (con 0) si no hay KDE Plasma, así que en --all se puede
+# llamar en cualquier máquina. Va después del stow: necesita los Global Themes
+# del paquete plasma/ ya enlazados en ~/.local/share.
+run_dev_plasma() {
+  sep
+  local plasma_script="$DOTFILES_DIR/bin/.local/bin/dev-plasma"
+  [[ -f "$plasma_script" ]] || {
+    err "dev-plasma not found at $plasma_script"
+    return 1
+  }
+  [[ -x "$plasma_script" ]] || chmod +x "$plasma_script"
+  info "Launching dev-plasma..."
+  DEV_PLASMA_BACKTITLE="$BACKTITLE" "$plasma_script"
 }
 
 run_dev_ssh() {

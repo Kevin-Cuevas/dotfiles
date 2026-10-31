@@ -53,6 +53,7 @@ run_all() {
   set_permissions
   stow_packages
   run_dev_motd || warn "dev-motd encountered errors — check output above"
+  run_dev_plasma || warn "dev-plasma encountered errors — check output above"
   install_fonts
   setup_tw_hook || warn "Timewarrior hook setup failed — check output above"
   install_tpm
@@ -77,8 +78,8 @@ main_menu() {
       --backtitle "$BACKTITLE" \
       --title " Main Menu " \
       --menu "\ZbSelect an action:\ZB" \
-      26 64 14 \
-      "1" "Run everything  (2 through 12)" \
+      27 64 15 \
+      "1" "Run everything  (2 through 13)" \
       "2" "Install apt packages" \
       "3" "Set permissions on dev-* scripts" \
       "4" "$stow_label" \
@@ -90,6 +91,7 @@ main_menu() {
       "10" "Configure SSH    (control dir + servers)" \
       "11" "Set zsh as default shell" \
       "12" "Install language runtimes (rust, node, ...)" \
+      "13" "KDE Plasma themes  (dev-plasma)" \
       "q" "Quit" \
       3>&1 1>&2 2>&3) || break
 
@@ -107,6 +109,7 @@ main_menu() {
       10) (run_dev_ssh) || true ;;
       11) (set_default_shell) || true ;;
       12) (install_runtimes) || true ;;
+      13) (run_dev_plasma) || true ;;
       q | Q) break ;;
     esac
 

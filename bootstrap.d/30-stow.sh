@@ -26,13 +26,14 @@
 # from the GUI in ~/.local/share/konsole..., completion files dev-* CLIs
 # generate for themselves on their own host — e.g. `dev-pagipage-domains
 # --set-autocompletions` on nivek-core writes straight into
-# ~/.zsh/completions). Folding these into one symlink would mean anything
+# ~/.zsh/completions; Global Themes, color schemes and wallpapers that
+# Plasma's "Get New…" drops next to ours in ~/.local/share). Folding these into one symlink would mean anything
 # written there later lands physically inside ~/dotfiles instead of the
 # real directory. These get --no-folding: a REAL target directory plus one
 # symlink per tracked file, so only what we explicitly put in the package
 # is managed — adding a new file to the package and re-running the stow
 # step links just that file, it never re-folds the directory.
-STOW_PER_FILE_PACKAGES=(bin konsole ssh zsh-completions)
+STOW_PER_FILE_PACKAGES=(bin konsole plasma ssh zsh-completions)
 
 # Explicit target directory for each per-file package (relative to $TARGET),
 # so we can create it as a real directory ourselves before stowing — this
@@ -40,6 +41,7 @@ STOW_PER_FILE_PACKAGES=(bin konsole ssh zsh-completions)
 declare -A STOW_PER_FILE_TARGET=(
   [bin]=".local/bin"
   [konsole]=".local/share/konsole"
+  [plasma]=".local/share"
   [ssh]=".ssh"
   ["zsh-completions"]=".zsh/completions"
 )
@@ -55,6 +57,13 @@ stow_per_file() {
   local pkg="$1"
   mkdir -p "$TARGET/${STOW_PER_FILE_TARGET[$pkg]}"
   stow --no-folding --target="$TARGET" --dir="$DOTFILES_DIR" --restow "$pkg"
+}
+
+# plasma/ solo tiene sentido con KDE Plasma: en los servidores y en Termux
+# serían symlinks muertos en ~/.local/share. Ahí no se stowea en --all y en el
+# checklist sale desmarcado (se puede marcar a mano si se quiere igual).
+has_plasma() {
+  command -v plasmashell &>/dev/null
 }
 
 stow_packages() {
@@ -78,12 +87,20 @@ stow_packages() {
   local chosen=()
 
   if [[ "$NONINTERACTIVE" == "true" ]]; then
-    chosen=("${pkgs[@]}")
+    for pkg in "${pkgs[@]}"; do
+      if [[ "$pkg" == "plasma" ]] && ! has_plasma; then
+        skip "plasma — KDE Plasma no está instalado"
+        continue
+      fi
+      chosen+=("$pkg")
+    done
     info "Non-interactive mode — stowing all ${#chosen[@]} package(s)"
   else
-    local items=()
+    local items=() state
     for pkg in "${pkgs[@]}"; do
-      items+=("$pkg" "" "on")
+      state="on"
+      [[ "$pkg" == "plasma" ]] && ! has_plasma && state="off"
+      items+=("$pkg" "" "$state")
     done
 
     local list_height="${#pkgs[@]}"

@@ -43,7 +43,7 @@ dotfiles/
 ├── konsole/      -> ~/.local/share/konsole  Konsole/Yakuake profiles + Nordic colorschemes  [per-file]
 ├── nvim/         -> ~/.config/nvim        LazyVim config
 ├── peaclock/     -> ~/.peaclock
-├── plasma/       -> ~/.local/share        KDE Plasma Global Themes + color schemes + Nord Flare wallpaper  [per-package]
+├── plasma/                                KDE Plasma Global Themes + color schemes + Nord Flare wallpaper (not stowed: dev-plasma)
 ├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local [per-file]
 ├── system/                                MOTD + systemd --user units (not stowed)
 │   ├── motd/                              root-run MOTD scripts
@@ -60,15 +60,14 @@ dotfiles/
 ```
 
 `[per-file]` marks the packages stowed one-symlink-per-file instead of
-one symlink for the whole directory, and `[per-package]` one symlink per
-Plasma package — see **Stow strategy** below.
+one symlink for the whole directory — see **Stow strategy** below.
 
 ---
 
 ## Stow strategy
 
 Every top-level directory is a Stow package, but not all of them get stowed
-the same way — `stow_packages()` splits them into three groups
+the same way — `stow_packages()` splits them into two groups
 (`STOW_PER_FILE_PACKAGES` in `bootstrap.d/30-stow.sh`, right above the
 function):
 
@@ -94,21 +93,6 @@ directory plus one symlink per tracked file — only what we explicitly put in
 the package is managed by stow. Add a new file to one of these packages and
 re-run the stow step: it links just that new file, it never re-folds the
 directory into a single symlink.
-
-**Per-package** (`plasma`) — one symlink per Plasma package (each Global
-Theme folder, the `Nord-flare` wallpaper folder) and one per `.colors` file.
-Per-file does **not** work here: Plasma reads those packages through
-KPackage, which rejects any file whose real path falls outside the package
-folder (`kf.package: Path traversal attempt detected` in the journal). A theme
-made of per-file symlinks into `~/dotfiles` gets its `contents/defaults`
-ignored and Plasma silently applies Breeze. `stow_kpackage()` first creates
-the shared parents (`~/.local/share/plasma/look-and-feel`, `color-schemes`,
-`wallpapers`) as real directories, so stow's folding lands exactly on each
-package and Plasma's "Get New…" downloads never end up inside the repo. It
-unstows and removes leftover empty folders before stowing, which also
-migrates a package that was previously stowed per-file. `plasma` is only
-useful with KDE Plasma: on machines without `plasmashell` (servers, Termux)
-`--all` skips it and the checklist shows it unchecked.
 
 For `zsh-completions` specifically, `zsh/.zshrc` prepends `~/.zsh/completions`
 to `fpath` **before** `compinit` — that ordering is what makes the tracked
@@ -349,32 +333,41 @@ and when they disagree it marks the Global Theme as applied while silently
 keeping the old colors.
 
 The themes, their color schemes and the **Nord Flare** wallpaper (a package
-with `images/` + `images_dark/`, so it follows light/dark on its own) come in
-through the `plasma/` stow package. The desktop/panel layout inside the themes
-has no absolute paths: the wallpaper path is computed with `userDataPath()`
-and the launcher uses the `start-here-debian` icon name.
+with `images/` + `images_dark/`, so it follows light/dark on its own) live in
+`plasma/`, which is **not** stowed. Plasma reads Global Themes (and wallpaper
+packages) through KPackage, which rejects any file whose real path falls
+outside the package folder (`kf.package: Path traversal attempt detected` in
+the journal): a theme symlinked into `~/dotfiles` gets its `contents/defaults`
+ignored and Plasma silently applies Breeze. So they're installed as **copies**,
+like any "Get New…" theme — the repo is the source of truth, edits happen
+there (the `nivek-plasma-global-theme` skill does that) and
+`dev-plasma --only=themes` reinstalls whatever changed. The desktop/panel
+layout inside the themes has no absolute paths: the wallpaper path is computed
+with `userDataPath()` and the launcher uses the `start-here-debian` icon name.
 
-Everything the themes *reference* but don't contain is handled by
-**`dev-plasma`** (bootstrap menu option **13**):
+Installing the themes and everything they *reference* but don't contain is
+handled by **`dev-plasma`** (bootstrap menu option **13**). It finds `plasma/`
+from its own real path, so it works from `~/.local/bin` too:
 
 ```bash
 dev-plasma                  # interactive checklist (dialog)
 dev-plasma --all            # every key, no prompts
-dev-plasma --only=icons     # just one key
+dev-plasma --only=themes    # just one key
 dev-plasma --doctor         # check that every referenced piece exists; changes nothing
-dev-plasma --reset-layout   # with the theme key: also apply the theme's panel + wallpaper layout
+dev-plasma --reset-layout   # with the apply key: also apply the theme's panel + wallpaper layout
 dev-plasma --help           # usage + the list of keys
 ```
 
 | Key           | What it does |
 | ------------- | ------------ |
+| `themes`      | installs the Global Themes from `plasma/look-and-feel` with `kpackagetool6` (Plasma's official package installer: `--install`, or `--upgrade` when it's already there), and copies the `.colors` files and the wallpaper (`kpackagetool6` can't install image wallpapers: `Wallpaper/Images` has no package root and its `--upgrade`/`--remove` fail). Only touches what differs from the repo; leftover symlinks from an older stow setup are replaced |
 | `icons`       | `papirus-icon-theme` from apt + [`papirus-folders`](https://github.com/PapirusDevelopmentTeam/papirus-folders) (not in apt) set to `nordic`. Offers to remove a Papirus copy in `~/.local/share/icons` (from "Get New…"), which would shadow the apt one. The folder color is re-checked every run, since an apt upgrade resets it to blue |
 | `splash`      | Kuro from [its git repo](https://github.com/bouteillerAlan/kuro) (GPLv3), remote HEAD sha compared like peaclock — not from the KDE store, whose download URLs expire |
 | `sddm-cursor` | copies the theme's cursor to `/usr/share/icons`: SDDM runs as the `sddm` user, which can't read a `0710` home, so the login screen never showed it. Writes `CursorTheme=` to `/etc/sddm.conf.d/dev-plasma.conf` only if nothing sets it yet (System Settings' `kde_settings.conf` sorts after it and still wins) |
-| `theme`       | applies the theme matching the current mode (light/dark is read from the active window background), then links the light/dark pair in `kdeglobals` with Automatic on — in that order, since applying a theme clears `AutomaticLookAndFeel`. Doesn't touch your panel unless `--reset-layout` |
+| `apply`       | applies the theme matching the current mode (light/dark is read from the active window background) and records the light/dark pair in `kdeglobals`. Leaves the "Switch to Dark Mode at Night" toggle exactly as it was (applying a theme clears it, so it's saved and restored), and doesn't touch your panel unless `--reset-layout` |
 | `wallpaper`   | sets Nord Flare only if the current wallpaper is a stock KDE one; a hand-picked wallpaper is kept on `--all` and replaced only when this key is picked explicitly |
 
-The doctor also applies KPackage's own rule (every file must resolve inside its package folder), so a theme Plasma would silently ignore shows up as an error.
+The doctor also applies KPackage's own rule (every file must resolve inside its package folder), so a theme Plasma would silently ignore shows up as an error, and warns when an installed theme, color scheme or wallpaper differs from the repo.
 
 Outside KDE Plasma `dev-plasma` does nothing and exits 0, so `--all` is safe
 on servers. A run always ends with the doctor.
@@ -391,9 +384,6 @@ cd ~/dotfiles
 stow cava icons kitty nvim peaclock task templates tmux zsh
 # Per-file packages (--no-folding: real directory + one symlink per file)
 stow --no-folding bin konsole ssh zsh-completions
-# Per-package (plasma): real parent dirs first, then a normal (folding) stow
-mkdir -p ~/.local/share/plasma/look-and-feel ~/.local/share/color-schemes ~/.local/share/wallpapers
-stow plasma
 ```
 
 ---
@@ -412,7 +402,7 @@ stow plasma
 
 - Optimized for Debian-based machines.
 - `stow` works best when each app lives in its own directory.
-- Per-package stow strategy (whole-folder, per-file, per-package) and how `system/` is
+- Per-package stow strategy (whole-folder vs per-file) and how `system/` is
   handled outside of stow is documented in **Stow strategy** above.
 - `bin/` only ever holds tools we actually maintain as dotfiles (`dev-*`,
   `tmux-theme-*`). Everything installed by a native installer (pipx, curl

@@ -3,7 +3,7 @@ const express = require("express");
 const app = express();
 const port = 3000;
 
-// Middleware para JSON
+// JSON middleware
 app.use(express.json());
 
 // Ruta principal
@@ -12,5 +12,5 @@ app.get("/", (req, res) => {
 });
 
 app.listen(port, () =>
-  console.log(`Servidor ejecutándose en http://localhost:${port}`),
+  console.log(`Server running at http://localhost:${port}`),
 );

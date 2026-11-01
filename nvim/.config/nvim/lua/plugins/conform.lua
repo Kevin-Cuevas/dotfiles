@@ -1,7 +1,7 @@
--- shfmt al guardar con el estilo de los scripts de los dotfiles (Google Shell
--- Style Guide): 2 espacios, `case` indentado (-ci) y |/&& al inicio de la
--- línea cuando se parte (-bn). Sin esto conform solo le pasa -i 2 y cada
--- guardado desharía ese formato.
+-- shfmt on save with the dotfiles' script style (Google Shell Style Guide):
+-- 2 spaces, indented `case` (-ci) and |/&& at the start of the line when
+-- wrapping (-bn). Without this conform only passes -i 2 and every save would
+-- undo that formatting.
 return {
   {
     "stevearc/conform.nvim",

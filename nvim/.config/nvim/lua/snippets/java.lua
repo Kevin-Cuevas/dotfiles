@@ -6,7 +6,7 @@ local i = ls.insert_node
 local f = ls.function_node
 local d = ls.dynamic_node
 
--- Palabras que se parecen a un tipo pero no declaran una variable
+-- Words that look like a type but don't declare a variable
 local not_a_type = {
   ["return"] = true,
   ["else"] = true,
@@ -18,7 +18,7 @@ local not_a_type = {
   ["goto"] = true,
 }
 
--- Nombre de la variable en una línea de declaración ==> string o nil
+-- Variable name on a declaration line ==> string or nil
 -- (int x = 1; | String s; | List<String> xs = ...; | for (int i = 0 | for (String s : xs))
 local function declared_in(line)
   line = line:gsub("//.*$", ""):gsub("^%s*final%s+", "")
@@ -30,7 +30,7 @@ local function declared_in(line)
     ty, name = line:match("^%s*([%w_%.%[%]]+)%s+([%a_][%w_]*)%s*[=;]")
   end
   if not name then
-    -- tipos con genéricos pueden llevar espacios: Map<String, Integer> m =
+    -- generic types can contain spaces: Map<String, Integer> m =
     ty, name = line:match("^%s*([%w_%.]+<.->[%[%]]*)%s+([%a_][%w_]*)%s*[=;]")
   end
   if name and not not_a_type[ty] then
@@ -38,7 +38,7 @@ local function declared_in(line)
   end
 end
 
--- Última variable declarada por encima de la línea actual
+-- Last variable declared above the current line
 local function last_variable()
   local row = vim.api.nvim_win_get_cursor(0)[1]
   local lines = vim.api.nvim_buf_get_lines(0, 0, row - 1, false)
@@ -51,7 +51,7 @@ local function last_variable()
   return ""
 end
 
--- Cabeceras que se parecen a un método pero son otra cosa
+-- Headers that look like a method but are something else
 local not_a_method = {
   ["if"] = true,
   ["for"] = true,
@@ -65,13 +65,13 @@ local not_a_method = {
   ["else"] = true,
 }
 
--- Nombre del método que envuelve la línea actual ==> string o ""
+-- Name of the method enclosing the current line ==> string or ""
 local function current_method()
   local row = vim.api.nvim_win_get_cursor(0)[1]
   local lines = vim.api.nvim_buf_get_lines(0, 0, row, false)
   for n = #lines, 1, -1 do
     local line = lines[n]:gsub("//.*$", "")
-    -- tipo de retorno (o modificador) + nombre + ( ... ), sin ';' al final
+    -- return type (or modifier) + name + ( ... ), no ';' at the end
     local name = line:match("^%s*[%w_<>%[%]%.,%s]-%s([%a_][%w_]*)%s*%b()[%w_%s,]*{?%s*$")
     if not name then
       -- constructor: public Foo( ... ) {
@@ -89,7 +89,7 @@ local function class_name()
 end
 
 return {
-  -- soutv: System.out.println("x = " + x); con la última variable declarada
+  -- soutv: System.out.println("x = " + x); with the last declared variable
   s("soutv", {
     t('System.out.println("'),
     f(function(args)
@@ -103,7 +103,7 @@ return {
     i(0),
   }),
 
-  -- soutm: System.out.println("Clase.metodo");
+  -- soutm: System.out.println("Class.method");
   s("soutm", {
     t('System.out.println("'),
     f(function()

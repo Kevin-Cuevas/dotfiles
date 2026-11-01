@@ -3,7 +3,7 @@ return {
   opts = function(_, opts)
     local hi = require("mini.hipatterns")
 
-    -- Extender los highlighters existentes
+    -- Extend the existing highlighters
     opts.highlighters = vim.tbl_extend("force", opts.highlighters or {}, {
       -- RGB colors: rgb(255, 0, 0)
       rgb = {

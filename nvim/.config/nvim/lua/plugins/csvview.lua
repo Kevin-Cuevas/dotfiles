@@ -5,11 +5,11 @@ return {
     config = function()
       require("csvview").setup({
         parser = {
-          -- evita bloquear el hilo principal en archivos grandes
+          -- avoids blocking the main thread on large files
           async = true,
-          -- tamaño de chunks del parser asíncrono (ajusta si hay parpadeos)
+          -- chunk size of the async parser (tweak if there's flicker)
           async_chunksize = 50,
-          -- Delimitadores: prioridad por ft, luego fallbacks para auto-detección
+          -- Delimiters: priority by ft, then fallbacks for auto-detection
           delimiter = {
             ft = {
               csv = ",",
@@ -17,32 +17,32 @@ return {
             },
             fallbacks = { ",", "\t", ";", "|", ":" },
           },
-          -- habilitar detección automática
+          -- enable auto-detection
           auto_detect = {
             enable = true,
             candidates = { ",", ";", "\t", "|" },
           },
-          -- caracteres de quote por defecto
+          -- default quote characters
           quote_char = '"',
-          -- líneas máximas para lookahead en campos multilínea
+          -- max lookahead lines for multi-line fields
           max_lookahead = 50,
         },
 
         view = {
-          -- display_mode puede ser "border" o "highlight"
+          -- display_mode can be "border" or "highlight"
           display_mode = "border",
           spacing = 2,
           min_column_width = 5,
           max_column_width = 50,
 
-          -- forzar que la primera línea sea el header
-          -- usa 1 para indicar la primera línea (1-based)
+          -- force the first line to be the header
+          -- use 1 to mean the first line (1-based)
           header_lnum = 1,
 
-          -- sticky header: clave correcta "enabled" y "separator"
+          -- sticky header: the right keys are "enabled" and "separator"
           sticky_header = {
             enabled = true,
-            separator = "─", -- o false para no mostrar separador
+            separator = "─", -- or false to show no separator
           },
         },
 
@@ -70,7 +70,7 @@ return {
     },
 
     init = function()
-      -- Umbral para auto-activar la vista csv al abrir (evita hacerlo en CSV enormes)
+      -- Threshold to auto-enable the csv view on open (skips huge CSVs)
       local MAX_AUTO_LINES = 1000
 
       vim.api.nvim_create_autocmd("BufReadPost", {
@@ -83,27 +83,27 @@ return {
           end
 
           if lines <= MAX_AUTO_LINES then
-            -- auto-activa csvview para archivos pequeños/medianos
-            -- (si prefieres NO auto-activar, comenta la siguiente línea)
+            -- auto-enables csvview for small/medium files
+            -- (if you'd rather NOT auto-enable it, comment out the next line)
             vim.cmd("CsvViewEnable")
           else
             vim.notify(
-              string.format("Archivo CSV grande (%d líneas). Usa :CsvViewToggle para activar la vista.", lines),
+              string.format("Large CSV file (%d lines). Use :CsvViewToggle to enable the view.", lines),
               vim.log.levels.INFO
             )
           end
         end,
       })
 
-      -- Opcional: si quieres que cambiar el tamaño de la ventana refresque el sticky header,
-      -- descomenta el bloque siguiente.
+      -- Optional: if you want resizing the window to refresh the sticky header,
+      -- uncomment the block below.
       --
       -- vim.api.nvim_create_autocmd({ "VimResized", "WinResized", "BufWinEnter" }, {
       --   pattern = { "*.csv", "*.tsv" },
       --   callback = function()
-      --     -- re-aplica la vista si está activa (ligero "refresh")
-      --     -- Nota: CsvView no expone una API pública de refresh conocida en la doc,
-      --     -- así que usamos comando seguro (no hará nada si no está activa).
+      --     -- re-applies the view if it's active (a light "refresh")
+      --     -- Note: CsvView exposes no public refresh API documented in its docs,
+      --     -- so we use a safe command (does nothing if it isn't active).
       --     vim.cmd("silent! CsvViewDisable")
       --     vim.cmd("silent! CsvViewEnable")
       --   end,

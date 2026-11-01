@@ -1,12 +1,13 @@
--- nvim-jdtls pide `vscode.java.resolveJavaExecutable` en paralelo, una por clase
--- con main, al abrir un .java (escaneo de LazyVim) y al pulsar F5. Recién
--- arrancado, jdtls (java-debug) responde nil a algunas de las simultáneas:
--- sale "Could not resolve java executable for ..." y, como esa clase nunca
--- termina, no se registra ninguna configuración de debug. Pasa más cuantas
--- más clases con main hay. Aquí se piden de una en una.
+-- nvim-jdtls requests `vscode.java.resolveJavaExecutable` in parallel, one per
+-- class with a main, when opening a .java (LazyVim's scan) and when pressing
+-- F5. Right after starting, jdtls (java-debug) answers nil to some of the
+-- concurrent ones: "Could not resolve java executable for ..." shows up and,
+-- since that class never finishes, no debug configuration gets registered. The
+-- more classes with a main, the more it happens. Here they're requested one
+-- at a time.
 --
--- Reemplaza jdtls.util.with_java_executable: hay que aplicarlo antes del
--- primer require("jdtls"), porque jdtls.lua y jdtls/dap.lua la copian al cargar.
+-- Replaces jdtls.util.with_java_executable: it must be applied before the
+-- first require("jdtls"), because jdtls.lua and jdtls/dap.lua copy it on load.
 local M = {}
 
 function M.apply()

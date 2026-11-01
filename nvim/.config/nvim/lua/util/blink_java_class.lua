@@ -1,6 +1,5 @@
--- Fuente de blink.cmp: en `public class |` sugiere el nombre del archivo, que
--- en Java debe coincidir con el del tipo público. Se registra en
--- plugins/java.lua.
+-- blink.cmp source: on `public class |` it suggests the file name, which in
+-- Java must match the public type's name. Registered in plugins/java.lua.
 local source = {}
 
 local kinds = "class|interface|enum|record"
@@ -15,7 +14,7 @@ end
 
 function source:get_completions(ctx, callback)
   local empty = { items = {}, is_incomplete_forward = false, is_incomplete_backward = false }
-  -- solo tipos de primer nivel: sin sangría y con `public` (hasta `public final class`)
+  -- top-level types only: no indentation and with `public` (up to `public final class`)
   local before = ctx.line:sub(1, ctx.cursor[2])
   local matched = false
   for kw in kinds:gmatch("[^|]+") do

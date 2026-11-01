@@ -1,4 +1,4 @@
--- LuaSnip ya viene del extra coding.luasnip; aquí solo lo propio
+-- LuaSnip already comes from the coding.luasnip extra; only our own bits here
 return {
   {
     "L3MON4D3/LuaSnip",

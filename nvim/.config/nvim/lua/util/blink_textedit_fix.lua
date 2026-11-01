@@ -1,4 +1,4 @@
--- Parche blink: rango tras soutv
+-- blink patch: range after soutv
 local M = {}
 
 function M.apply()
@@ -27,7 +27,7 @@ function M.apply()
       return edit
     end
 
-    -- inicio en bytes (petición)
+    -- start in bytes (request)
     local raw_range = raw.range or raw.insert or raw.replace
     local enc = text_edits.offset_encoding_from_item(item)
     local ok, start = pcall(vim.str_byteindex, old_line, enc, raw_range.start.character, false)
@@ -37,10 +37,10 @@ function M.apply()
 
     local line = vim.api.nvim_get_current_line()
     if line:sub(1, start) == old_line:sub(1, start) then
-      return edit -- nada cambió antes
+      return edit -- nothing changed before it
     end
 
-    -- palabra del cursor (+ `@`)
+    -- word under the cursor (+ `@`)
     local before = line:sub(1, col)
     local new_start = #before - #before:match("[%w_$]*$")
     local lead = (raw.newText or item.label or ""):match("^[^%w_$]*")

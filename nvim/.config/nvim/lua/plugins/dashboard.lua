@@ -1,26 +1,26 @@
 return {
   "folke/snacks.nvim",
   opts = function(_, opts)
-    -- Nombre de la máquina (hostname)
+    -- Machine name (hostname)
     local name = vim.uv.os_gethostname() or "HOST"
 
-    -- Detectar si es Termux (usuarios que empiezan con u0_a)
+    -- Detect Termux (users starting with u0_a)
     if (vim.uv.os_get_passwd().username or ""):match("^u0_a%d+$") then
       name = "TERMUX"
     end
 
-    -- Fuentes de mayor a menor, en figlet/ (texto plano si no hay toilet o ninguna cabe)
+    -- Fonts from largest to smallest, in figlet/ (plain text if there's no toilet or none fits)
     local fonts_dir = vim.fn.stdpath("config") .. "/figlet"
     local fonts = { "ansi_shadow", "pagga", "future" }
     local has_toilet = vim.fn.executable("toilet") == 1
     local plain = { text = name, width = vim.fn.strdisplaywidth(name), height = 1 }
 
-    -- Cache por fuente: { text, width, height }
+    -- Cache per font: { text, width, height }
     local banners = {}
     local function banner(font)
       if banners[font] == nil then
         banners[font] = false
-        -- -w grande para que toilet no parta el nombre en varios bloques
+        -- large -w so toilet doesn't split the name into several blocks
         local out = vim.system({ "toilet", "-d", fonts_dir, "-w", "999", "-f", font, name }, { text = true }):wait()
         if out.code == 0 and out.stdout ~= "" then
           local text = vim.trim(out.stdout)
@@ -35,7 +35,7 @@ return {
       return banners[font] or nil
     end
 
-    -- Banners que caben a lo ancho, de mayor a menor
+    -- Banners that fit the width, from largest to smallest
     local function candidates(width)
       local ret = {}
       if has_toilet then
@@ -49,8 +49,8 @@ return {
       return ret
     end
 
-    -- Layout que cabe a lo alto; se degrada en orden: gap 0, fuente más baja,
-    -- sin startup y, al final, el nombre en texto plano
+    -- Layout that fits the height; degrades in order: gap 0, a shorter font,
+    -- no startup and, last, the name in plain text
     local function fit(size, nkeys)
       local function rows(b, gap, startup)
         -- header + padding 2, keys + gaps + padding 1, startup
@@ -75,14 +75,14 @@ return {
     opts.dashboard.enabled = true
     opts.dashboard.preset = opts.dashboard.preset or {}
     opts.dashboard.preset.header = name
-    -- Ancho normal del menú; en ventanas angostas se encoge al ancho del banner
+    -- Normal menu width; in narrow windows it shrinks to the banner width
     local base_width = opts.dashboard.width or 60
     local min_width = 30
 
-    -- Layout del render actual: lo decide el header y lo leen keys y startup
+    -- Layout of the current render: the header decides it, keys and startup read it
     local layout = { gap = 1, startup = true }
 
-    -- Sustituir header, keys y startup por secciones que se recalculan en cada render (resize incluido)
+    -- Replace header, keys and startup with sections recomputed on every render (resize included)
     opts.dashboard.sections = opts.dashboard.sections
       or { { section = "header" }, { section = "keys", gap = 1, padding = 1 }, { section = "startup" } }
     for i, section in ipairs(opts.dashboard.sections) do
@@ -92,7 +92,7 @@ return {
           local keys = self.opts.preset.keys
           layout = fit(size, type(keys) == "table" and #keys or 0)
           local b = layout.banner
-          -- Se resuelve antes del layout, así que el nuevo ancho aplica al render actual
+          -- Resolved before the layout, so the new width applies to the current render
           if size.width < base_width + 10 then
             self.opts.width = math.min(base_width, size.width - 2, math.max(b.width, min_width))
           else

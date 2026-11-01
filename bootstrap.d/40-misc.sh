@@ -16,44 +16,44 @@ set_default_shell() {
 
   local zsh_path
   zsh_path="$(command -v zsh)" || {
-    warn "zsh no está instalado — omitiendo cambio de shell"
+    warn "zsh is not installed — skipping shell change"
     return 1
   }
 
-  # chsh exige que el shell esté listado en /etc/shells
+  # chsh requires the shell to be listed in /etc/shells
   if ! grep -qxF "$zsh_path" /etc/shells 2>/dev/null; then
-    info "Registrando $zsh_path en /etc/shells..."
+    info "Registering $zsh_path in /etc/shells..."
     echo "$zsh_path" | sudo tee -a /etc/shells >/dev/null
   fi
 
   local current_shell
   current_shell="$(getent passwd "$USER" | cut -d: -f7)"
   if [[ "$current_shell" == "$zsh_path" ]]; then
-    skip "zsh ya es el shell por defecto ($zsh_path)"
+    skip "zsh is already the default shell ($zsh_path)"
     return
   fi
 
-  # En Run everything interactivo, confirmar antes de cambiar el shell
+  # In an interactive "Run everything", confirm before changing the shell
   if [[ "$confirm" == true && "$NONINTERACTIVE" == false ]]; then
     if dialog \
       --clear --colors \
       --backtitle "$BACKTITLE" \
-      --title " Cambiar shell por defecto " \
-      --yesno "¿Establecer zsh ($zsh_path) como tu shell por defecto?\n\nEjecuta: chsh -s $zsh_path $USER\nEfectivo en la próxima sesión." \
+      --title " Change default shell " \
+      --yesno "Set zsh ($zsh_path) as your default shell?\n\nRuns: chsh -s $zsh_path $USER\nTakes effect on your next session." \
       10 64; then
       clear
     else
       clear
-      skip "Cambio de shell omitido por el usuario"
+      skip "Shell change skipped by the user"
       return
     fi
   fi
 
-  info "Estableciendo zsh como shell por defecto..."
+  info "Setting zsh as the default shell..."
   if sudo chsh -s "$zsh_path" "$USER"; then
-    ok "Shell por defecto cambiado a $zsh_path (efectivo en la próxima sesión)"
+    ok "Default shell changed to $zsh_path (takes effect on your next session)"
   else
-    warn "No se pudo cambiar el shell — hazlo manualmente: chsh -s $zsh_path"
+    warn "Couldn't change the shell — do it manually: chsh -s $zsh_path"
   fi
 }
 
@@ -99,10 +99,10 @@ run_dev_motd() {
   "$motd_script"
 }
 
-# dev-plasma sale solo (con 0) si no hay KDE Plasma, así que en --all se puede
-# llamar en cualquier máquina. Va después del stow: el cursor de los temas
-# llega con el paquete icons/ (los temas en sí los instala dev-plasma desde
-# plasma/, que no se stowea).
+# dev-plasma exits on its own (with 0) when there's no KDE Plasma, so --all can
+# call it on any machine. It runs after stow: the themes' cursor arrives with
+# the icons/ package (the themes themselves are installed by dev-plasma from
+# plasma/, which isn't stowed).
 run_dev_plasma() {
   sep
   local plasma_script="$DOTFILES_DIR/bin/.local/bin/dev-plasma"
@@ -115,9 +115,9 @@ run_dev_plasma() {
   DEV_PLASMA_BACKTITLE="$BACKTITLE" "$plasma_script"
 }
 
-# dev-boot toca el arranque (GRUB + Plymouth, con sudo). Sin GRUB o sin
-# Plymouth salta esa parte, así que en --all se puede llamar en cualquier
-# máquina; si no hay nada que cambiar no pide sudo.
+# dev-boot touches the boot process (GRUB + Plymouth, with sudo). Without GRUB
+# or Plymouth it skips that part, so --all can call it on any machine; when
+# there's nothing to change it doesn't ask for sudo.
 run_dev_boot() {
   sep
   local boot_script="$DOTFILES_DIR/bin/.local/bin/dev-boot"

@@ -65,11 +65,11 @@ stow_packages() {
     local name
     name="$(basename "$d")"
     [[ "$name" == "system" ]] && continue
-    # plasma/ tampoco es de stow: Plasma lee los Global Themes con KPackage,
-    # que rechaza archivos symlinkeados fuera de la carpeta del paquete. Los
-    # instala dev-plasma (kpackagetool6 + copias), menú 13.
+    # plasma/ isn't stowed either: Plasma reads Global Themes through KPackage,
+    # which rejects files symlinked from outside the package folder. dev-plasma
+    # installs them (kpackagetool6 + copies), menu 13.
     [[ "$name" == "plasma" ]] && continue
-    # boot/ (temas de GRUB y Plymouth) va a rutas de root: lo instala dev-boot.
+    # boot/ (GRUB and Plymouth themes) goes to root-owned paths: dev-boot installs it.
     [[ "$name" == "boot" ]] && continue
     [[ "$name" == "bootstrap"* ]] && continue
     [[ "$name" == "."* ]] && continue
@@ -125,15 +125,14 @@ stow_packages() {
 
   fi
 
-  # En una máquina desde cero, ~/.config puede no existir todavía. Si el
-  # primer paquete en tocarlo (p.ej. cava) lo encuentra ausente, el folding
-  # normal de stow enlaza ~/.config ENTERO como un solo symlink hacia
-  # dotfiles/cava/.config — y el siguiente paquete que use ~/.config (kitty,
-  # nvim, task...) terminaría escribiendo sus archivos dentro del paquete de
-  # cava. Pre-creamos ~/.config como carpeta real (es el único destino que
-  # comparten varios paquetes "todo o nada") para que el folding de stow
-  # solo pueda ocurrir al nivel de cada paquete individual
-  # (~/.config/nvim, ~/.config/kitty, ...), nunca en la raíz compartida.
+  # On a from-scratch machine, ~/.config may not exist yet. If the first
+  # package to touch it (e.g. cava) finds it missing, stow's normal folding
+  # links the WHOLE ~/.config as a single symlink to dotfiles/cava/.config —
+  # and the next package using ~/.config (kitty, nvim, task...) would end up
+  # writing its files inside the cava package. We pre-create ~/.config as a
+  # real directory (it's the only target shared by several "all or nothing"
+  # packages) so stow's folding can only happen at each individual package's
+  # level (~/.config/nvim, ~/.config/kitty, ...), never at the shared root.
   mkdir -p "$HOME/.config"
 
   local stowed=0 conflicts=0
@@ -162,21 +161,21 @@ stow_packages() {
   link_systemd_units
 }
 
-# Enlaza las unidades systemd --user de system/services/ (servicios que
-# corren de forma persistente) y system/timers/ (pares oneshot .service +
-# .timer) hacia ~/.config/systemd/user, y las habilita. system/ está excluido
-# de los paquetes de stow (ver stow_packages), así que este es el mecanismo
-# que las pone a funcionar. Nomenclatura: todo archivo se llama infra-*.
+# Links the systemd --user units from system/services/ (long-running
+# services) and system/timers/ (oneshot .service + .timer pairs) into
+# ~/.config/systemd/user, and enables them. system/ is excluded from the stow
+# packages (see stow_packages), so this is the mechanism that puts them to
+# work. Naming: every file is called infra-*.
 link_systemd_units() {
   sep
 
   if [[ "$TEST_MODE" == true ]]; then
-    skip "TEST MODE — no se tocan las unidades systemd reales"
+    skip "TEST MODE — real systemd units are left alone"
     return
   fi
 
   if ! command -v systemctl &>/dev/null || ! systemctl --user show-environment &>/dev/null 2>&1; then
-    skip "systemd --user no disponible — omitiendo unidades systemd"
+    skip "systemd --user unavailable — skipping systemd units"
     return
   fi
 
@@ -195,31 +194,31 @@ link_systemd_units() {
   done
 
   if [[ $linked -eq 0 ]]; then
-    skip "No hay unidades infra-* en system/services o system/timers."
+    skip "No infra-* units in system/services or system/timers."
     return
   fi
 
   systemctl --user daemon-reload
 
-  # Servicios persistentes: se habilitan y arrancan directamente.
+  # Long-running services: enabled and started directly.
   for f in "$DOTFILES_DIR"/system/services/infra-*.service; do
     [[ -e "$f" ]] || continue
     name="$(basename "$f")"
     if systemctl --user enable --now "$name" &>/dev/null; then
       ok "Enabled $name"
     else
-      warn "No se pudo habilitar $name"
+      warn "Couldn't enable $name"
     fi
   done
 
-  # Pares oneshot + timer: solo se habilita el .timer (él dispara al .service).
+  # Oneshot + timer pairs: only the .timer is enabled (it triggers the .service).
   for f in "$DOTFILES_DIR"/system/timers/infra-*.timer; do
     [[ -e "$f" ]] || continue
     name="$(basename "$f")"
     if systemctl --user enable --now "$name" &>/dev/null; then
       ok "Enabled $name"
     else
-      warn "No se pudo habilitar $name"
+      warn "Couldn't enable $name"
     fi
   done
 }

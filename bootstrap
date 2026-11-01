@@ -62,7 +62,7 @@ run_all() {
   if [[ "$NONINTERACTIVE" == false ]]; then
     run_dev_ssh || warn "dev-ssh encountered errors — check output above"
   fi
-  set_default_shell confirm || warn "Cambio de shell falló — revisa la salida"
+  set_default_shell confirm || warn "Shell change failed — check the output above"
   install_runtimes
   sep
   printf "${GRN}${BLD}  Bootstrap complete.${RST}\n\n"

@@ -1,7 +1,7 @@
 [Appearance]
 AntiAliasFonts=true
 BoldIntense=true
-ColorScheme=NordicLight
+ColorScheme=NivekLightNordKonsoleColors
 EmojiFont=Noto Color Emoji,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
 Font=FiraMono Nerd Font,11,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
 IgnoreWcWidth=true
@@ -11,7 +11,7 @@ UseFontLineChararacters=false
 WordMode=true
 
 [General]
-Name=nivek-yakuake-light
+Name=NivekLightNordKonsole
 Parent=FALLBACK/
 TerminalMargin=2
 

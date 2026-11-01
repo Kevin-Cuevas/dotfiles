@@ -22,6 +22,11 @@ Plasma and boot themes and the background services: run `dev-plasma` /
 curl -fsSL https://raw.githubusercontent.com/Kevin-Cuevas/dotfiles/main/install | bash -s -- --all
 ```
 
+The apt packages follow a machine **profile**, detected on its own (KDE
+Plasma installed → `desktop`, otherwise `server`); force one with
+`--profile=desktop` or `--profile=server` (see
+[Packages installed by bootstrap](#packages-installed-by-bootstrap)).
+
 Or if you already have the repo cloned:
 
 ```bash
@@ -133,8 +138,8 @@ runs on its own:
 
 | Module | Concern |
 | --- | --- |
-| `00-core.sh` | logging, dialog checklist helper, preflight, header — loads first, everything else depends on it |
-| `10-packages.sh` | apt packages only (menu option 2) — non-apt tools live in `dev-packages`, see below |
+| `00-core.sh` | logging, preflight, header — loads first, everything else depends on it |
+| `10-packages.sh` | apt packages only (menu option 2), in groups and machine profiles — non-apt tools live in `dev-packages`, see below |
 | `20-runtimes.sh` | language runtimes: rust, node, deno, bun, java via SDKMAN (menu option 12) |
 | `30-stow.sh` | stow strategy (menu option 4) + systemd `--user` unit linking |
 | `40-misc.sh` | default shell, `dev-*` permissions, `dev-packages`/`dev-motd`/`dev-ssh`/`dev-plasma`/`dev-boot`/`dev-services` launchers, fonts, TPM, Timewarrior hook |
@@ -267,11 +272,27 @@ manual ones.
 
 ## Packages installed by bootstrap
 
-```
-git stow zsh wget kitty-terminfo curl fzf ripgrep fd-find bat zoxide
-taskwarrior timewarrior build-essential cmake libicu-dev golang figlet toilet
-wl-clipboard direnv eza pipx zip unzip default-jdk yakuake
-```
+apt packages come in groups, and a machine **profile** decides which groups
+it gets:
+
+| Group          | Packages | `server` | `desktop` |
+| -------------- | -------- | :------: | :-------: |
+| `core`         | git stow zsh curl wget kitty-terminfo fzf ripgrep fd-find bat zoxide eza direnv zip unzip figlet toilet | ✔ | ✔ |
+| `dev`          | build-essential cmake libicu-dev golang pipx (`dev-packages` builds with them) | ✔ | ✔ |
+| `productivity` | taskwarrior timewarrior | ✔ | ✔ |
+| `desktop`      | yakuake wl-clipboard | | ✔ |
+
+The profile is detected on its own (KDE Plasma installed → `desktop`,
+otherwise `server`: servers, the Termux VM) and can be forced with
+`bootstrap --profile=desktop|server`. `--all` installs the profile's groups.
+The menu (option 2) preselects them, shows how many packages of each group
+are missing, and optionally lets you pick packages inside each group (with
+a description and `✔ installed`). Everything missing goes to apt in a single
+`apt-get install`; if that fails, each package is retried alone to tell which
+one broke. Java comes from SDKMAN (language runtimes, option 12), not apt.
+
+To add a package: `APT_PKGS` (listing order), `APT_PKG_GROUP` and
+`APT_PKG_DESC` in `bootstrap.d/10-packages.sh`.
 
 ---
 
@@ -308,9 +329,8 @@ them via `dev-packages` purges the apt version afterward so only one binary
 ends up on the `PATH` — pass `--keep-apt` (or set `KEEP_APT_PKGS=true`) to
 leave the apt package installed alongside it instead.
 
-Same checklist semantics as the apt packages dialog: leave everything
-unchecked and press ENTER to install/update all of them, or check "Skip" to
-do nothing.
+In its checklists, leave everything unchecked and press ENTER to
+install/update all of them, or check "Skip" to do nothing.
 
 Everything temporary (downloads, clones, builds) lives in a single work
 directory that a trap removes on exit, Ctrl-C included.

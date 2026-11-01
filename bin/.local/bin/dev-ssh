@@ -239,17 +239,17 @@ for p in (d.get("Peer") or {}).values():
   fi
 }
 
-# tailscale instalado pero sin tailnets visibles suele deberse a que el usuario
-# no es 'operator' del daemon, así que status/switch no devuelven nada sin sudo.
-# Le otorgamos ese permiso (requiere sudo) para que funcionen sin sudo después.
-# Idempotente; se llama solo cuando no se detecta ninguna tailnet.
+# tailscale installed but no visible tailnets usually means the user isn't the
+# daemon's 'operator', so status/switch return nothing without sudo. We grant
+# that permission (needs sudo) so they work without sudo afterwards.
+# Idempotent; only called when no tailnet is detected.
 ssh_tailscale_fix_operator() {
-  info "No se detectan tailnets — otorgando control a $USER (sudo tailscale set --operator=$USER)..."
+  info "No tailnets detected — granting control to $USER (sudo tailscale set --operator=$USER)..."
   if sudo tailscale set --operator="$USER" &>/dev/null; then
-    ok "Operador de Tailscale configurado: $USER"
+    ok "Tailscale operator set: $USER"
     return 0
   fi
-  warn "No se pudo ejecutar: sudo tailscale set --operator=$USER"
+  warn "Couldn't run: sudo tailscale set --operator=$USER"
   return 1
 }
 
@@ -389,9 +389,9 @@ ssh_add_tailscale() {
 
   # --- pick a tailnet (profile) --------------------------------------------
   # `tailscale switch --list`: ID  Tailnet(name)  Account(* = active).
-  # tailscale está instalado pero a veces no se ven las tailnets porque el
-  # usuario no es 'operator'. Si pasa, ejecutamos 'sudo tailscale set
-  # --operator' una vez y reintentamos la detección.
+  # tailscale is installed but sometimes the tailnets aren't visible because
+  # the user isn't 'operator'. When that happens, we run 'sudo tailscale set
+  # --operator' once and retry the detection.
   local cur_id="" sw line lid lname operator_fixed=false
   local ts_items=()
   local -A TS_NAME=()
@@ -414,7 +414,7 @@ ssh_add_tailscale() {
 
     [[ ${#ts_items[@]} -gt 0 ]] && break
 
-    # No se detectó ninguna tailnet: intentamos arreglar el operador una vez.
+    # No tailnet detected: try to fix the operator once.
     if [[ "$operator_fixed" == false ]] && ssh_tailscale_fix_operator; then
       operator_fixed=true
       continue
@@ -423,7 +423,7 @@ ssh_add_tailscale() {
   done
 
   if [[ ${#ts_items[@]} -eq 0 ]]; then
-    warn "No se detectaron tailnets. ¿Sesión iniciada? — tailscale up / tailscale login"
+    warn "No tailnets detected. Are you logged in? — tailscale up / tailscale login"
     return
   fi
 

@@ -1,74 +1,76 @@
 #!/usr/bin/env bash
-# dev-plasma — deja KDE Plasma con los Global Themes de los dotfiles
-# (NivekDarkNord / NivekLightNord): los instala desde plasma/ del repo, instala
-# lo que esos temas referencian, los aplica como par claro/oscuro y revisa que
-# no quede ninguna referencia rota. Standalone, igual que dev-packages/dev-ssh:
-# no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR (plasma/ se ubica desde
-# la ruta real de este mismo script).
+# dev-plasma — sets up KDE Plasma with the dotfiles' Global Themes
+# (NivekDarkNord / NivekLightNord): installs them from the repo's plasma/,
+# installs whatever those themes reference, applies them as a light/dark pair
+# and checks that no reference is left broken. Standalone, like
+# dev-packages/dev-ssh: it doesn't depend on bootstrap.d/*.sh or $DOTFILES_DIR
+# (plasma/ is located from this script's own real path).
 #
-# plasma/ NO se stowea: Plasma lee los Global Themes con KPackage, que rechaza
-# cualquier archivo cuyo path real quede fuera de la carpeta del paquete
-# ("kf.package: Path traversal attempt detected"). Con symlinks hacia
-# ~/dotfiles ignoraba contents/defaults y aplicaba Breeze en silencio. Así
-# que se instalan COPIAS, como cualquier tema de "Get New…": el repo es la
-# fuente y se edita ahí (la skill nivek-plasma-global-theme lo hace); luego
-# `dev-plasma --only=themes` reinstala lo que cambió.
+# plasma/ is NOT stowed: Plasma reads Global Themes through KPackage, which
+# rejects any file whose real path lies outside the package folder
+# ("kf.package: Path traversal attempt detected"). With symlinks into
+# ~/dotfiles it ignored contents/defaults and silently applied Breeze. So
+# COPIES are installed, like any theme from "Get New…": the repo is the source
+# and is edited there (the nivek-plasma-global-theme skill does it); then
+# `dev-plasma --only=themes` reinstalls whatever changed.
 #
-# Un Global Theme solo NOMBRA sus piezas (ColorScheme=, Icons Theme=,
-# cursorTheme=, KSplash Theme=...) y Plasma no avisa si una falta: aplica el
-# resto en silencio. Por eso cada key instala una pieza y --doctor comprueba
-# que todas existan:
-#   - themes      -> los Global Themes con kpackagetool6 (el instalador oficial
-#                    de paquetes de Plasma: -i o -u según haga falta), y los
-#                    .colors y el wallpaper como copias (kpackagetool6 no sabe
-#                    instalar wallpapers de imágenes: Wallpaper/Images no tiene
-#                    carpeta raíz y su -u/-r fallan). Solo toca lo que difiere.
-#                    También el icono del lanzador (nivek-debian, a hicolor).
-#                    Los temas NO traen layout (contents/layouts): un layout
-#                    reemplaza el panel entero, y con él las apps fijadas.
-#   - icons       -> papirus-icon-theme por apt + papirus-folders (GitHub) con
-#                    carpetas "nordic". apt instala Papirus con carpetas azules
-#                    y vuelve a dejarlas así en cada upgrade del paquete, así
-#                    que el color se revisa siempre, no solo la instalación.
-#   - splash      -> Kuro (bouteillerAlan/kuro, GPLv3) desde git, no desde la
-#                    tienda de KDE: las URLs de "Get New…" vienen firmadas y
-#                    caducan. Sin versiones útiles: se compara el SHA del HEAD.
-#   - sddm-cursor -> copia el cursor del tema a /usr/share/icons. SDDM corre
-#                    como el usuario `sddm`, que no puede entrar a un home con
-#                    permisos 0710, así que en el login no veía Bibata aunque
-#                    estuviera configurado.
-#   - apply       -> aplica el tema que corresponda al modo actual y registra
-#                    el par claro/oscuro en kdeglobals. NO toca el interruptor
-#                    "Switch to Dark Mode at Night" (lo deja como estaba) ni el
-#                    panel.
-#   - launcher-icon -> pone el icono nivek-debian en el lanzador (Kickoff) del
-#                    panel que ya tienes, vía el scripting de plasmashell, y no
-#                    toca nada más: ni apps fijadas ni widgets. Como el
-#                    wallpaper: un icono elegido a mano se respeta en --all.
-#   - wallpaper   -> pone Nord Flare (tiene variante clara y oscura) solo si el
-#                    wallpaper actual es el de serie de KDE. Uno elegido a mano
-#                    se respeta en --all; se pisa solo si eliges esta key.
+# A Global Theme only NAMES its pieces (ColorScheme=, Icons Theme=,
+# cursorTheme=, KSplash Theme=...) and Plasma doesn't complain if one is
+# missing: it silently applies the rest. That's why each key installs one
+# piece and --doctor checks that all of them exist:
+#   - themes      -> the Global Themes with kpackagetool6 (Plasma's official
+#                    package installer: -i or -u as needed), and the .colors
+#                    and the wallpaper as copies (kpackagetool6 can't install
+#                    image wallpapers: Wallpaper/Images has no root folder and
+#                    its -u/-r fail). Only touches what differs. Also the
+#                    launcher icon (nivek-debian, into hicolor). The themes
+#                    have NO layout (contents/layouts): a layout replaces the
+#                    whole panel, and the pinned apps with it.
+#   - icons       -> papirus-icon-theme from apt + papirus-folders (GitHub)
+#                    with "nordic" folders. apt installs Papirus with blue
+#                    folders and resets them on every package upgrade, so the
+#                    color is always checked, not just the install.
+#   - splash      -> Kuro (bouteillerAlan/kuro, GPLv3) from git, not from the
+#                    KDE store: "Get New…" URLs are signed and expire. No
+#                    useful versions: the HEAD SHA is compared.
+#   - sddm-cursor -> copies the theme's cursor to /usr/share/icons. SDDM runs
+#                    as the `sddm` user, which can't enter a home with 0710
+#                    permissions, so the login screen didn't show Bibata even
+#                    when it was configured.
+#   - apply       -> applies the theme matching the current mode and registers
+#                    the light/dark pair in kdeglobals. It does NOT touch the
+#                    "Switch to Dark Mode at Night" toggle (left as it was) or
+#                    the panel.
+#   - launcher-icon -> sets the nivek-debian icon on the launcher (Kickoff) of
+#                    the panel you already have, through plasmashell
+#                    scripting, and touches nothing else: no pinned apps, no
+#                    widgets. Like the wallpaper: a hand-picked icon is kept
+#                    in --all.
+#   - wallpaper   -> sets Nord Flare (it has light and dark variants) only if
+#                    the current wallpaper is KDE's stock one. A hand-picked
+#                    one is kept in --all; it's only replaced when you choose
+#                    this key.
 #
-# Fuera de KDE Plasma (servidores, Termux) no hace nada y sale con 0.
+# Outside KDE Plasma (servers, Termux) it does nothing and exits with 0.
 #
-# Uso:
-#   dev-plasma                 checklist interactivo (dialog)
-#   dev-plasma --all           todas las keys, sin diálogo
-#   dev-plasma --only=a,b,c    solo esas keys, sin diálogo
-#   dev-plasma --doctor        solo revisa (no instala ni cambia nada)
-#   dev-plasma --dark=ID       Global Theme oscuro (default: NivekDarkNord)
-#   dev-plasma --light=ID      Global Theme claro  (default: NivekLightNord)
-#   dev-plasma -h | --help     esta ayuda
+# Usage:
+#   dev-plasma                 interactive checklist (dialog)
+#   dev-plasma --all           every key, no dialogs
+#   dev-plasma --only=a,b,c    only those keys, no dialogs
+#   dev-plasma --doctor        check only (installs/changes nothing)
+#   dev-plasma --dark=ID       dark Global Theme  (default: NivekDarkNord)
+#   dev-plasma --light=ID      light Global Theme (default: NivekLightNord)
+#   dev-plasma -h | --help     this help
 set -uo pipefail
 
-# ─── helpers (mismo estilo que bootstrap.d/00-core.sh) ───────────────────────
+# ─── helpers (same style as bootstrap.d/00-core.sh) ──────────────────────────
 RED='\e[38;2;191;97;106m'
 GRN='\e[38;2;163;190;140m'
 YLW='\e[38;2;235;203;139m'
 BLU='\e[38;2;136;192;208m'
 CYN='\e[38;2;143;188;187m'
 DIM='\e[38;2;94;129;172m'
-# shellcheck disable=SC2034 # paleta Nord compartida entre scripts; aquí no se usa
+# shellcheck disable=SC2034 # Nord palette shared across scripts; unused here
 BLD='\e[1m'
 RST='\e[0m'
 
@@ -80,8 +82,8 @@ skip() { printf "${CYN}[SKIP]${RST}  %s\n" "$*"; }
 sep() { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
 
 NONINTERACTIVE="${NONINTERACTIVE:-false}"
-# plasma/ del repo, desde la ruta real del script (bin/.local/bin/dev-plasma,
-# stoweado per-file a ~/.local/bin). DEV_PLASMA_SRC lo pisa.
+# The repo's plasma/, from the script's real path (bin/.local/bin/dev-plasma,
+# stowed per-file into ~/.local/bin). DEV_PLASMA_SRC overrides it.
 SRC_DIR="${DEV_PLASMA_SRC:-$(cd "$(dirname "$(readlink -f "$0")")/../../.." && pwd)/plasma}"
 BACKTITLE="${DEV_PLASMA_BACKTITLE:-dev-plasma · $(hostname) · $(date '+%Y-%m-%d %H:%M')}"
 STATE_DIR="$HOME/.local/share/dev-plasma"
@@ -91,13 +93,13 @@ THEME_LIGHT="${DEV_PLASMA_LIGHT:-NivekLightNord}"
 FOLDER_COLOR="${DEV_PLASMA_FOLDER_COLOR:-nordic}"
 WALLPAPER="Nord-flare"
 LAUNCHER_ICON="nivek-debian"
-# true si las keys se eligieron a mano (checklist o --only), false en --all:
-# decide si el wallpaper puede pisar uno puesto a mano.
+# true if the keys were picked by hand (checklist or --only), false in --all:
+# decides whether the wallpaper may replace a hand-picked one.
 EXPLICIT=true
 
 LNF_DIRS=("$HOME/.local/share/plasma/look-and-feel" /usr/share/plasma/look-and-feel)
 SCHEME_DIRS=("$HOME/.local/share/color-schemes" /usr/share/color-schemes)
-# Mismo orden de búsqueda que usan Plasma y papirus-folders: gana el primero.
+# Same lookup order Plasma and papirus-folders use: the first one wins.
 ICON_DIRS=("$HOME/.icons" "$HOME/.local/share/icons" /usr/share/icons)
 SYSTEM_ICONS=/usr/share/icons
 
@@ -107,18 +109,18 @@ PAPIRUS_FOLDERS_URL="https://raw.githubusercontent.com/PapirusDevelopmentTeam/pa
 PAPIRUS_FOLDERS_BIN="$HOME/.local/bin/papirus-folders"
 SDDM_DROPIN=/etc/sddm.conf.d/dev-plasma.conf
 
-# ─── registro ─────────────────────────────────────────────────────────────
-# El orden de PKG_KEYS es el orden de ejecución (sin importar el de --only):
-# las piezas externas primero, luego aplicar el tema que las usa.
+# ─── registry ───────────────────────────────────────────────────────────────
+# PKG_KEYS order is the run order (regardless of --only's order): external
+# pieces first, then applying the theme that uses them.
 PKG_KEYS=(themes icons splash sddm-cursor apply wallpaper launcher-icon)
 declare -A PKG_LABEL=(
-  [themes]="Global Themes + colores + Nord Flare desde el repo (kpackagetool6)"
-  [icons]="Papirus por apt + carpetas $FOLDER_COLOR (papirus-folders)"
-  [splash]="Splash Kuro (git, sha-checked)"
-  ["sddm-cursor"]="Cursor del tema también en el login (SDDM, sudo)"
-  [apply]="Aplicar $THEME_DARK / $THEME_LIGHT según el modo actual"
-  [wallpaper]="Wallpaper Nord Flare (si tienes el de serie)"
-  ["launcher-icon"]="Icono $LAUNCHER_ICON en el lanzador (solo el icono)"
+  [themes]="Global Themes + colors + Nord Flare from the repo (kpackagetool6)"
+  [icons]="Papirus from apt + $FOLDER_COLOR folders (papirus-folders)"
+  [splash]="Kuro splash (git, sha-checked)"
+  ["sddm-cursor"]="Theme cursor on the login screen too (SDDM, sudo)"
+  [apply]="Apply $THEME_DARK / $THEME_LIGHT for the current mode"
+  [wallpaper]="Nord Flare wallpaper (if you have the stock one)"
+  ["launcher-icon"]="$LAUNCHER_ICON icon on the launcher (icon only)"
 )
 declare -A PKG_FN=(
   [themes]="install_themes"
@@ -130,36 +132,36 @@ declare -A PKG_FN=(
   ["launcher-icon"]="set_launcher_icon"
 )
 
-# ─── utilidades ──────────────────────────────────────────────────────────────
+# ─── utilities ──────────────────────────────────────────────────────────────
 
 need_cmd() {
   command -v "$1" &>/dev/null && return 0
-  err "$1 no encontrado — instálalo primero (sudo apt install ${2:-$1})."
+  err "$1 not found — install it first (sudo apt install ${2:-$1})."
   return 1
 }
 
-# Sí/No con dialog; sin dialog, pregunta en texto plano. Default: No.
+# Yes/No with dialog; without dialog, asks in plain text. Default: No.
 ask_yes_no() {
   if command -v dialog &>/dev/null; then
     local rc=0
-    dialog --clear --backtitle "$BACKTITLE" --title " Confirmar " --defaultno \
+    dialog --clear --backtitle "$BACKTITLE" --title " Confirm " --defaultno \
       --yesno "$1" 10 72 || rc=$?
     clear
     return "$rc"
   fi
-  warn "$1 [s/N]"
+  warn "$1 [y/N]"
   local reply
   read -r reply
-  [[ "$reply" =~ ^[sS]$ ]]
+  [[ "$reply" =~ ^[yY]$ ]]
 }
 
-# plasma-apply-* hablan por DBus con la sesión: desde una TTY o por SSH no
-# hay a quién aplicarle nada.
+# plasma-apply-* talk to the session over DBus: from a TTY or over SSH there's
+# nothing to apply anything to.
 has_session() {
   [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]]
 }
 
-# Directorio de un Global Theme instalado (usuario primero, como Plasma).
+# Folder of an installed Global Theme (user first, like Plasma).
 lnf_dir() {
   local d
   for d in "${LNF_DIRS[@]}"; do
@@ -171,9 +173,9 @@ lnf_dir() {
   return 1
 }
 
-# Valor de contents/defaults de un Global Theme. Ese archivo es un kdeglobals
-# "por bloques": [archivo][grupo] seguido de clave=valor.
-#   lnf_default <id> <archivo> <grupo> <clave>
+# A value from a Global Theme's contents/defaults. That file is a "blocked"
+# kdeglobals: [file][group] followed by key=value.
+#   lnf_default <id> <file> <group> <key>
 lnf_default() {
   local dir
   dir="$(lnf_dir "$1")" || return 1
@@ -183,10 +185,10 @@ lnf_default() {
   ' "$dir/contents/defaults"
 }
 
-# Ruta del .colors cuyo id es $1. El id NO es el nombre visible: es
-# [General]ColorScheme= si existe y, si no, el nombre del archivo. Confundir
-# esto es justo el bug de "el Global Theme aparece activo pero los colores no
-# cambian".
+# Path of the .colors whose id is $1. The id is NOT the visible name: it's
+# [General]ColorScheme= if present, otherwise the file name. Mixing these up
+# is exactly the "the Global Theme shows as active but the colors don't
+# change" bug.
 scheme_file() {
   local d f id
   for d in "${SCHEME_DIRS[@]}"; do
@@ -203,7 +205,7 @@ scheme_file() {
   return 1
 }
 
-# Primer directorio donde está instalado un tema de iconos/cursor (el que gana).
+# First folder where an icon/cursor theme is installed (the one that wins).
 icon_theme_dir() {
   local d
   for d in "${ICON_DIRS[@]}"; do
@@ -215,8 +217,8 @@ icon_theme_dir() {
   return 1
 }
 
-# Color actual de las carpetas de Papirus: folder.svg es un symlink a
-# folder-<color>.svg (así lo cambia papirus-folders).
+# Current Papirus folder color: folder.svg is a symlink to folder-<color>.svg
+# (that's how papirus-folders changes it).
 folder_color() {
   local dir icon
   dir="$(icon_theme_dir "$1")" || return 1
@@ -225,12 +227,12 @@ folder_color() {
   echo "${icon##*-}"
 }
 
-# Misma regla que KPackage: todo archivo del paquete, ya resuelto (symlinks
-# incluidos), tiene que quedar dentro de la raíz resuelta del paquete. Si no,
-# Plasma lo ignora ("kf.package: Path traversal attempt detected") y aplica
-# Breeze en silencio. Pasaba con el stow per-file de antes: cada archivo era un symlink
-# hacia ~/dotfiles pero la carpeta del tema es real. Imprime el primer
-# archivo que se sale.
+# Same rule as KPackage: every package file, once resolved (symlinks
+# included), must stay inside the package's resolved root. Otherwise Plasma
+# ignores it ("kf.package: Path traversal attempt detected") and silently
+# applies Breeze. It happened with the old per-file stow: every file was a
+# symlink into ~/dotfiles but the theme folder was real. Prints the first file
+# that escapes.
 kpackage_escape() {
   local root f real
   root="$(readlink -f "$1")" || return 1
@@ -248,37 +250,38 @@ remote_head_sha() {
   git ls-remote "$1" HEAD 2>/dev/null | awk '{print $1}'
 }
 
-# ─── themes ──────────────────────────────────────────────────────────────────
-# ¿$2 es una copia fiel de $1? Además de comparar contenido exige que no haya
-# symlinks: un resto del stow de antes tendría el mismo contenido (diff sigue
-# los links) pero KPackage lo seguiría rechazando.
+# ─── themes ─────────────────────────────────────────────────────────────────
+# Is $2 a faithful copy of $1? Besides comparing content it requires no
+# symlinks: a leftover from the old stow would have the same content (diff
+# follows links) but KPackage would still reject it.
 same_tree() {
   [[ -e "$2" && ! -L "$2" ]] || return 1
   [[ -d "$2" && -n "$(find "$2" -type l -print -quit)" ]] && return 1
   diff -rq "$1" "$2" &>/dev/null
 }
 
-# Copia $1 a $2 (archivo o carpeta) si no es ya una copia fiel; reemplaza
-# entero lo que hubiera (incluido un symlink del stow de antes).
+# Copies $1 to $2 (file or folder) unless it's already a faithful copy;
+# replaces whatever was there entirely (including a symlink from the old
+# stow).
 sync_copy() {
   local src="$1" dst="$2"
   if same_tree "$src" "$dst"; then
-    skip "$(basename "$dst") ya está al día"
+    skip "$(basename "$dst") is already up to date"
     return 0
   fi
   mkdir -p "$(dirname "$dst")"
   rm -rf -- "${dst:?}"
   cp -r "$src" "$dst" || {
-    err "No se pudo copiar $src a $dst"
+    err "Couldn't copy $src to $dst"
     return 1
   }
-  ok "$(basename "$dst") instalado -> $dst"
+  ok "$(basename "$dst") installed -> $dst"
 }
 
 install_themes() {
   sep
   [[ -d "$SRC_DIR/look-and-feel" ]] || {
-    err "No encuentro los temas en $SRC_DIR (DEV_PLASMA_SRC=<repo>/plasma para indicarlo)"
+    err "Can't find the themes in $SRC_DIR (set DEV_PLASMA_SRC=<repo>/plasma)"
     return 1
   }
   need_cmd kpackagetool6 || return 1
@@ -289,17 +292,18 @@ install_themes() {
     id="$(basename "$src")"
     dst="${LNF_DIRS[0]}/$id"
     if same_tree "$src" "$dst"; then
-      skip "$id ya está al día"
+      skip "$id is already up to date"
       continue
     fi
-    # Un symlink (del stow de antes) se quita como link, sin tocar el repo.
+    # A symlink (from the old stow) is removed as a link, without touching
+    # the repo.
     [[ -L "$dst" ]] && rm -f -- "$dst"
     op=--install
     [[ -d "$dst" ]] && op=--upgrade
     if kpackagetool6 -t Plasma/LookAndFeel "$op" "$src" &>/dev/null; then
-      ok "$id instalado (kpackagetool6 $op)"
+      ok "$id installed (kpackagetool6 $op)"
     else
-      err "kpackagetool6 $op $id falló"
+      err "kpackagetool6 $op $id failed"
       rc=1
     fi
   done
@@ -314,21 +318,21 @@ install_themes() {
     src="${src%/}"
     sync_copy "$src" "$HOME/.local/share/wallpapers/$(basename "$src")" || rc=1
   done
-  # Iconos propios (archivo por archivo: ~/.local/share/icons/hicolor ya
-  # tiene iconos de otras apps). hicolor es el fallback de todo tema de
-  # iconos, así que nivek-debian se ve con Papirus, Breeze o cualquiera.
+  # Our own icons (file by file: ~/.local/share/icons/hicolor already holds
+  # other apps' icons). hicolor is every icon theme's fallback, so
+  # nivek-debian shows up with Papirus, Breeze or any other.
   while IFS= read -r -d '' f; do
     sync_copy "$f" "$HOME/.local/share/icons/${f#"$SRC_DIR/icons/"}" || rc=1
   done < <(find "$SRC_DIR/icons" -type f -print0 2>/dev/null)
   return "$rc"
 }
 
-# ─── caché de iconos ─────────────────────────────────────────────────────────
-# Las apps abiertas (plasmashell incluido) guardan en memoria los iconos que
-# resolvieron al arrancar. Tras borrar una copia de Papirus, instalar la de apt,
-# cambiar el color de las carpetas o copiar un icono nuevo, siguen mostrando
-# iconos rotos o "?" hasta reiniciarse. Esto reconstruye la base de KDE
-# (sycoca), reinicia plasmashell UNA vez por corrida y avisa del resto.
+# ─── icon cache ─────────────────────────────────────────────────────────────
+# Running apps (plasmashell included) keep in memory the icons they resolved
+# at startup. After removing a Papirus copy, installing apt's, changing the
+# folder color or copying a new icon, they keep showing broken icons or "?"
+# until restarted. This rebuilds KDE's database (sycoca), restarts
+# plasmashell ONCE per run and warns about the rest.
 ICONS_CHANGED=false
 PLASMA_REFRESHED=false
 refresh_icon_caches() {
@@ -336,23 +340,23 @@ refresh_icon_caches() {
   PLASMA_REFRESHED=true
   command -v kbuildsycoca6 &>/dev/null && kbuildsycoca6 --noincremental &>/dev/null
   if ! has_session; then
-    skip "Sin sesión gráfica — los iconos nuevos se verán en el próximo login"
+    skip "No graphical session — the new icons will show on the next login"
     return 0
   fi
-  info "Reiniciando plasmashell para que cargue los iconos nuevos..."
+  info "Restarting plasmashell so it loads the new icons..."
   if systemctl --user restart plasma-plasmashell.service 2>/dev/null; then
-    ok "plasmashell reiniciado (caché de iconos al día)"
+    ok "plasmashell restarted (icon cache up to date)"
   else
-    warn "No se pudo reiniciar plasmashell — corre: systemctl --user restart plasma-plasmashell"
+    warn "Couldn't restart plasmashell — run: systemctl --user restart plasma-plasmashell"
   fi
-  warn "Las apps que ya estaban abiertas siguen con los iconos viejos: ciérralas y ábrelas, o cierra sesión."
+  warn "Apps that were already open keep the old icons: close and reopen them, or log out."
 }
 
-# ─── icons ───────────────────────────────────────────────────────────────────
-# Copias de Papirus en ~/.local/share/icons (las deja "Get New…" de System
-# Settings) tapan a la de apt: Plasma y papirus-folders usan la primera que
-# encuentran. Se ofrece quitarlas; en --all solo se avisa, porque son ~245 MB
-# de archivos del usuario que este script no instaló.
+# ─── icons ──────────────────────────────────────────────────────────────────
+# Papirus copies in ~/.local/share/icons (left by System Settings' "Get
+# New…") shadow apt's: Plasma and papirus-folders use the first one they find.
+# Removing them is offered; in --all it only warns, because it's ~245 MB of
+# user files this script didn't install.
 remove_user_papirus() {
   local user_dir="$HOME/.local/share/icons" found=() t
   for t in Papirus Papirus-Dark Papirus-Light; do
@@ -361,47 +365,47 @@ remove_user_papirus() {
   [[ ${#found[@]} -eq 0 ]] && return 0
 
   if [[ "$NONINTERACTIVE" == "true" ]]; then
-    warn "Hay una copia de Papirus en $user_dir (${found[*]}) que tapa a la de apt — corre 'dev-plasma --only=icons' para quitarla."
+    warn "There's a Papirus copy in $user_dir (${found[*]}) shadowing apt's — run 'dev-plasma --only=icons' to remove it."
     return 0
   fi
-  if ! ask_yes_no "Hay una copia de Papirus en $user_dir\n(${found[*]}, probablemente de \"Get New…\").\n\nTapa a la versión de apt. ¿Borrarla?"; then
-    warn "Copia de usuario conservada: seguirá teniendo prioridad sobre la de apt."
+  if ! ask_yes_no "There's a Papirus copy in $user_dir\n(${found[*]}, probably from \"Get New…\").\n\nIt shadows the apt version. Delete it?"; then
+    warn "User copy kept: it will keep taking precedence over apt's."
     return 0
   fi
   for t in "${found[@]}"; do
-    rm -rf -- "${user_dir:?}/$t" && ok "Borrado $user_dir/$t"
+    rm -rf -- "${user_dir:?}/$t" && ok "Deleted $user_dir/$t"
   done
   ICONS_CHANGED=true
-  warn "System Settings → Icons → Get New… puede seguir listando Papirus como instalado: no lo actualices desde ahí."
+  warn "System Settings → Icons → Get New… may still list Papirus as installed: don't update it from there."
 }
 
-# Instala/actualiza papirus-folders en ~/.local/bin (no está en apt). El
-# archivo se baja completo y se revisa antes de reemplazar al anterior (nunca
-# `curl | sh`); la versión sale de su línea `readonly VERSION=`.
+# Installs/updates papirus-folders into ~/.local/bin (it isn't in apt). The
+# file is downloaded in full and checked before replacing the previous one
+# (never `curl | sh`); the version comes from its `readonly VERSION=` line.
 install_papirus_folders() {
   local tmp new cur=""
   tmp="$(mktemp -p "$WORK_DIR" papirus-folders.XXXXXX)" || return 1
   if ! curl -fsSL "$PAPIRUS_FOLDERS_URL" -o "$tmp"; then
     [[ -x "$PAPIRUS_FOLDERS_BIN" ]] && {
-      warn "No se pudo descargar papirus-folders — uso el que ya está instalado."
+      warn "Couldn't download papirus-folders — using the one already installed."
       return 0
     }
-    err "No se pudo descargar papirus-folders"
+    err "Couldn't download papirus-folders"
     return 1
   fi
   new="$(sed -n 's/^readonly VERSION="\(.*\)"/\1/p' "$tmp")"
   if [[ -z "$new" ]] || ! bash -n "$tmp"; then
-    err "El papirus-folders descargado no parece válido — no lo instalo."
+    err "The downloaded papirus-folders doesn't look valid — not installing it."
     return 1
   fi
   [[ -x "$PAPIRUS_FOLDERS_BIN" ]] && cur="$(sed -n 's/^readonly VERSION="\(.*\)"/\1/p' "$PAPIRUS_FOLDERS_BIN")"
   if [[ "$cur" == "$new" ]]; then
-    skip "papirus-folders ya está al día ($new)"
+    skip "papirus-folders is already up to date ($new)"
     return 0
   fi
   mkdir -p "$(dirname "$PAPIRUS_FOLDERS_BIN")"
   install -m 755 "$tmp" "$PAPIRUS_FOLDERS_BIN"
-  ok "papirus-folders ${cur:-<ninguno>} → $new ($PAPIRUS_FOLDERS_BIN)"
+  ok "papirus-folders ${cur:-<none>} → $new ($PAPIRUS_FOLDERS_BIN)"
 }
 
 install_icons() {
@@ -409,39 +413,39 @@ install_icons() {
   remove_user_papirus
 
   if dpkg -s papirus-icon-theme &>/dev/null; then
-    skip "papirus-icon-theme ya está instalado (apt)"
+    skip "papirus-icon-theme is already installed (apt)"
   else
-    info "Instalando papirus-icon-theme (apt)..."
+    info "Installing papirus-icon-theme (apt)..."
     sudo apt-get install -y papirus-icon-theme || {
-      err "Falló apt-get install papirus-icon-theme"
+      err "apt-get install papirus-icon-theme failed"
       return 1
     }
-    ok "papirus-icon-theme instalado"
+    ok "papirus-icon-theme installed"
     ICONS_CHANGED=true
   fi
 
   need_cmd curl || return 1
   install_papirus_folders || return 1
 
-  # Dark y Light comparten las carpetas de Papirus (sus places/ son symlinks
-  # a ../Papirus), pero papirus-folders guarda el color por tema para su -R,
-  # así que se pasa por los dos.
+  # Dark and Light share Papirus' folders (their places/ are symlinks to
+  # ../Papirus), but papirus-folders stores the color per theme for its -R,
+  # so both are processed.
   local t cur
   for t in Papirus-Dark Papirus-Light; do
     cur="$(folder_color "$t")" || {
-      err "$t no está instalado"
+      err "$t isn't installed"
       return 1
     }
     if [[ "$cur" == "$FOLDER_COLOR" ]]; then
-      skip "$t ya tiene carpetas $FOLDER_COLOR"
+      skip "$t already has $FOLDER_COLOR folders"
       continue
     fi
-    info "$t: carpetas $cur → $FOLDER_COLOR (papirus-folders pide sudo si el tema es del sistema)..."
+    info "$t: folders $cur → $FOLDER_COLOR (papirus-folders asks for sudo if the theme is system-wide)..."
     "$PAPIRUS_FOLDERS_BIN" -C "$FOLDER_COLOR" -t "$t" || {
-      err "papirus-folders falló con $t"
+      err "papirus-folders failed on $t"
       return 1
     }
-    ok "$t: carpetas $FOLDER_COLOR"
+    ok "$t: $FOLDER_COLOR folders"
     ICONS_CHANGED=true
   done
 
@@ -449,7 +453,7 @@ install_icons() {
   return 0
 }
 
-# ─── splash ──────────────────────────────────────────────────────────────────
+# ─── splash ─────────────────────────────────────────────────────────────────
 install_splash() {
   sep
   local dst="${LNF_DIRS[0]}/$KURO_ID"
@@ -459,26 +463,26 @@ install_splash() {
   [[ -f "$state_file" ]] && local_sha="$(<"$state_file")"
 
   if [[ -f "$dst/metadata.json" && -n "$remote_sha" && "$remote_sha" == "$local_sha" ]]; then
-    skip "Kuro ya está al día ($remote_sha)"
+    skip "Kuro is already up to date ($remote_sha)"
     return 0
   fi
   if [[ -z "$remote_sha" && -f "$dst/metadata.json" ]]; then
-    warn "Sin acceso a $KURO_REPO — se queda el Kuro ya instalado."
+    warn "Can't reach $KURO_REPO — keeping the Kuro already installed."
     return 0
   fi
 
   need_cmd git || return 1
   local src
   src="$(mktemp -d -p "$WORK_DIR" kuro.XXXXXX)" || return 1
-  info "Clonando Kuro..."
+  info "Cloning Kuro..."
   if ! git clone --depth=1 "$KURO_REPO" "$src" &>/dev/null; then
-    err "Falló el clone de Kuro"
+    err "Cloning Kuro failed"
     return 1
   fi
-  # El repo trae varias variantes (a2n.kuro, a2n.kuro.oled...); solo se usa
-  # la que referencian los Global Themes.
+  # The repo ships several variants (a2n.kuro, a2n.kuro.oled...); only the
+  # one the Global Themes reference is used.
   [[ -f "$src/$KURO_ID/metadata.json" ]] || {
-    err "El repo de Kuro ya no trae $KURO_ID/ — revisa $KURO_REPO"
+    err "The Kuro repo no longer ships $KURO_ID/ — check $KURO_REPO"
     return 1
   }
 
@@ -487,61 +491,61 @@ install_splash() {
   cp -r "$src/$KURO_ID" "$dst"
   mkdir -p "$STATE_DIR"
   [[ -n "$remote_sha" ]] && echo "$remote_sha" >"$state_file"
-  ok "Kuro instalado/actualizado -> $dst"
+  ok "Kuro installed/updated -> $dst"
 }
 
-# ─── sddm-cursor ─────────────────────────────────────────────────────────────
+# ─── sddm-cursor ────────────────────────────────────────────────────────────
 install_sddm_cursor() {
   sep
   local cursor src dst
   cursor="$(lnf_default "$THEME_DARK" kcminputrc Mouse cursorTheme)"
   [[ -n "$cursor" ]] || {
-    err "$THEME_DARK no define cursorTheme (dev-plasma --only=themes)"
+    err "$THEME_DARK doesn't define cursorTheme (dev-plasma --only=themes)"
     return 1
   }
   dst="$SYSTEM_ICONS/$cursor"
   src="$(icon_theme_dir "$cursor")" || {
-    err "El cursor $cursor no está instalado (¿está stoweado el paquete icons?)"
+    err "Cursor $cursor isn't installed (is the icons package stowed?)"
     return 1
   }
 
   if [[ "$src" == "$dst" ]]; then
-    skip "$cursor ya vive en $SYSTEM_ICONS"
+    skip "$cursor already lives in $SYSTEM_ICONS"
   elif diff -rq "$src/" "$dst/" &>/dev/null; then
-    skip "$cursor ya está copiado en $dst"
+    skip "$cursor is already copied to $dst"
   else
-    # cp -L: ~/.icons es un symlink al repo; a /usr/share va el contenido.
-    info "Copiando $cursor a $dst (sudo)..."
+    # cp -L: ~/.icons is a symlink into the repo; /usr/share gets the content.
+    info "Copying $cursor to $dst (sudo)..."
     if ! { sudo rm -rf -- "$dst" && sudo cp -rL "$src" "$dst" && sudo chmod -R a+rX "$dst"; }; then
-      err "No se pudo copiar $cursor a $dst"
+      err "Couldn't copy $cursor to $dst"
       return 1
     fi
-    ok "$cursor copiado a $dst"
+    ok "$cursor copied to $dst"
   fi
 
-  # El KCM de SDDM escribe kde_settings.conf; el drop-in propio se llama
-  # dev-plasma.conf para ordenarse ANTES ("d" < "k") y que un cambio hecho
-  # desde System Settings siga ganando. Solo se escribe si nadie lo fijó.
+  # SDDM's KCM writes kde_settings.conf; our own drop-in is named
+  # dev-plasma.conf so it sorts BEFORE it ("d" < "k") and a change made from
+  # System Settings still wins. It's only written if nobody set it.
   local current
   current="$(sddm_value CursorTheme)"
   if [[ "$current" == "$cursor" ]]; then
-    skip "SDDM ya usa CursorTheme=$cursor"
+    skip "SDDM already uses CursorTheme=$cursor"
     return 0
   fi
   if [[ -n "$current" ]]; then
-    warn "SDDM usa CursorTheme=$current (puesto a mano) — no lo cambio."
+    warn "SDDM uses CursorTheme=$current (set by hand) — not changing it."
     return 0
   fi
-  info "Configurando CursorTheme=$cursor en $SDDM_DROPIN (sudo)..."
+  info "Setting CursorTheme=$cursor in $SDDM_DROPIN (sudo)..."
   printf '[Theme]\nCursorTheme=%s\n' "$cursor" | sudo tee "$SDDM_DROPIN" >/dev/null || {
-    err "No se pudo escribir $SDDM_DROPIN"
+    err "Couldn't write $SDDM_DROPIN"
     return 1
   }
-  ok "SDDM usará $cursor desde el próximo login"
+  ok "SDDM will use $cursor from the next login"
 }
 
-# Valor efectivo de una clave de [Theme] en la config de SDDM: los drop-ins
-# se leen en orden alfabético y /etc/sddm.conf al final; gana el último.
+# Effective value of a [Theme] key in SDDM's config: drop-ins are read in
+# alphabetical order and /etc/sddm.conf last; the last one wins.
 sddm_value() {
   local f files=() val=""
   for f in /etc/sddm.conf.d/*.conf /etc/sddm.conf; do
@@ -556,9 +560,9 @@ sddm_value() {
   echo "$val"
 }
 
-# ─── apply ───────────────────────────────────────────────────────────────────
-# ¿El sistema está en modo claro? Se mira el fondo de ventana del esquema
-# activo (no el nombre del tema, que puede ser cualquiera).
+# ─── apply ──────────────────────────────────────────────────────────────────
+# Is the system in light mode? It looks at the active scheme's window
+# background (not the theme name, which could be anything).
 is_light_mode() {
   local rgb r g b
   rgb="$(kreadconfig6 --file kdeglobals --group Colors:Window --key BackgroundNormal 2>/dev/null)"
@@ -567,12 +571,12 @@ is_light_mode() {
   ((r * 299 + g * 587 + b * 114 > 128000))
 }
 
-# Registra el par (los temas que usaría "Switch to Dark Mode at Night"), pero
-# el interruptor en sí es decisión del usuario: no se toca.
+# Registers the pair (the themes "Switch to Dark Mode at Night" would use),
+# but the toggle itself is the user's decision: it isn't touched.
 link_pair() {
   kwriteconfig6 --file kdeglobals --group KDE --key DefaultDarkLookAndFeel "$THEME_DARK"
   kwriteconfig6 --file kdeglobals --group KDE --key DefaultLightLookAndFeel "$THEME_LIGHT"
-  ok "Par registrado: claro=$THEME_LIGHT oscuro=$THEME_DARK"
+  ok "Pair registered: light=$THEME_LIGHT dark=$THEME_DARK"
 }
 
 apply_theme() {
@@ -582,14 +586,14 @@ apply_theme() {
   local t
   for t in "$THEME_DARK" "$THEME_LIGHT"; do
     lnf_dir "$t" >/dev/null || {
-      err "Global Theme $t no instalado (dev-plasma --only=themes)"
+      err "Global Theme $t isn't installed (dev-plasma --only=themes)"
       return 1
     }
   done
 
   if ! has_session; then
     link_pair
-    skip "Sin sesión gráfica — el tema se aplica en el próximo login de Plasma"
+    skip "No graphical session — the theme applies on the next Plasma login"
     return 0
   fi
 
@@ -597,42 +601,42 @@ apply_theme() {
   is_light_mode && target="$THEME_LIGHT"
   current="$(kreadconfig6 --file kdeglobals --group KDE --key LookAndFeelPackage 2>/dev/null)"
   if [[ "$current" == "$target" ]]; then
-    skip "$target ya está aplicado"
+    skip "$target is already applied"
     link_pair
     return 0
   fi
 
   local automatic
-  # plasma-apply-lookandfeel -a borra AutomaticLookAndFeel (elegir un tema a
-  # mano apaga el modo automático). Se guarda antes y se repone después para
-  # dejar el interruptor exactamente como estaba.
+  # plasma-apply-lookandfeel -a clears AutomaticLookAndFeel (picking a theme by
+  # hand turns automatic mode off). It's saved before and restored after to
+  # leave the toggle exactly as it was.
   automatic="$(kreadconfig6 --file kdeglobals --group KDE --key AutomaticLookAndFeel 2>/dev/null)"
-  info "Aplicando $target..."
+  info "Applying $target..."
   plasma-apply-lookandfeel -a "$target" || {
-    err "plasma-apply-lookandfeel falló"
+    err "plasma-apply-lookandfeel failed"
     return 1
   }
   [[ -n "$automatic" ]] \
     && kwriteconfig6 --file kdeglobals --group KDE --key AutomaticLookAndFeel "$automatic"
-  ok "$target aplicado"
+  ok "$target applied"
   link_pair
 }
 
-# ─── wallpaper ───────────────────────────────────────────────────────────────
+# ─── wallpaper ──────────────────────────────────────────────────────────────
 apply_wallpaper() {
   sep
   local pkg="$HOME/.local/share/wallpapers/$WALLPAPER"
   [[ -f "$pkg/metadata.json" ]] || {
-    err "$WALLPAPER no está en $pkg (dev-plasma --only=themes)"
+    err "$WALLPAPER isn't in $pkg (dev-plasma --only=themes)"
     return 1
   }
   if ! has_session; then
-    skip "Sin sesión gráfica — no se puede cambiar el wallpaper"
+    skip "No graphical session — can't change the wallpaper"
     return 0
   fi
   need_cmd plasma-apply-wallpaperimage plasma-workspace || return 1
 
-  # Wallpapers actuales de cada escritorio (uno por pantalla/actividad).
+  # Current wallpapers of every desktop (one per screen/activity).
   local appletsrc="$HOME/.config/plasma-org.kde.plasma.desktop-appletsrc"
   local images=() img custom=false
   [[ -f "$appletsrc" ]] && mapfile -t images < <(sed -n 's/^Image=//p' "$appletsrc")
@@ -642,35 +646,35 @@ apply_wallpaper() {
     custom=true
   done
   if [[ ${#images[@]} -gt 0 ]] && ! $custom && [[ "${images[*]}" == *"/wallpapers/$WALLPAPER"* ]]; then
-    skip "$WALLPAPER ya es tu wallpaper"
+    skip "$WALLPAPER is already your wallpaper"
     return 0
   fi
   if $custom && [[ "$EXPLICIT" == false ]]; then
-    skip "Tienes un wallpaper elegido a mano — lo respeto (dev-plasma --only=wallpaper para cambiarlo)"
+    skip "You have a hand-picked wallpaper — keeping it (dev-plasma --only=wallpaper to change it)"
     return 0
   fi
 
   plasma-apply-wallpaperimage "$pkg" &>/dev/null || {
-    err "plasma-apply-wallpaperimage falló"
+    err "plasma-apply-wallpaperimage failed"
     return 1
   }
-  ok "Wallpaper: $WALLPAPER (cambia solo entre claro/oscuro)"
+  ok "Wallpaper: $WALLPAPER (switches between light/dark on its own)"
 }
 
-# ─── launcher-icon ───────────────────────────────────────────────────────────
-# Cambia solo la clave General/icon de cada lanzador (Kickoff, Kicker, Kicker
-# Dash) de cada panel, con el scripting de plasmashell por DBus: el resto del
-# panel (apps fijadas, widgets, posición) no se toca. El script imprime
-# "cambiados iguales propios"; un icono propio (ni vacío, ni start-here-*,
-# ni el nuestro) solo se pisa si la key se eligió a mano.
+# ─── launcher-icon ──────────────────────────────────────────────────────────
+# Changes only the General/icon key of every launcher (Kickoff, Kicker, Kicker
+# Dash) on every panel, through plasmashell scripting over DBus: the rest of
+# the panel (pinned apps, widgets, position) isn't touched. The script prints
+# "changed same custom"; a custom icon (not empty, not start-here-*, not ours)
+# is only replaced if the key was picked by hand.
 set_launcher_icon() {
   sep
   [[ -f "$HOME/.local/share/icons/hicolor/scalable/apps/$LAUNCHER_ICON.svg" ]] || {
-    err "$LAUNCHER_ICON no está instalado (dev-plasma --only=themes)"
+    err "$LAUNCHER_ICON isn't installed (dev-plasma --only=themes)"
     return 1
   }
   if ! has_session; then
-    skip "Sin sesión gráfica — no se puede cambiar el icono del lanzador"
+    skip "No graphical session — can't change the launcher icon"
     return 0
   fi
   need_cmd qdbus6 qdbus-qt6 || return 1
@@ -694,28 +698,28 @@ panels().forEach(function (p) {
 });
 print(changed + ' ' + same + ' ' + custom);"
   out="$(qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$script" 2>&1)" || {
-    err "plasmashell no aceptó el script: $out"
+    err "plasmashell rejected the script: $out"
     return 1
   }
   local changed same custom
   read -r changed same custom <<<"$out"
   if [[ "${changed:-0}" -gt 0 ]]; then
-    ok "Icono $LAUNCHER_ICON en $changed lanzador(es); el resto del panel quedó igual"
-    # Un icono recién copiado a hicolor sale como "?" hasta reiniciar
-    # plasmashell (kiconfinder6 sí lo encuentra). Solo pasa cuando cambia.
+    ok "$LAUNCHER_ICON icon on $changed launcher(s); the rest of the panel is unchanged"
+    # An icon freshly copied into hicolor shows as "?" until plasmashell
+    # restarts (kiconfinder6 does find it). Only happens when it changes.
     refresh_icon_caches
   elif [[ "${custom:-0}" -gt 0 ]]; then
-    skip "El lanzador tiene un icono elegido a mano — lo respeto (dev-plasma --only=launcher-icon para cambiarlo)"
+    skip "The launcher has a hand-picked icon — keeping it (dev-plasma --only=launcher-icon to change it)"
   elif [[ "${same:-0}" -gt 0 ]]; then
-    skip "El lanzador ya usa $LAUNCHER_ICON"
+    skip "The launcher already uses $LAUNCHER_ICON"
   else
-    skip "No hay ningún lanzador (Kickoff/Kicker) en tus paneles"
+    skip "There's no launcher (Kickoff/Kicker) on your panels"
   fi
 }
 
-# ─── doctor ──────────────────────────────────────────────────────────────────
-# Revisa que cada pieza que nombran los Global Themes exista de verdad. No
-# cambia nada. Devuelve 1 si algo está roto (no por avisos).
+# ─── doctor ─────────────────────────────────────────────────────────────────
+# Checks that every piece the Global Themes name really exists. Changes
+# nothing. Returns 1 if something is broken (not for warnings).
 DOC_FAIL=0
 doc_ok() { ok "$*"; }
 doc_warn() { warn "$*"; }
@@ -727,45 +731,45 @@ doc_fail() {
 doctor_theme() {
   local id="$1" dir v f
   dir="$(lnf_dir "$id")" || {
-    doc_fail "$id: Global Theme no instalado (dev-plasma --only=themes)"
+    doc_fail "$id: Global Theme not installed (dev-plasma --only=themes)"
     return
   }
   doc_ok "$id: $dir"
   if v="$(kpackage_escape "$dir")"; then
-    doc_fail "  KPackage  $v está fuera del paquete: Plasma ignora el tema y aplica Breeze (dev-plasma --only=themes)"
+    doc_fail "  KPackage  $v is outside the package: Plasma ignores the theme and applies Breeze (dev-plasma --only=themes)"
   fi
   if [[ -d "$SRC_DIR/look-and-feel/$id" ]] && ! same_tree "$SRC_DIR/look-and-feel/$id" "$dir"; then
-    doc_warn "  repo      lo instalado difiere de $SRC_DIR/look-and-feel/$id (dev-plasma --only=themes)"
+    doc_warn "  repo      the installed copy differs from $SRC_DIR/look-and-feel/$id (dev-plasma --only=themes)"
   fi
 
   v="$(lnf_default "$id" kdeglobals General ColorScheme)"
   if f="$(scheme_file "$v")"; then
-    doc_ok "  colores   $v ($f)"
+    doc_ok "  colors    $v ($f)"
     if [[ -f "$SRC_DIR/color-schemes/$(basename "$f")" ]] && ! same_tree "$SRC_DIR/color-schemes/$(basename "$f")" "$f"; then
-      doc_warn "            difiere del repo (dev-plasma --only=themes)"
+      doc_warn "            differs from the repo (dev-plasma --only=themes)"
     fi
   else
-    doc_fail "  colores   $v — no hay ningún .colors con ese id"
+    doc_fail "  colors    $v — no .colors file has that id"
   fi
 
   v="$(lnf_default "$id" kdeglobals Icons Theme)"
   if [[ -n "$v" ]]; then
     if f="$(icon_theme_dir "$v")"; then
-      doc_ok "  iconos    $v ($f)"
+      doc_ok "  icons     $v ($f)"
       if [[ "$v" == Papirus* ]]; then
         local color
         color="$(folder_color "$v")"
         if [[ "$color" == "$FOLDER_COLOR" ]]; then
-          doc_ok "            carpetas $color"
+          doc_ok "            $color folders"
         else
-          doc_warn "            carpetas ${color:-?}, se esperaba $FOLDER_COLOR (dev-plasma --only=icons)"
+          doc_warn "            ${color:-?} folders, expected $FOLDER_COLOR (dev-plasma --only=icons)"
         fi
         if [[ "$f" == "$HOME"/* ]]; then
-          doc_warn "            se usa la copia de usuario, no la de apt (dev-plasma --only=icons)"
+          doc_warn "            the user copy is used, not apt's (dev-plasma --only=icons)"
         fi
       fi
     else
-      doc_fail "  iconos    $v — no instalado (dev-plasma --only=icons)"
+      doc_fail "  icons     $v — not installed (dev-plasma --only=icons)"
     fi
   fi
 
@@ -774,7 +778,7 @@ doctor_theme() {
     if f="$(icon_theme_dir "$v")"; then
       doc_ok "  cursor    $v ($f)"
     else
-      doc_fail "  cursor    $v — no instalado (paquete icons de los dotfiles)"
+      doc_fail "  cursor    $v — not installed (the dotfiles' icons package)"
     fi
   fi
 
@@ -783,7 +787,7 @@ doctor_theme() {
     if f="$(lnf_dir "$v")"; then
       doc_ok "  splash    $v ($f)"
     else
-      doc_fail "  splash    $v — no instalado (dev-plasma --only=splash)"
+      doc_fail "  splash    $v — not installed (dev-plasma --only=splash)"
     fi
   fi
 }
@@ -797,29 +801,29 @@ run_doctor() {
 
   local v
   if [[ -f "$HOME/.local/share/icons/hicolor/scalable/apps/$LAUNCHER_ICON.svg" ]]; then
-    doc_ok "icono $LAUNCHER_ICON"
+    doc_ok "icon $LAUNCHER_ICON"
   else
-    doc_warn "icono $LAUNCHER_ICON no instalado (dev-plasma --only=themes)"
+    doc_warn "icon $LAUNCHER_ICON not installed (dev-plasma --only=themes)"
   fi
   if [[ -f "$HOME/.local/share/wallpapers/$WALLPAPER/metadata.json" ]]; then
     if v="$(kpackage_escape "$HOME/.local/share/wallpapers/$WALLPAPER")"; then
-      doc_fail "wallpaper $WALLPAPER: $v está fuera del paquete (dev-plasma --only=themes)"
+      doc_fail "wallpaper $WALLPAPER: $v is outside the package (dev-plasma --only=themes)"
     elif ! same_tree "$SRC_DIR/wallpapers/$WALLPAPER" "$HOME/.local/share/wallpapers/$WALLPAPER"; then
-      doc_warn "wallpaper $WALLPAPER difiere del repo (dev-plasma --only=themes)"
+      doc_warn "wallpaper $WALLPAPER differs from the repo (dev-plasma --only=themes)"
     else
       doc_ok "wallpaper $WALLPAPER"
     fi
   else
-    doc_fail "wallpaper $WALLPAPER no está (dev-plasma --only=themes)"
+    doc_fail "wallpaper $WALLPAPER is missing (dev-plasma --only=themes)"
   fi
 
   v="$(sddm_value CursorTheme)"
   if [[ -z "$v" ]]; then
-    doc_warn "SDDM sin CursorTheme (dev-plasma --only=sddm-cursor)"
+    doc_warn "SDDM has no CursorTheme (dev-plasma --only=sddm-cursor)"
   elif [[ -f "$SYSTEM_ICONS/$v/index.theme" ]]; then
     doc_ok "SDDM cursor $v ($SYSTEM_ICONS/$v)"
   else
-    doc_warn "SDDM pide CursorTheme=$v pero no está en $SYSTEM_ICONS: el login usa el de serie (dev-plasma --only=sddm-cursor)"
+    doc_warn "SDDM asks for CursorTheme=$v but it isn't in $SYSTEM_ICONS: the login uses the stock one (dev-plasma --only=sddm-cursor)"
   fi
 
   local dark light auto
@@ -827,21 +831,21 @@ run_doctor() {
   light="$(kreadconfig6 --file kdeglobals --group KDE --key DefaultLightLookAndFeel 2>/dev/null)"
   auto="$(kreadconfig6 --file kdeglobals --group KDE --key AutomaticLookAndFeel 2>/dev/null)"
   if [[ "$dark" == "$THEME_DARK" && "$light" == "$THEME_LIGHT" ]]; then
-    doc_ok "par claro/oscuro registrado (Switch to Dark Mode at Night: ${auto:-false})"
+    doc_ok "light/dark pair registered (Switch to Dark Mode at Night: ${auto:-false})"
   else
-    doc_warn "par actual: claro=${light:-?} oscuro=${dark:-?} (dev-plasma --only=apply)"
+    doc_warn "current pair: light=${light:-?} dark=${dark:-?} (dev-plasma --only=apply)"
   fi
 
   sep
   if [[ $DOC_FAIL -eq 0 ]]; then
-    ok "Doctor: todo lo que referencian los temas existe"
+    ok "Doctor: everything the themes reference exists"
   else
-    err "Doctor: hay referencias rotas — Plasma las ignora en silencio"
+    err "Doctor: there are broken references — Plasma silently ignores them"
   fi
   return "$DOC_FAIL"
 }
 
-# ─── checklist ───────────────────────────────────────────────────────────────
+# ─── checklist ──────────────────────────────────────────────────────────────
 select_keys() {
   local -n _out="$1"
   _out=()
@@ -852,7 +856,7 @@ select_keys() {
   local raw
   raw=$(dialog --clear --colors --backtitle "$BACKTITLE" \
     --title " dev-plasma " --separate-output --checklist \
-    "Select what to install/apply  [SPACE=toggle  ENTER=confirm]\n\nAl final corre el doctor, que revisa que no quede nada roto." \
+    "Select what to install/apply  [SPACE=toggle  ENTER=confirm]\n\nThe doctor runs at the end and checks nothing is left broken." \
     16 76 6 "${items[@]}" \
     3>&1 1>&2 2>&3) || return 1
   clear
@@ -860,13 +864,13 @@ select_keys() {
   while IFS= read -r line; do [[ -n "$line" ]] && _out+=("$line"); done <<<"$raw"
 }
 
-# ─── ayuda ───────────────────────────────────────────────────────────────────
+# ─── help ───────────────────────────────────────────────────────────────────
 usage() {
-  sed -n '/^# Uso:/,/^[^#]/{/^#/s/^# \{0,1\}//p}' "$0"
+  sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p}' "$0"
   printf '\nKeys: %s\n' "${PKG_KEYS[*]}"
 }
 
-# ─── arg parsing ─────────────────────────────────────────────────────────────
+# ─── arg parsing ────────────────────────────────────────────────────────────
 ONLY_KEYS=()
 DOCTOR_ONLY=false
 for arg in "$@"; do
@@ -881,7 +885,7 @@ for arg in "$@"; do
       exit 0
       ;;
     *)
-      err "Argumento desconocido: $arg"
+      err "Unknown argument: $arg"
       usage >&2
       exit 1
       ;;
@@ -889,7 +893,7 @@ for arg in "$@"; do
 done
 
 if ! command -v plasmashell &>/dev/null; then
-  skip "KDE Plasma no está instalado — nada que hacer"
+  skip "KDE Plasma isn't installed — nothing to do"
   exit 0
 fi
 
@@ -898,46 +902,46 @@ if $DOCTOR_ONLY; then
   exit $?
 fi
 
-# ─── directorio de trabajo + limpieza ────────────────────────────────────────
+# ─── work dir + cleanup ─────────────────────────────────────────────────────
 WORK_DIR="$(mktemp -d -t dev-plasma.XXXXXX)" || {
-  err "No se pudo crear el directorio de trabajo"
+  err "Couldn't create the work directory"
   exit 1
 }
 trap 'rm -rf "$WORK_DIR"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# ─── selección de keys ───────────────────────────────────────────────────────
+# ─── key selection ──────────────────────────────────────────────────────────
 CHOSEN=()
 if [[ ${#ONLY_KEYS[@]} -gt 0 ]]; then
   CHOSEN=("${ONLY_KEYS[@]}")
 elif [[ "$NONINTERACTIVE" == "true" ]] || ! [ -t 0 ]; then
   NONINTERACTIVE=true
   EXPLICIT=false
-  info "Non-interactive mode — todas las keys (${PKG_KEYS[*]})"
+  info "Non-interactive mode — every key (${PKG_KEYS[*]})"
   CHOSEN=("${PKG_KEYS[@]}")
 else
   need_cmd dialog || exit 1
   if ! select_keys CHOSEN; then
-    warn "dev-plasma cancelado."
+    warn "dev-plasma cancelled."
     exit 0
   fi
 fi
 
 if [[ ${#CHOSEN[@]} -eq 0 ]]; then
-  skip "Nada seleccionado."
+  skip "Nothing selected."
   exit 0
 fi
 
 for key in "${CHOSEN[@]}"; do
   [[ -n "${PKG_FN[$key]:-}" ]] || {
-    err "Key desconocida: $key"
+    err "Unknown key: $key"
     usage >&2
     exit 1
   }
 done
 
-# ─── ejecución (en el orden de PKG_KEYS) + doctor ────────────────────────────
+# ─── run (in PKG_KEYS order) + doctor ───────────────────────────────────────
 succeeded=0
 failed=()
 for key in "${PKG_KEYS[@]}"; do
@@ -945,7 +949,7 @@ for key in "${PKG_KEYS[@]}"; do
   if "${PKG_FN[$key]}"; then
     ((succeeded++)) || true
   else
-    warn "Falló: ${PKG_LABEL[$key]}"
+    warn "Failed: ${PKG_LABEL[$key]}"
     failed+=("$key")
   fi
 done

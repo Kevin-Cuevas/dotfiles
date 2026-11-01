@@ -1,13 +1,13 @@
 #compdef ssh scp
 
-# Lista de hosts SSH para completado, filtrada por la tailnet activa.
-# Lee ~/.ssh/config y ~/.ssh/config.local. En config.local los hosts viven en un
-# bloque gestionado por bootstrap, agrupados con cabeceras "#@ group:<gid>":
-#   - sin grupo (sueltos / escritos a mano) -> siempre se ofrecen
-#   - group:manual                          -> siempre se ofrecen
-#   - group:tailnet:<name>                  -> solo si esa tailnet es la activa
-# La tailnet activa se detecta con `tailscale switch --list` (fila con '*'); si no
-# hay tailscale o tailnet activa, solo se ofrecen sueltos + manual.
+# SSH host list for completion, filtered by the active tailnet.
+# Reads ~/.ssh/config and ~/.ssh/config.local. In config.local the hosts live in
+# a block managed by bootstrap, grouped under "#@ group:<gid>" headers:
+#   - no group (loose / written by hand) -> always offered
+#   - group:manual                       -> always offered
+#   - group:tailnet:<name>               -> only if that tailnet is the active one
+# The active tailnet is detected with `tailscale switch --list` (row with '*'); if
+# there's no tailscale or active tailnet, only loose + manual are offered.
 #   With -c, emits "class<TAB>name" (class = loose | manual | tailnet) instead of
 #   just the name — used by _ssh_hosts_complete to split online/offline/manual.
 _ssh_host_list() {

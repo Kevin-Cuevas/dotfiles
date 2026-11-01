@@ -1,11 +1,11 @@
--- JDKs instalados (SDKMAN y Debian) y qué JDK pide un proyecto. Lo usan
--- plugins/java.lua (runtimes de jdtls) y util/runner.lua (rr/ra),
--- para que el editor y F5 compilen con el mismo JDK.
+-- Installed JDKs (SDKMAN and Debian) and which JDK a project asks for. Used by
+-- plugins/java.lua (jdtls runtimes) and util/runner.lua (rr/ra), so the
+-- editor and F5 compile with the same JDK.
 local M = {}
 
--- Mayor => ruta de cada JDK con javac. Se resuelven symlinks para no duplicar
--- (current, default-java, java-1.25.0-...). SDKMAN va primero, así que si hay
--- la misma versión mayor en los dos sitios gana la de SDKMAN.
+-- Major => path of each JDK with javac. Symlinks are resolved to avoid
+-- duplicates (current, default-java, java-1.25.0-...). SDKMAN goes first, so
+-- if the same major version is in both places, SDKMAN's wins.
 local function installed()
   local roots = {
     vim.fn.expand("~") .. "/.sdkman/candidates/java/*",
@@ -15,7 +15,7 @@ local function installed()
   for _, glob in ipairs(roots) do
     for _, dir in ipairs(vim.fn.glob(glob, false, true)) do
       local real = vim.uv.fs_realpath(dir)
-      -- exige javac: un JRE solo no sirve para compilar
+      -- requires javac: a bare JRE can't compile
       if real and not seen[real] and vim.fn.executable(real .. "/bin/javac") == 1 then
         seen[real] = true
         local ok, lines = pcall(vim.fn.readfile, real .. "/release")
@@ -30,7 +30,7 @@ local function installed()
   return by_major
 end
 
--- Runtimes con el formato que espera jdtls (java.configuration.runtimes)
+-- Runtimes in the format jdtls expects (java.configuration.runtimes)
 function M.discover()
   local runtimes = {}
   for major, path in pairs(installed()) do
@@ -48,8 +48,8 @@ local function to_major(v)
   return tonumber(v:match("^1%.(%d+)") or v:match("^(%d+)"))
 end
 
--- Primero lo que fija el nivel del compilador, después lo que lo sugiere.
--- Gradle: mejor esfuerzo, sin probar contra un proyecto real.
+-- First what pins the compiler level, then what suggests it.
+-- Gradle: best effort, not tested against a real project.
 local patterns = {
   maven = {
     "<maven%.compiler%.release>%s*([%d%.]+)%s*<",
@@ -69,8 +69,9 @@ local patterns = {
   },
 }
 
--- Versión de Java que pide el proyecto ==> número o nil. Si el módulo no la
--- fija se sigue hacia el pom/gradle padre, solo mientras exista en la carpeta de arriba.
+-- Java version the project asks for ==> number or nil. If the module doesn't
+-- pin it, it follows up to the parent pom/gradle, only while one exists in the
+-- folder above.
 function M.target_release(p_type, root)
   local files = p_type == "maven" and { "pom.xml" } or { "build.gradle", "build.gradle.kts" }
   local function has_build(dir)
@@ -102,8 +103,8 @@ function M.target_release(p_type, root)
   end
 end
 
--- JDK instalado para un nivel de Java ==> ruta, mayor. El exacto si existe;
--- si no, el menor que sea mayor (un 17 corre bien en un 25). nil si no hay.
+-- Installed JDK for a Java level ==> path, major. The exact one if it exists;
+-- otherwise the smallest one above it (a 17 runs fine on a 25). nil if none.
 function M.for_target(major)
   local best_major, best_path
   for m, path in pairs(installed()) do

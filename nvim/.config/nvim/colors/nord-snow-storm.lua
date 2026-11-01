@@ -1,29 +1,29 @@
--- Nord Aurora Pastel (claro) -- antes "Iceberg Light, azules y grises Nord": estructura de Iceberg Light con el
--- fondo del Nord Snow Storm original (#eceff4) en vez del fondo mas oscuro
--- de Iceberg (#e8e9ec), y una paleta casi monocroma de azules y grises de
--- Nord (Frost 81a1c1/5e81ac/88c0d0/8fbcbb + Polar Night 3b4252/434c5e/
--- 4c566a), con rojo (bf616a) y verde (a3be8c) como unicas excepciones.
+-- Nord Aurora Pastel (light) -- formerly "Iceberg Light, Nord blues and grays":
+-- Iceberg Light's structure with the original Nord Snow Storm background
+-- (#eceff4) instead of Iceberg's darker one (#e8e9ec), and an almost
+-- monochrome palette of Nord blues and grays (Frost 81a1c1/5e81ac/88c0d0/
+-- 8fbcbb + Polar Night 3b4252/434c5e/4c566a), with red (bf616a) and green
+-- (a3be8c) as the only exceptions.
 -- terminal_color_* mirrors kitty's raw hex exactly (see below) so nvim's
 -- embedded :terminal (prompt included) looks identical to a real kitty
 -- window, ANSI chips included.
--- Ajuste posterior: bg_alt/bg_highlight/border venian calibrados para el
--- fondo mas oscuro de Iceberg (#e8e9ec) -- contra este fondo mas palido
--- (#eceff4) se veian como un recuadro de otro color en NormalFloat/
--- FloatBorder (el "marco" del panel de Terminal en el dashboard de Snacks,
--- y el fondo distinto del buffer de :terminal). Reemplazados por sus
--- equivalentes Nord canonicos (Nord4 #d8dee9, Nord5 #e5e9f0).
--- "Snow Storm Ink": los Frost/Aurora de Nord estan hechos para fondo oscuro;
--- sobre #eceff4 funciones/tipos/strings quedaban en 1.7-2.3:1 (desvaidos) y
--- los comentarios (6.4:1) se leian mejor que el codigo. Mismos tonos, pero
--- oscurecidos (solo luminosidad) hasta >= 4.6:1 (keywords 5.5:1), y el
--- comentario aclarado a 3.9:1 para que quede por debajo del codigo. Lo
--- pastel vive en las superficies (bg_alt, bg_highlight, seleccion). Solo
--- sintaxis: terminal_color_* sigue igual a kitty (ahi esos tonos tambien
--- son fondos de badges de p10k/tmux).
--- "Aurora Pastel": sobre Ink vuelven tres calidos de Nord Aurora,
--- oscurecidos igual (>= 4.6:1): morado (Nord15) para constantes/booleanos,
--- durazno (Nord12) para numeros y ambar (Nord13) para avisos. Rompe la regla
--- de solo azul/gris/verde/rojo a proposito: distingue mas tipos de token.
+-- Later tweak: bg_alt/bg_highlight/border came calibrated for Iceberg's
+-- darker background (#e8e9ec) -- against this paler one (#eceff4) they looked
+-- like a box of a different color in NormalFloat/FloatBorder (the "frame" of
+-- the Terminal panel on the Snacks dashboard, and the different background
+-- of the :terminal buffer). Replaced by their canonical Nord equivalents
+-- (Nord4 #d8dee9, Nord5 #e5e9f0).
+-- "Snow Storm Ink": Nord's Frost/Aurora are made for a dark background; on
+-- #eceff4 functions/types/strings sat at 1.7-2.3:1 (washed out) and comments
+-- (6.4:1) read better than the code. Same hues, but darkened (lightness only)
+-- to >= 4.6:1 (keywords 5.5:1), and comments lightened to 3.9:1 so they sit
+-- below the code. The pastel lives in the surfaces (bg_alt, bg_highlight,
+-- selection). Syntax only: terminal_color_* still matches kitty (there those
+-- tones are also p10k/tmux badge backgrounds).
+-- "Aurora Pastel": on top of Ink, three warm Nord Aurora tones come back,
+-- darkened the same way (>= 4.6:1): purple (Nord15) for constants/booleans,
+-- peach (Nord12) for numbers and amber (Nord13) for warnings. It breaks the
+-- blue/gray/green/red-only rule on purpose: it tells more token types apart.
 
 vim.cmd("highlight clear")
 if vim.fn.exists("syntax_on") then
@@ -38,37 +38,37 @@ local c = {
   bg_alt = "#e5e9f0",
   bg_highlight = "#d8dee9",
   fg = "#33374c",
-  comment = "#6a7894", -- Nord3 aclarado: por debajo del codigo
-  -- Igual al bg: usado por NonText/Whitespace/VertSplit/etc, que siguen
-  -- invisibles contra el fondo (igual que nord.nvim en oscuro). No confundir
-  -- con float_border de abajo -- eso es solo la LINEA del contorno del
-  -- float, no el relleno.
+  comment = "#6a7894", -- lightened Nord3: below the code
+  -- Same as bg: used by NonText/Whitespace/VertSplit/etc, which stay
+  -- invisible against the background (like nord.nvim in dark mode). Not to be
+  -- confused with float_border below -- that's only the float's outline
+  -- LINE, not its fill.
   border = "#eceff4",
-  -- Contorno sutil para el float: el fondo del float sigue siendo c.bg (sin
-  -- parche de otro color, ese era el bug), pero sin ninguna linea el limite
-  -- de la ventana flotante (ej. el panel "Terminal" del dashboard de Snacks)
-  -- no se distingue de nada. Nord4, igual de sutil que antes pero ahora
-  -- solo en el contorno, no rellenando todo el panel.
+  -- Subtle outline for floats: the float's background is still c.bg (no
+  -- differently colored patch, that was the bug), but without any line the
+  -- floating window's edge (e.g. the "Terminal" panel on the Snacks
+  -- dashboard) can't be told apart from anything. Nord4, as subtle as
+  -- before but now only on the outline, not filling the whole panel.
   float_border = "#d8dee9",
-  -- Guias de indentacion: Snacks las enlaza a NonText, que aqui es c.border
-  -- (= bg, invisible a proposito) y se perdian. Propio tono, sutil pero
-  -- visible (~1.8:1), como el NonText #6c7680 que usan en oscuro.
+  -- Indent guides: Snacks links them to NonText, which here is c.border
+  -- (= bg, invisible on purpose), so they vanished. Their own tone, subtle
+  -- but visible (~1.8:1), like the NonText #6c7680 used in dark mode.
   guide = "#b8c0ce",
 
-  -- Azul-gris Nord (blue/blue2/cyan/teal/slate/ink, Frost/Polar Night) mas
-  -- verde (string), rojo (error) y los calidos de Aurora (purple/peach/amber,
-  -- abajo), todos oscurecidos para leerse sobre #eceff4.
-  blue = "#496e93", -- Nord9 oscurecido: funcion, operador, links, field/property
-  blue2 = "#446185", -- Nord10 oscurecido: keyword/statement/label/tag (el acento mas fuerte)
-  cyan = "#357385", -- Nord8 oscurecido: tipo/storageclass/tag alterno
-  teal = "#457372", -- Nord7 oscurecido: acento secundario mas claro (builtins, constructor)
-  slate = "#434c5e", -- constante/numero (gris, no magenta)
-  ink = "#3b4252", -- special/preproc/macro (gris mas oscuro)
-  green = "#587341", -- Nord14 oscurecido: string -- unica excepcion junto al rojo
-  red = "#b24852", -- Nord11 oscurecido: error/exception -- la otra excepcion
-  purple = "#8b5c83", -- Nord15 oscurecido: constante/booleano
-  peach = "#a85237", -- Nord12 oscurecido: numero
-  amber = "#8a6418", -- Nord13 oscurecido: aviso (warning)
+  -- Nord blue-gray (blue/blue2/cyan/teal/slate/ink, Frost/Polar Night) plus
+  -- green (string), red (error) and Aurora's warm tones (purple/peach/amber,
+  -- below), all darkened to read on #eceff4.
+  blue = "#496e93", -- darkened Nord9: function, operator, links, field/property
+  blue2 = "#446185", -- darkened Nord10: keyword/statement/label/tag (the strongest accent)
+  cyan = "#357385", -- darkened Nord8: type/storageclass/alternate tag
+  teal = "#457372", -- darkened Nord7: lighter secondary accent (builtins, constructor)
+  slate = "#434c5e", -- constant/number (gray, not magenta)
+  ink = "#3b4252", -- special/preproc/macro (darker gray)
+  green = "#587341", -- darkened Nord14: string -- the only exception besides red
+  red = "#b24852", -- darkened Nord11: error/exception -- the other exception
+  purple = "#8b5c83", -- darkened Nord15: constant/boolean
+  peach = "#a85237", -- darkened Nord12: number
+  amber = "#8a6418", -- darkened Nord13: warning
 
   diff_add_bg = "#dee3de",
   diff_delete_bg = "#e2d5d9",
@@ -114,11 +114,11 @@ hl(0, "CursorLine", { bg = c.bg_highlight })
 hl(0, "CursorLineNr", { fg = c.fg, bold = true })
 hl(0, "LineNr", { fg = c.comment })
 hl(0, "SignColumn", { fg = c.comment, bg = c.bg })
--- WinSeparator es el borde de splits reales (ej. el "border top" que
--- Snacks le pone por defecto a ventanas como el preview de terminal debajo
--- del dashboard) -- distinto de c.border (que se queda en NonText/
--- Whitespace/etc, invisible a proposito). En oscuro ese borde SI se ve, asi
--- que usa el mismo tono que FloatBorder, no el invisible.
+-- WinSeparator is the border of real splits (e.g. the "border top" Snacks
+-- puts by default on windows like the terminal preview under the dashboard)
+-- -- unlike c.border (which stays on NonText/Whitespace/etc, invisible on
+-- purpose). In dark mode that border IS visible, so it uses the same tone as
+-- FloatBorder, not the invisible one.
 hl(0, "VertSplit", { fg = c.float_border })
 hl(0, "WinSeparator", { fg = c.float_border })
 hl(0, "Visual", { bg = c.bg_highlight })
@@ -268,8 +268,8 @@ hl(0, "BlinkCmpDoc", { link = "NormalFloat" })
 hl(0, "BlinkCmpDocBorder", { link = "FloatBorder" })
 
 -- snacks.nvim
--- archivos ocultos: tenue pero visible (con c.border quedaban del color del
--- fondo), igual que el #6C7680 del tema oscuro
+-- hidden files: faint but visible (with c.border they took the background
+-- color), like the dark theme's #6C7680
 hl(0, "SnacksHidden", { fg = c.comment })
 hl(0, "SnacksIndent", { fg = c.guide })
 hl(0, "SnacksDashboardHeader", { fg = c.blue2, bold = true })

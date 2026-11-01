@@ -1,53 +1,54 @@
 #!/usr/bin/env bash
-# dev-packages — front door para todas las herramientas no-apt (nvim, tmux,
-# kitty, yazi, tree-sitter, peaclock, tmuxp, lavat, pgcli, mycli, csvkit): dos
-# checklists `dialog` en secuencia (build/tarball, luego pipx) que instalan o
-# actualizan lo que el usuario marque. Standalone, igual que dev-ssh/dev-motd:
-# no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR, así que también corre
-# suelto una vez stow-eado a ~/.local/bin.
+# dev-packages — front door for every non-apt tool (nvim, tmux, kitty, yazi,
+# tree-sitter, peaclock, tmuxp, lavat, pgcli, mycli, csvkit): two `dialog`
+# checklists in sequence (build/tarball, then pipx) that install or update
+# whatever the user checks. Standalone, like dev-ssh/dev-motd: it doesn't
+# depend on bootstrap.d/*.sh or $DOTFILES_DIR, so it also runs on its own once
+# stowed into ~/.local/bin.
 #
-# Cada instalador decide "¿ya está al día?" con lo mejor disponible para esa
-# herramienta:
-#   - nvim    -> build/tarball + detección de versión (corre en su propio
-#                subshell con `set -e`, ver install_nvim más abajo).
-#   - tmux    -> build desde fuente + último tag de git vs. versión instalada
-#                (mismo patrón que nvim, ver install_tmux más abajo).
-#   - yazi, tree-sitter -> binario del último release de GitHub, versión del
-#                binario descargado vs. la instalada (github_release_install).
-#   - kitty   -> current-version.txt oficial vs. la instalada; si hace falta,
-#                re-corre el instalador oficial (in-place, seguro).
-#   - tmuxp/pgcli/mycli/csvkit -> pipx install / pipx upgrade (ver
-#                install_via_pipx más abajo). Si pipx no está instalado,
-#                dev-packages lo instala solo vía apt antes de tocar
-#                cualquiera de los cuatro.
-#   - peaclock/lavat -> no publican versiones (solo git+build), así que se
-#                compara el SHA remoto del HEAD contra uno guardado en
-#                ~/.local/share/dev-packages/<tool>.sha tras el último build.
+# Each installer decides "is it already up to date?" with the best signal
+# available for that tool:
+#   - nvim    -> build/tarball + version detection (runs in its own subshell
+#                with `set -e`, see install_nvim below).
+#   - tmux    -> build from source + latest git tag vs. installed version
+#                (same pattern as nvim, see install_tmux below).
+#   - yazi, tree-sitter -> binary from the latest GitHub release, version of
+#                the downloaded binary vs. the installed one
+#                (github_release_install).
+#   - kitty   -> official current-version.txt vs. the installed one; if
+#                needed, re-runs the official installer (in place, safe).
+#   - tmuxp/pgcli/mycli/csvkit -> pipx install / pipx upgrade (see
+#                install_via_pipx below). If pipx isn't installed,
+#                dev-packages installs it via apt on its own before touching
+#                any of the four.
+#   - peaclock/lavat -> they don't publish versions (git+build only), so the
+#                remote HEAD SHA is compared against one saved in
+#                ~/.local/share/dev-packages/<tool>.sha after the last build.
 #
-# nvim, tmux y tree-sitter también tienen paquete apt: por defecto,
-# instalarlos vía dev-packages remueve la versión apt (ver KEEP_APT_PKGS /
-# --keep-apt más abajo) para que solo quede una versión en el PATH.
+# nvim, tmux and tree-sitter also have an apt package: by default, installing
+# them through dev-packages removes the apt version (see KEEP_APT_PKGS /
+# --keep-apt below) so only one version is left in PATH.
 #
-# Todo lo temporal (descargas, clones, builds) vive en un único WORK_DIR que
-# un trap borra al salir, incluido Ctrl-C: ningún instalador limpia a mano.
+# Everything temporary (downloads, clones, builds) lives in a single WORK_DIR
+# that a trap deletes on exit, Ctrl-C included: no installer cleans up by hand.
 #
-# Uso:
-#   dev-packages                 checklist interactivo (dialog)
-#   dev-packages --all           instala/actualiza todo, sin diálogo
-#   dev-packages --only=a,b,c    instala/actualiza solo esas keys, sin diálogo
-#   dev-packages --keep-apt      no purga el paquete apt homónimo
-#                                (nvim/tmux/tree-sitter), deja ambos instalados
-#   dev-packages -h | --help     esta ayuda
+# Usage:
+#   dev-packages                 interactive checklist (dialog)
+#   dev-packages --all           install/update everything, no dialogs
+#   dev-packages --only=a,b,c    install/update only those keys, no dialogs
+#   dev-packages --keep-apt      don't purge the same-named apt package
+#                                (nvim/tmux/tree-sitter), keep both installed
+#   dev-packages -h | --help     this help
 set -uo pipefail
 
-# ─── helpers (mismo estilo que bootstrap.d/00-core.sh) ───────────────────────
+# ─── helpers (same style as bootstrap.d/00-core.sh) ──────────────────────────
 RED='\e[38;2;191;97;106m'
 GRN='\e[38;2;163;190;140m'
 YLW='\e[38;2;235;203;139m'
 BLU='\e[38;2;136;192;208m'
 CYN='\e[38;2;143;188;187m'
 DIM='\e[38;2;94;129;172m'
-# shellcheck disable=SC2034 # paleta Nord compartida entre scripts; aquí no se usa
+# shellcheck disable=SC2034 # Nord palette shared across scripts; unused here
 BLD='\e[1m'
 RST='\e[0m'
 
@@ -58,8 +59,8 @@ warn() { printf "${YLW}[WARN]${RST}  %s\n" "$*"; }
 skip() { printf "${CYN}[SKIP]${RST}  %s\n" "$*"; }
 sep() { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
 
-# Fatal solo dentro de los instaladores que corren en su propio subshell
-# (install_nvim / install_tmux): `exit` sale de ese subshell, no del script.
+# Fatal only inside the installers that run in their own subshell
+# (install_nvim / install_tmux): `exit` leaves that subshell, not the script.
 die() {
   err "$*"
   exit 1
@@ -69,20 +70,20 @@ NONINTERACTIVE="${NONINTERACTIVE:-false}"
 BACKTITLE="${DEV_PACKAGES_BACKTITLE:-dev-packages · $(hostname) · $(date '+%Y-%m-%d %H:%M')}"
 STATE_DIR="$HOME/.local/share/dev-packages"
 
-# ─── registro ─────────────────────────────────────────────────────────────
+# ─── registry ───────────────────────────────────────────────────────────────
 PKG_KEYS=(nvim tmux kitty yazi tree-sitter peaclock tmuxp lavat pgcli mycli csvkit)
 declare -A PKG_LABEL=(
-  [nvim]="Neovim (build/tarball + versión)"
-  [tmux]="tmux (terminal multiplexer, build desde fuente, versión-checked)"
-  [kitty]="kitty (instalador oficial, versión-checked)"
-  [yazi]="Yazi (file manager, release de GitHub, versión-checked)"
-  ["tree-sitter"]="tree-sitter CLI (parsers de nvim-treesitter, release de GitHub)"
-  [peaclock]="Peaclock (reloj de terminal, build desde fuente, sha-checked)"
+  [nvim]="Neovim (build/tarball + version-checked)"
+  [tmux]="tmux (terminal multiplexer, built from source, version-checked)"
+  [kitty]="kitty (official installer, version-checked)"
+  [yazi]="Yazi (file manager, GitHub release, version-checked)"
+  ["tree-sitter"]="tree-sitter CLI (nvim-treesitter parsers, GitHub release)"
+  [peaclock]="Peaclock (terminal clock, built from source, sha-checked)"
   [tmuxp]="tmuxp (tmux session manager, pipx install/upgrade)"
-  [lavat]="lavat (lava lamp de terminal, build desde fuente, sha-checked)"
-  [pgcli]="pgcli (cliente Postgres, pipx install/upgrade)"
-  [mycli]="mycli (cliente MySQL/MariaDB, pipx install/upgrade)"
-  [csvkit]="csvkit (utilidades CLI para CSV, pipx install/upgrade)"
+  [lavat]="lavat (terminal lava lamp, built from source, sha-checked)"
+  [pgcli]="pgcli (Postgres client, pipx install/upgrade)"
+  [mycli]="mycli (MySQL/MariaDB client, pipx install/upgrade)"
+  [csvkit]="csvkit (CSV command-line utilities, pipx install/upgrade)"
 )
 declare -A PKG_FN=(
   [nvim]="install_nvim"
@@ -98,8 +99,8 @@ declare -A PKG_FN=(
   [csvkit]="install_csvkit"
 )
 
-# A qué checklist (paso) pertenece cada key: "build" se muestra primero,
-# "pipx" segundo. Ver select_group/select_packages más abajo.
+# Which checklist (step) each key belongs to: "build" is shown first, "pipx"
+# second. See select_group/select_packages below.
 declare -A PKG_GROUP=(
   [nvim]="build"
   [tmux]="build"
@@ -123,7 +124,7 @@ declare -A GROUP_PROMPT=(
   [pipx]="Select pipx-managed CLIs to install/update  [SPACE=toggle  ENTER=confirm]\n\nLeave everything unchecked and press ENTER to install/update ALL of this group.\nCheck 'Skip' to skip this group."
 )
 
-# ─── checklist de un solo grupo (build o pipx) ───────────────────────────────
+# ─── single-group checklist (build or pipx) ─────────────────────────────────
 select_group() {
   local _group="$1"
   local -n _grp_out="$2"
@@ -166,11 +167,11 @@ select_group() {
   fi
 }
 
-# ─── checklist propio: un diálogo por grupo, en el orden de GROUP_ORDER ────
-# Esc en cualquiera de ellos cancela dev-packages entero (mismo
-# comportamiento que antes tenía un único checklist); "Skip" solo salta ese
-# grupo puntual y sigue con el siguiente. Un grupo nuevo solo se registra en
-# GROUP_ORDER/GROUP_TITLE/GROUP_PROMPT, aquí no hay que tocar nada.
+# ─── our own checklist: one dialog per group, in GROUP_ORDER order ─────────
+# Esc in any of them cancels dev-packages entirely (same behavior the old
+# single checklist had); "Skip" only skips that one group and moves on to the
+# next. A new group is registered only in GROUP_ORDER/GROUP_TITLE/
+# GROUP_PROMPT; nothing needs to change here.
 select_packages() {
   local -n _out_ref="$1"
   _out_ref=()
@@ -182,62 +183,62 @@ select_packages() {
   done
 }
 
-# ─── utilidades compartidas por los instaladores ─────────────────────────────
+# ─── utilities shared by the installers ─────────────────────────────────────
 
-# SHA remoto del HEAD de un repo git (peaclock/lavat no publican versiones).
+# Remote HEAD SHA of a git repo (peaclock/lavat don't publish versions).
 remote_head_sha() {
   git ls-remote "$1" HEAD 2>/dev/null | awk '{print $1}'
 }
 
-# Falla con un mensaje útil si falta una herramienta. $2 = paquete apt, si no
-# se llama igual que el comando.
+# Fails with a useful message if a tool is missing. $2 = apt package, if it
+# isn't named like the command.
 need_cmd() {
   command -v "$1" &>/dev/null && return 0
-  err "$1 no encontrado — instálalo primero (sudo apt install ${2:-$1})."
+  err "$1 not found — install it first (sudo apt install ${2:-$1})."
   return 1
 }
 
-# Sí/No con dialog; sin dialog, pregunta en texto plano. Default: No.
+# Yes/No with dialog; without dialog, asks in plain text. Default: No.
 ask_yes_no() {
   if command -v dialog &>/dev/null; then
     local rc=0
-    dialog --clear --backtitle "$BACKTITLE" --title " Confirmar " --defaultno \
+    dialog --clear --backtitle "$BACKTITLE" --title " Confirm " --defaultno \
       --yesno "$1" 8 72 || rc=$?
     clear
     return "$rc"
   fi
-  warn "$1 [s/N]"
+  warn "$1 [y/N]"
   local reply
   read -r reply
-  [[ "$reply" =~ ^[sS]$ ]]
+  [[ "$reply" =~ ^[yY]$ ]]
 }
 
-# ¿Seguir con la instalación? $1=nombre $2=versión instalada (vacía si no hay)
-# $3=versión candidata. Distintas -> sí. Iguales -> en modo no interactivo se
-# reinstala (como siempre lo hizo --all); en interactivo, se pregunta.
-# 0 = seguir, 1 = el usuario no quiere reinstalar la misma versión.
+# Go ahead with the install? $1=name $2=installed version (empty if none)
+# $3=candidate version. Different -> yes. Equal -> non-interactive mode
+# reinstalls (as --all always did); interactive mode asks.
+# 0 = go ahead, 1 = the user doesn't want to reinstall the same version.
 confirm_version() {
   local name="$1" current="$2" new="$3"
   if [[ -z "$current" || "$current" != "$new" ]]; then
-    info "Actualizando $name: ${current:-<ninguna>} → ${new:-<desconocida>}"
+    info "Updating $name: ${current:-<none>} → ${new:-<unknown>}"
     return 0
   fi
   if [[ "$NONINTERACTIVE" == "true" ]]; then
-    info "No interactivo — reinstalando la misma versión ($new)."
+    info "Non-interactive — reinstalling the same version ($new)."
     return 0
   fi
-  ask_yes_no "Ya tienes instalada $new.\n\n¿Instalar de todas formas?"
+  ask_yes_no "You already have $new installed.\n\nInstall anyway?"
 }
 
-# Mantiene vivo el ticket de sudo durante builds largos. El PID del loop va a
-# un archivo en WORK_DIR y no a una variable: install_nvim/install_tmux lo
-# llaman desde su subshell, y una variable no volvería al proceso padre (que
-# es quien lo mata en cleanup). Además el loop termina solo si el script
-# muere aunque sea con kill -9: `kill -0 $$` deja de responder.
+# Keeps the sudo ticket alive during long builds. The loop's PID goes to a
+# file in WORK_DIR, not a variable: install_nvim/install_tmux call it from
+# their subshell, and a variable wouldn't make it back to the parent process
+# (the one that kills it in cleanup). The loop also ends on its own if the
+# script dies, even with kill -9: `kill -0 $$` stops answering.
 sudo_keepalive() {
   local pidfile="$WORK_DIR/sudo-keepalive.pid"
   [[ -f "$pidfile" ]] && kill -0 "$(<"$pidfile")" 2>/dev/null && return 0
-  info "Se requieren permisos de administrador..."
+  info "Administrator privileges required..."
   sudo -v || return 1
   (while kill -0 "$$" 2>/dev/null; do
     sudo -n true
@@ -246,58 +247,58 @@ sudo_keepalive() {
   echo "$!" >"$pidfile"
 }
 
-# Purga el paquete apt homónimo (nvim/tmux/tree-sitter) para que solo quede
-# la versión de dev-packages en el PATH. KEEP_APT_PKGS=true (o --keep-apt) lo
-# deja instalado en vez de purgarlo.
+# Purges the same-named apt package (nvim/tmux/tree-sitter) so only the
+# dev-packages version is left in PATH. KEEP_APT_PKGS=true (or --keep-apt)
+# keeps it installed instead of purging it.
 KEEP_APT_PKGS="${KEEP_APT_PKGS:-false}"
 remove_apt_if_present() {
   local pkg="$1"
   if dpkg -s "$pkg" &>/dev/null; then
     if [[ "$KEEP_APT_PKGS" == "true" ]]; then
-      warn "$pkg sigue instalado vía apt (KEEP_APT_PKGS=true) — puede haber dos binarios en PATH."
+      warn "$pkg is still installed via apt (KEEP_APT_PKGS=true) — there may be two binaries in PATH."
       return 0
     fi
-    info "Removiendo $pkg instalado vía apt..."
+    info "Removing $pkg installed via apt..."
     sudo apt-get remove --purge -y "$pkg"
     sudo apt-get autoremove -y
   else
-    ok "$pkg no está instalado vía apt"
+    ok "$pkg isn't installed via apt"
   fi
 }
 
-# Versión de un binario: la primera línea de `--version` que tenga un número,
-# sin sangría. No sirve tomar la primera línea a ciegas: yazi 26+ imprime
-# "Yazi" solo en la primera y "Version: 26.9.1 (...)" más abajo, así que
-# cualquier versión parecía igual a la instalada. La salida se captura entera
-# antes de filtrar para que un SIGPIPE no se lea como "el binario no corre".
+# A binary's version: the first `--version` line that has a number, without
+# indentation. Blindly taking the first line doesn't work: yazi 26+ prints
+# just "Yazi" on the first one and "Version: 26.9.1 (...)" further down, so
+# every version looked equal to the installed one. The output is captured in
+# full before filtering so a SIGPIPE isn't read as "the binary doesn't run".
 bin_version() {
   local out
   out="$("$1" --version 2>/dev/null)" || return 1
   grep -m1 '[0-9]' <<<"$out" | sed 's/^[[:space:]]*//'
 }
 
-# Extrae un asset según su extensión, dentro de $2 (.gz suelto: en su sitio).
+# Extracts an asset by its extension into $2 (a bare .gz: in place).
 extract() {
   case "$1" in
     *.zip) need_cmd unzip && unzip -q -o "$1" -d "$2" ;;
     *.tar.gz | *.tgz) tar -xzf "$1" -C "$2" ;;
     *.gz) gunzip -f "$1" ;;
     *)
-      err "Formato de asset no soportado: $1"
+      err "Unsupported asset format: $1"
       return 1
       ;;
   esac
 }
 
-# Instala binarios del último release de GitHub en ~/.local/bin.
-#   github_release_install [--purge-apt=PKG] REPO ASSET BIN[:DESTINO]...
-# Cada BIN es una ruta dentro del asset ya extraído; DESTINO es el nombre
-# final (por defecto, el basename de BIN). El primero define la herramienta:
-# su `--version` (el binario recién descargado vs. el instalado) decide si
-# hace falta tocar ~/.local/bin. Si el binario descargado no corre en este
-# host (p. ej. pide una glibc más nueva), aborta sin tocar nada.
-# --purge-apt purga ese paquete apt SOLO tras instalar de verdad: si no se
-# quiso reinstalar, el binario en uso podría ser justo el de apt.
+# Installs binaries from the latest GitHub release into ~/.local/bin.
+#   github_release_install [--purge-apt=PKG] REPO ASSET BIN[:DEST]...
+# Each BIN is a path inside the extracted asset; DEST is the final name
+# (default: BIN's basename). The first one defines the tool: its `--version`
+# (the freshly downloaded binary vs. the installed one) decides whether
+# ~/.local/bin needs touching. If the downloaded binary doesn't run on this
+# host (e.g. it needs a newer glibc), it aborts without touching anything.
+# --purge-apt purges that apt package ONLY after a real install: if the user
+# chose not to reinstall, the binary in use might be the apt one.
 github_release_install() {
   local purge_apt=""
   if [[ "$1" == --purge-apt=* ]]; then
@@ -315,20 +316,20 @@ github_release_install() {
   dir="$(mktemp -d -p "$WORK_DIR" "$name.XXXXXX")" || return 1
 
   local url="https://github.com/$repo/releases/latest/download/$asset"
-  info "Descargando $url ..."
+  info "Downloading $url ..."
   if ! curl -fL --progress-bar -o "$dir/$asset" "$url"; then
-    err "Falló la descarga de $asset"
+    err "Downloading $asset failed"
     return 1
   fi
   if ! extract "$dir/$asset" "$dir"; then
-    err "No se pudo extraer $asset"
+    err "Couldn't extract $asset"
     return 1
   fi
 
   for spec in "${specs[@]}"; do
     src="${spec%%:*}"
     if [[ ! -f "$dir/$src" ]]; then
-      err "$src no está en $asset"
+      err "$src isn't in $asset"
       return 1
     fi
     chmod +x "$dir/$src"
@@ -339,12 +340,12 @@ github_release_install() {
     current="$(bin_version "$name")"
   fi
   if ! new="$(bin_version "$dir/${specs[0]%%:*}")" || [[ -z "$new" ]]; then
-    err "El $name descargado no corre en este host (glibc $(ldd --version 2>/dev/null | awk 'NR == 1 {print $NF}'))."
+    err "The downloaded $name doesn't run on this host (glibc $(ldd --version 2>/dev/null | awk 'NR == 1 {print $NF}'))."
     return 1
   fi
 
   if ! confirm_version "$name" "$current" "$new"; then
-    skip "$name se queda en $new"
+    skip "$name stays at $new"
     return 0
   fi
 
@@ -354,24 +355,24 @@ github_release_install() {
     dst="${spec#*:}"
     install -m 755 "$dir/$src" "$HOME/.local/bin/${dst##*/}"
   done
-  ok "$name instalado -> $HOME/.local/bin ($new)"
+  ok "$name installed -> $HOME/.local/bin ($new)"
   if [[ -n "$purge_apt" ]]; then remove_apt_if_present "$purge_apt"; fi
 }
 
-# ─── instaladores ────────────────────────────────────────────────────────────
+# ─── installers ─────────────────────────────────────────────────────────────
 
-# Instala/actualiza Neovim eligiendo entre dos métodos:
-#   - tarball : binario precompilado oficial de los releases de GitHub
-#               (rápido, seguro, funciona en x86_64 y arm64).
-#   - build   : compila desde fuente con -march=native (solo x86_64, optimizado).
-# Ambos métodos instalan en /opt/nvim + symlink /usr/local/bin/nvim, así que
-# son INTERCAMBIABLES: reinstalar con el otro método reemplaza limpio lo
-# anterior. En modo no interactivo usa SIEMPRE el método más seguro: tarball.
+# Installs/updates Neovim choosing between two methods:
+#   - tarball : official prebuilt binary from the GitHub releases
+#               (fast, safe, works on x86_64 and arm64).
+#   - build   : compiles from source with -march=native (x86_64 only, optimized).
+# Both methods install to /opt/nvim + a /usr/local/bin/nvim symlink, so they're
+# INTERCHANGEABLE: reinstalling with the other method cleanly replaces the
+# previous one. Non-interactive mode ALWAYS uses the safest method: tarball.
 #
-# Corre en un subshell propio con `set -euo pipefail`: es la forma más simple
-# de que cualquier paso (descarga, compilación, cmake --install...) aborte
-# esta instalación en particular sin tumbar el resto de dev-packages; die()
-# sale de ese subshell, no del script.
+# Runs in its own subshell with `set -euo pipefail`: the simplest way for any
+# step (download, build, cmake --install...) to abort this particular install
+# without taking down the rest of dev-packages; die() leaves that subshell,
+# not the script.
 install_nvim() {
   sep
   (
@@ -390,7 +391,7 @@ install_nvim() {
     BUILD_SUPPORTED=false
     [[ "$ARCH" == "x86_64" ]] && BUILD_SUPPORTED=true
 
-    sudo_keepalive || die "Sin permisos de administrador no se puede instalar en $NVIM_PREFIX"
+    sudo_keepalive || die "Can't install to $NVIM_PREFIX without administrator privileges"
     TMP_DIR="$(mktemp -d -p "$WORK_DIR" nvim.XXXXXX)"
 
     CHOSEN_METHOD=""
@@ -399,12 +400,12 @@ install_nvim() {
       if command -v dialog &>/dev/null; then
         local choice rc
         if choice=$(dialog --clear --backtitle "$BACKTITLE" \
-          --title " Instalar Neovim " \
-          --ok-label "Instalar" --cancel-label "Cancelar" \
-          --menu "\nElige el método de instalación:" \
+          --title " Install Neovim " \
+          --ok-label "Install" --cancel-label "Cancel" \
+          --menu "\nPick the install method:" \
           13 72 2 \
-          "build" "Compilar desde fuente  (-march=native, optimizado)" \
-          "tarball" "Tarball precompilado oficial  (rápido, seguro)" \
+          "build" "Build from source  (-march=native, optimized)" \
+          "tarball" "Official prebuilt tarball  (fast, safe)" \
           3>&1 1>&2 2>&3); then
           rc=0
         else
@@ -415,12 +416,12 @@ install_nvim() {
         return 0
       fi
       echo ""
-      echo "  Método de instalación de Neovim:"
-      echo "    1) build   — compilar desde fuente (-march=native, optimizado)"
-      echo "    2) tarball — precompilado oficial (rápido, seguro)"
-      echo "    q) cancelar"
+      echo "  Neovim install method:"
+      echo "    1) build   — build from source (-march=native, optimized)"
+      echo "    2) tarball — official prebuilt (fast, safe)"
+      echo "    q) cancel"
       local choice
-      read -rp "  Opción [1/2/q]: " choice
+      read -rp "  Option [1/2/q]: " choice
       case "$choice" in
         1 | build | b) CHOSEN_METHOD="build" ;;
         2 | tarball | t) CHOSEN_METHOD="tarball" ;;
@@ -432,9 +433,9 @@ install_nvim() {
 
     CURRENT_VERSION="$(nvim --version 2>/dev/null | head -1 || true)"
     if [[ -n "$CURRENT_VERSION" ]]; then
-      info "Versión actual: $CURRENT_VERSION"
+      info "Current version: $CURRENT_VERSION"
     else
-      warn "nvim no encontrado, procediendo con instalación..."
+      warn "nvim not found, proceeding with the install..."
     fi
 
     get_source_version() {
@@ -456,7 +457,7 @@ install_nvim() {
     }
 
     remove_previous_install() {
-      info "Eliminando instalación anterior..."
+      info "Removing the previous installation..."
       sudo rm -f "$NVIM_SYMLINK"
       sudo rm -rf "$NVIM_PREFIX"
       remove_apt_if_present neovim
@@ -465,22 +466,22 @@ install_nvim() {
     finalize() {
       sudo ln -sf "$NVIM_PREFIX/bin/nvim" "$NVIM_SYMLINK"
       echo ""
-      ok "Instalación completa: $("$NVIM_PREFIX/bin/nvim" --version | head -1)"
+      ok "Install complete: $("$NVIM_PREFIX/bin/nvim" --version | head -1)"
     }
 
     install_tarball() {
-      [[ -n "$TARBALL_ARCH" ]] || die "No hay tarball oficial para la arquitectura $ARCH"
+      [[ -n "$TARBALL_ARCH" ]] || die "There's no official tarball for the $ARCH architecture"
 
-      info "Modo: instalación desde tarball precompilado (${TARBALL_ARCH})"
+      info "Mode: install from the prebuilt tarball (${TARBALL_ARCH})"
       local tarball="nvim-linux-${TARBALL_ARCH}.tar.gz"
       local extract_dir="$TMP_DIR/nvim-linux-${TARBALL_ARCH}"
 
-      info "Descargando $tarball..."
+      info "Downloading $tarball..."
       curl -fL --progress-bar \
         "https://github.com/neovim/neovim/releases/download/stable/${tarball}" \
-        -o "$TMP_DIR/$tarball" || die "Falló la descarga del tarball"
+        -o "$TMP_DIR/$tarball" || die "Downloading the tarball failed"
 
-      info "Extrayendo..."
+      info "Extracting..."
       tar xzf "$TMP_DIR/$tarball" -C "$TMP_DIR"
 
       local new_version
@@ -489,14 +490,14 @@ install_nvim() {
       confirm_version nvim "$CURRENT_VERSION" "$new_version" || return 1
 
       remove_previous_install
-      info "Instalando en $NVIM_PREFIX..."
+      info "Installing to $NVIM_PREFIX..."
       sudo mv "$extract_dir" "$NVIM_PREFIX"
     }
 
     install_build_deps() {
-      info "Instalando dependencias de compilación..."
+      info "Installing build dependencies..."
       if ! grep -qE '^deb-src' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null; then
-        info "Habilitando deb-src en sources.list..."
+        info "Enabling deb-src in sources.list..."
         sudo sed -i 's/^deb \(.*\)/deb \1\ndeb-src \1/' /etc/apt/sources.list
         sudo apt-get update -qq
       fi
@@ -507,15 +508,15 @@ install_nvim() {
     }
 
     build_source() {
-      info "Modo: compilación desde fuente con flags nativos"
+      info "Mode: build from source with native flags"
 
       if ! command -v git &>/dev/null; then
-        info "git no encontrado — instalando..."
+        info "git not found — installing it..."
         sudo apt-get install -y git
       fi
 
       local nvim_src="$TMP_DIR/neovim"
-      info "Clonando repositorio neovim (rama stable)..."
+      info "Cloning the neovim repo (stable branch)..."
       git clone --depth 1 --branch stable \
         https://github.com/neovim/neovim.git "$nvim_src"
       git -C "$nvim_src" config advice.detachedHead false
@@ -532,7 +533,7 @@ install_nvim() {
       if ((gcc_major >= 9)); then
         march_flag="-march=native"
       else
-        warn "gcc $gcc_major < 9: usando baseline -march=x86-64"
+        warn "gcc $gcc_major < 9: using the -march=x86-64 baseline"
         march_flag="-march=x86-64"
       fi
 
@@ -549,10 +550,10 @@ EOF
       build_dir="$nvim_src/build"
       nproc=$(nproc)
 
-      info "Compilador: $native_cc ($(gcc --version | head -1))"
-      info "Flags nativos (append): $append_flags"
+      info "Compiler: $native_cc ($(gcc --version | head -1))"
+      info "Native flags (append): $append_flags"
 
-      info "Compilando dependencias bundled (treesitter, luajit, luv...)..."
+      info "Building bundled dependencies (treesitter, luajit, luv...)..."
       cmake -S "$nvim_src/cmake.deps" -B "$deps_dir" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
@@ -564,7 +565,7 @@ EOF
         -DUSE_BUNDLED_LUV=ON
       cmake --build "$deps_dir" --parallel "$nproc"
 
-      info "Configurando build principal..."
+      info "Configuring the main build..."
       cmake -S "$nvim_src" -B "$build_dir" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
@@ -573,14 +574,14 @@ EOF
         -DCMAKE_INSTALL_PREFIX="$NVIM_PREFIX" \
         -DCMAKE_PREFIX_PATH="$deps_dir/usr"
 
-      info "Compilando con $nproc núcleos..."
+      info "Building with $nproc cores..."
       cmake --build "$build_dir" --parallel "$nproc"
 
       remove_previous_install
-      info "Instalando en $NVIM_PREFIX..."
+      info "Installing to $NVIM_PREFIX..."
       sudo cmake --install "$build_dir"
 
-      info "Verificando flags del binario instalado..."
+      info "Checking the installed binary's flags..."
       local producer detected_march ymm
       producer=$(readelf -wi "$NVIM_PREFIX/bin/nvim" 2>/dev/null \
         | grep -am1 "DW_AT_producer" | sed -E 's/.*\): //')
@@ -588,17 +589,17 @@ EOF
       ymm=$(objdump -d "$NVIM_PREFIX/bin/nvim" 2>/dev/null | grep -c "ymm")
       case "$detected_march" in
         "" | "-march=x86-64")
-          warn "El binario no quedó optimizado (${detected_march:-sin -march}): ${producer:-<sin DWARF>}"
+          warn "The binary isn't optimized (${detected_march:-no -march}): ${producer:-<no DWARF>}"
           ;;
         *)
-          ok "DWARF producer: ${detected_march} confirmado"
+          ok "DWARF producer: ${detected_march} confirmed"
           ;;
       esac
-      info "Instrucciones AVX2 (ymm): $ymm"
+      info "AVX2 instructions (ymm): $ymm"
     }
 
     if [[ "$NONINTERACTIVE" == "true" ]] || ! [ -t 0 ]; then
-      info "Modo no interactivo — usando tarball (método seguro)."
+      info "Non-interactive mode — using the tarball (safe method)."
       METHOD="tarball"
     else
       choose_method
@@ -606,12 +607,12 @@ EOF
     fi
 
     if [[ -z "$METHOD" ]]; then
-      info "Instalación cancelada."
+      info "Installation cancelled."
       exit 0
     fi
 
     if [[ "$METHOD" == "build" && "$BUILD_SUPPORTED" != "true" ]]; then
-      warn "Compilación no soportada en $ARCH — usando tarball precompilado."
+      warn "Building isn't supported on $ARCH — using the prebuilt tarball."
       METHOD="tarball"
     fi
 
@@ -620,32 +621,32 @@ EOF
         if build_source; then
           finalize
         else
-          info "Instalación cancelada."
+          info "Installation cancelled."
         fi
         ;;
       tarball)
         if install_tarball; then
           finalize
         else
-          info "Instalación cancelada."
+          info "Installation cancelled."
         fi
         ;;
       *)
-        die "Método desconocido: $METHOD"
+        die "Unknown method: $METHOD"
         ;;
     esac
   )
 }
 
-# Instala/actualiza tmux compilando desde fuente. tmux no publica binarios
-# precompilados en sus releases de GitHub (solo tarballs de código), así que,
-# a diferencia de nvim, aquí solo hay un método: build. La versión objetivo
-# se obtiene barato (sin clonar) con `git ls-remote --tags`, se compara contra
-# `tmux -V` y solo si hace falta se clona/compila/instala.
+# Installs/updates tmux by building it from source. tmux doesn't publish
+# prebuilt binaries in its GitHub releases (only source tarballs), so, unlike
+# nvim, there's only one method here: build. The target version is fetched
+# cheaply (no clone) with `git ls-remote --tags`, compared against `tmux -V`,
+# and it only clones/builds/installs when needed.
 #
-# Mismo patrón que install_nvim: prefix /opt/tmux + symlink
-# /usr/local/bin/tmux, subshell propio con `set -euo pipefail`, y purga el
-# paquete apt homónimo por defecto (ver remove_apt_if_present / KEEP_APT_PKGS).
+# Same pattern as install_nvim: /opt/tmux prefix + /usr/local/bin/tmux
+# symlink, its own subshell with `set -euo pipefail`, and it purges the
+# same-named apt package by default (see remove_apt_if_present / KEEP_APT_PKGS).
 install_tmux() {
   sep
   (
@@ -657,64 +658,65 @@ install_tmux() {
 
     CURRENT_VERSION="$(tmux -V 2>/dev/null || true)"
     if [[ -n "$CURRENT_VERSION" ]]; then
-      info "Versión actual: $CURRENT_VERSION"
+      info "Current version: $CURRENT_VERSION"
     else
-      warn "tmux no encontrado, procediendo con instalación..."
+      warn "tmux not found, proceeding with the install..."
     fi
 
-    info "Consultando último tag de tmux upstream..."
+    info "Looking up the latest upstream tmux tag..."
     LATEST_TAG=$(git ls-remote --tags --refs "$TMUX_REPO" 2>/dev/null \
       | awk -F/ '{print $NF}' | grep -E '^[0-9]+\.[0-9]+[a-z]?$' | sort -V | tail -1)
-    [[ -n "$LATEST_TAG" ]] || die "No se pudo determinar el último tag de tmux"
+    [[ -n "$LATEST_TAG" ]] || die "Couldn't determine the latest tmux tag"
     NEW_VERSION="tmux $LATEST_TAG"
 
     confirm_version tmux "$CURRENT_VERSION" "$NEW_VERSION" || {
-      info "Instalación cancelada."
+      info "Installation cancelled."
       exit 0
     }
 
-    sudo_keepalive || die "Sin permisos de administrador no se puede instalar en $TMUX_PREFIX"
+    sudo_keepalive || die "Can't install to $TMUX_PREFIX without administrator privileges"
     TMP_DIR="$(mktemp -d -p "$WORK_DIR" tmux.XXXXXX)"
 
-    info "Instalando dependencias de compilación..."
+    info "Installing build dependencies..."
     sudo apt-get install -y --no-install-recommends \
       build-essential libevent-dev libncurses-dev bison pkg-config \
       autoconf automake git
 
-    info "Clonando tmux $LATEST_TAG..."
+    info "Cloning tmux $LATEST_TAG..."
     git clone --depth 1 --branch "$LATEST_TAG" "$TMUX_REPO" "$TMP_DIR/tmux"
 
-    info "Generando configure (autogen.sh)..."
+    info "Generating configure (autogen.sh)..."
     (cd "$TMP_DIR/tmux" && sh autogen.sh)
 
-    info "Configurando build (prefix: $TMUX_PREFIX)..."
+    info "Configuring the build (prefix: $TMUX_PREFIX)..."
     (cd "$TMP_DIR/tmux" && ./configure --prefix="$TMUX_PREFIX")
 
     nproc_count=$(nproc)
-    info "Compilando con $nproc_count núcleos..."
+    info "Building with $nproc_count cores..."
     (cd "$TMP_DIR/tmux" && make -j"$nproc_count")
 
-    info "Eliminando instalación anterior..."
+    info "Removing the previous installation..."
     sudo rm -f "$TMUX_SYMLINK"
     sudo rm -rf "$TMUX_PREFIX"
     remove_apt_if_present tmux
 
-    info "Instalando en $TMUX_PREFIX..."
+    info "Installing to $TMUX_PREFIX..."
     (cd "$TMP_DIR/tmux" && sudo make install)
 
     sudo ln -sf "$TMUX_PREFIX/bin/tmux" "$TMUX_SYMLINK"
     echo ""
-    ok "Instalación completa: $("$TMUX_PREFIX/bin/tmux" -V)"
+    ok "Install complete: $("$TMUX_PREFIX/bin/tmux" -V)"
   )
 }
 
-# Instala/actualiza kitty vía el instalador oficial (no hay paquete apt: la
-# versión de Debian suele ir muy atrás). El instalador reemplaza
-# ~/.local/kitty.app in-place sin tocar symlinks ni .desktop files, pero baja
-# todo el bundle cada vez: antes se compara contra current-version.txt, que
-# kitty publica justo para esto. El instalador se descarga a un archivo y
-# luego se ejecuta — nunca `curl | sh`: sin -f, un error HTTP terminaba
-# ejecutado por sh, y una descarga cortada se ejecutaría a medias.
+# Installs/updates kitty through the official installer (no apt package:
+# Debian's version usually lags far behind). The installer replaces
+# ~/.local/kitty.app in place without touching symlinks or .desktop files, but
+# downloads the whole bundle every time: so it's compared first against
+# current-version.txt, which kitty publishes for exactly this. The installer
+# is downloaded to a file and then run — never `curl | sh`: without -f, an
+# HTTP error ended up executed by sh, and a cut-off download would run
+# half-way.
 install_kitty() {
   sep
   local current="" latest
@@ -724,26 +726,26 @@ install_kitty() {
 
   if latest="$(curl -fsSL https://sw.kovidgoyal.net/kitty/current-version.txt)" && [[ -n "$latest" ]]; then
     if ! confirm_version kitty "$current" "kitty $latest"; then
-      skip "kitty se queda en kitty $latest"
+      skip "kitty stays at kitty $latest"
       return 0
     fi
   else
-    warn "No se pudo consultar la última versión de kitty — se corre el instalador igual."
+    warn "Couldn't look up the latest kitty version — running the installer anyway."
   fi
 
   local installer="$WORK_DIR/kitty-installer.sh"
   if ! curl -fsSL -o "$installer" https://sw.kovidgoyal.net/kitty/installer.sh; then
-    err "Falló la descarga del instalador de kitty"
+    err "Downloading the kitty installer failed"
     return 1
   fi
   if ! sh "$installer"; then
-    err "Falló el instalador de kitty"
+    err "The kitty installer failed"
     return 1
   fi
-  ok "kitty instalado/actualizado -> $HOME/.local/kitty.app"
+  ok "kitty installed/updated -> $HOME/.local/kitty.app"
 }
 
-# yazi (terminal file manager): binario oficial; el zip trae yazi y ya.
+# yazi (terminal file manager): official binary; the zip ships yazi and ya.
 install_yazi() {
   sep
   local triple
@@ -751,18 +753,19 @@ install_yazi() {
     x86_64) triple="x86_64-unknown-linux-gnu" ;;
     aarch64) triple="aarch64-unknown-linux-gnu" ;;
     *)
-      warn "yazi no publica binario para $(uname -m) — se omite."
+      warn "yazi doesn't publish a binary for $(uname -m) — skipping."
       return 1
       ;;
   esac
   github_release_install sxyazi/yazi "yazi-$triple.zip" "yazi-$triple/yazi" "yazi-$triple/ya"
 }
 
-# CLI de tree-sitter: nvim-treesitter (rama main, LazyVim 15+) lo necesita
-# para compilar parsers y pide una versión reciente que el apt de Debians
-# anteriores no trae. El binario upstream pide glibc >= 2.39; si no corre
-# aquí, github_release_install aborta sin tocar nada. Tras instalar, purga
-# tree-sitter-cli de apt para que solo quede ~/.local/bin/tree-sitter.
+# tree-sitter CLI: nvim-treesitter (main branch, LazyVim 15+) needs it to
+# compile parsers and asks for a recent version that older Debians' apt
+# doesn't ship. The upstream binary needs glibc >= 2.39; if it doesn't run
+# here, github_release_install aborts without touching anything. After
+# installing, it purges apt's tree-sitter-cli so only ~/.local/bin/tree-sitter
+# is left.
 install_tree_sitter() {
   sep
   local arch
@@ -770,54 +773,53 @@ install_tree_sitter() {
     x86_64) arch="x64" ;;
     aarch64) arch="arm64" ;;
     *)
-      warn "tree-sitter no publica binario para $(uname -m) — se omite."
+      warn "tree-sitter doesn't publish a binary for $(uname -m) — skipping."
       return 1
       ;;
   esac
   github_release_install --purge-apt=tree-sitter-cli tree-sitter/tree-sitter \
     "tree-sitter-linux-$arch.gz" "tree-sitter-linux-$arch:tree-sitter" || {
-    warn "Si el binario no corre aquí: cargo install --locked tree-sitter-cli"
+    warn "If the binary doesn't run here: cargo install --locked tree-sitter-cli"
     return 1
   }
 }
 
-# Asegura pipx instalado antes de usarlo. Si falta, lo instala solo vía apt
-# (que en Debian/Ubuntu arrastra python3-venv como dependencia) en vez de
-# fallar pidiéndole al usuario que lo instale a mano. Idempotente: si ya
-# existe, no hace nada.
+# Makes sure pipx is installed before using it. If it's missing, it installs it
+# via apt on its own (on Debian/Ubuntu that pulls in python3-venv as a
+# dependency) instead of failing and asking the user to install it by hand.
+# Idempotent: if it already exists, it does nothing.
 ensure_pipx() {
   command -v pipx &>/dev/null && return 0
-  info "pipx no encontrado — instalando vía apt..."
+  info "pipx not found — installing it via apt..."
   sudo apt-get install -y pipx || {
-    err "Falló 'apt-get install pipx'"
+    err "'apt-get install pipx' failed"
     return 1
   }
   pipx ensurepath &>/dev/null || true
-  ok "pipx instalado -> $(command -v pipx)"
+  ok "pipx installed -> $(command -v pipx)"
 }
 
-# Install/upgrade genérico vía pipx: común a tmuxp/pgcli/mycli (y a cualquier
-# CLI de Python que se agregue después). pipx trae su propio mecanismo de
-# actualización — lo usamos directo en vez de reimplementar detección de
-# versión.
+# Generic install/upgrade through pipx: shared by tmuxp/pgcli/mycli (and any
+# Python CLI added later). pipx has its own update mechanism — we use it
+# directly instead of reimplementing version detection.
 install_via_pipx() {
   local pkg="$1"
   ensure_pipx || return 1
 
   if command -v "$pkg" &>/dev/null; then
-    info "Actualizando $pkg vía pipx..."
+    info "Updating $pkg via pipx..."
     if ! pipx upgrade "$pkg"; then
-      err "Falló 'pipx upgrade $pkg'"
+      err "'pipx upgrade $pkg' failed"
       return 1
     fi
-    ok "$pkg actualizado -> $(command -v "$pkg")"
+    ok "$pkg updated -> $(command -v "$pkg")"
   else
-    info "Instalando $pkg vía pipx..."
+    info "Installing $pkg via pipx..."
     if ! pipx install "$pkg" &>/dev/null; then
-      err "Falló 'pipx install $pkg'"
+      err "'pipx install $pkg' failed"
       return 1
     fi
-    ok "$pkg instalado vía pipx -> $HOME/.local/bin/$pkg"
+    ok "$pkg installed via pipx -> $HOME/.local/bin/$pkg"
   fi
 }
 
@@ -841,10 +843,10 @@ install_csvkit() {
   install_via_pipx csvkit
 }
 
-# Compila peaclock (reloj estético de terminal) desde fuente. No hay binario
-# oficial ni releases con versión, así que "¿hay actualización?" se decide
-# comparando el SHA remoto del HEAD contra el que quedó guardado tras el
-# último build exitoso — si no cambió, no vale la pena recompilar.
+# Builds peaclock (a pretty terminal clock) from source. There's no official
+# binary or versioned releases, so "is there an update?" is decided by
+# comparing the remote HEAD SHA against the one saved after the last
+# successful build — if it didn't change, rebuilding isn't worth it.
 install_peaclock() {
   sep
   local repo="https://github.com/octobanana/peaclock"
@@ -854,45 +856,45 @@ install_peaclock() {
   [[ -f "$state_file" ]] && local_sha="$(<"$state_file")"
 
   if command -v peaclock &>/dev/null && [[ -n "$remote_sha" && "$remote_sha" == "$local_sha" ]]; then
-    skip "peaclock ya está al día ($(command -v peaclock), $remote_sha)"
+    skip "peaclock is already up to date ($(command -v peaclock), $remote_sha)"
     return 0
   fi
 
   need_cmd git || return 1
   need_cmd cmake || return 1
   dpkg -s libicu-dev &>/dev/null || {
-    err "Falta ICU — instala libicu-dev primero (sudo apt install libicu-dev)."
+    err "ICU is missing — install libicu-dev first (sudo apt install libicu-dev)."
     return 1
   }
 
   local src
   src="$(mktemp -d -p "$WORK_DIR" peaclock.XXXXXX)" || return 1
 
-  info "Clonando peaclock..."
+  info "Cloning peaclock..."
   if ! git clone --depth=1 "$repo" "$src" &>/dev/null; then
-    err "Falló el clone de peaclock"
+    err "Cloning peaclock failed"
     return 1
   fi
 
-  info "Compilando peaclock (RUNME.sh build)..."
+  info "Building peaclock (RUNME.sh build)..."
   if ! (cd "$src" && ./RUNME.sh build --release) &>/dev/null; then
-    err "Falló la compilación de peaclock"
+    err "Building peaclock failed"
     return 1
   fi
 
-  info "Instalando peaclock (RUNME.sh install)..."
+  info "Installing peaclock (RUNME.sh install)..."
   if ! (cd "$src" && ./RUNME.sh install --release); then
-    err "Falló la instalación de peaclock"
+    err "Installing peaclock failed"
     return 1
   fi
 
   mkdir -p "$STATE_DIR"
   [[ -n "$remote_sha" ]] && echo "$remote_sha" >"$state_file"
-  ok "peaclock instalado/actualizado -> $(command -v peaclock)"
+  ok "peaclock installed/updated -> $(command -v peaclock)"
 }
 
-# Compila lavat (lava lamp de terminal) desde fuente — mismo criterio que
-# peaclock: sin releases con versión, se compara el SHA remoto del HEAD.
+# Builds lavat (a terminal lava lamp) from source — same approach as peaclock:
+# no versioned releases, so the remote HEAD SHA is compared.
 install_lavat() {
   sep
   local repo="https://github.com/AngelJumbo/lavat"
@@ -902,7 +904,7 @@ install_lavat() {
   [[ -f "$state_file" ]] && local_sha="$(<"$state_file")"
 
   if command -v lavat &>/dev/null && [[ -n "$remote_sha" && "$remote_sha" == "$local_sha" ]]; then
-    skip "lavat ya está al día ($(command -v lavat), $remote_sha)"
+    skip "lavat is already up to date ($(command -v lavat), $remote_sha)"
     return 0
   fi
 
@@ -911,34 +913,34 @@ install_lavat() {
   local src
   src="$(mktemp -d -p "$WORK_DIR" lavat.XXXXXX)" || return 1
 
-  info "Clonando lavat..."
+  info "Cloning lavat..."
   if ! git clone --depth=1 "$repo" "$src" &>/dev/null; then
-    err "Falló el clone de lavat"
+    err "Cloning lavat failed"
     return 1
   fi
 
-  info "Compilando lavat (make)..."
+  info "Building lavat (make)..."
   if ! (cd "$src" && make) &>/dev/null; then
-    err "Falló la compilación de lavat"
+    err "Building lavat failed"
     return 1
   fi
 
-  info "Instalando lavat (sudo make install)..."
+  info "Installing lavat (sudo make install)..."
   if ! (cd "$src" && sudo make install) &>/dev/null; then
-    err "Falló 'sudo make install' de lavat"
+    err "lavat's 'sudo make install' failed"
     return 1
   fi
 
   mkdir -p "$STATE_DIR"
   [[ -n "$remote_sha" ]] && echo "$remote_sha" >"$state_file"
-  ok "lavat instalado/actualizado -> $(command -v lavat)"
+  ok "lavat installed/updated -> $(command -v lavat)"
 }
 
-# ─── ayuda ───────────────────────────────────────────────────────────────────
-# Se imprime el bloque "# Uso:" de la cabecera de este mismo archivo: una sola
-# fuente para la documentación, sin un texto duplicado que se desactualice.
+# ─── help ───────────────────────────────────────────────────────────────────
+# Prints the "# Usage:" block from this very file's header: a single source
+# for the docs, with no duplicated text to go stale.
 usage() {
-  sed -n '/^# Uso:/,/^[^#]/{/^#/s/^# \{0,1\}//p}' "$0"
+  sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p}' "$0"
   printf '\nKeys: %s\n' "${PKG_KEYS[*]}"
 }
 
@@ -956,20 +958,20 @@ for arg in "$@"; do
       exit 0
       ;;
     *)
-      err "Argumento desconocido: $arg"
+      err "Unknown argument: $arg"
       usage >&2
       exit 1
       ;;
   esac
 done
 
-# ─── directorio de trabajo + limpieza ────────────────────────────────────────
-# Un solo directorio para todo lo temporal; cada instalador crea su
-# subcarpeta con `mktemp -d -p "$WORK_DIR"`. El trap lo borra (y mata el
-# keepalive de sudo) pase lo que pase: éxito, error o Ctrl-C. Los traps de
-# INT/TERM convierten la señal en un exit normal para que corra el de EXIT.
+# ─── work dir + cleanup ─────────────────────────────────────────────────────
+# A single directory for everything temporary; each installer creates its
+# subfolder with `mktemp -d -p "$WORK_DIR"`. The trap deletes it (and kills
+# the sudo keepalive) no matter what: success, error or Ctrl-C. The INT/TERM
+# traps turn the signal into a normal exit so the EXIT one runs.
 WORK_DIR="$(mktemp -d -t dev-packages.XXXXXX)" || {
-  err "No se pudo crear el directorio de trabajo"
+  err "Couldn't create the work directory"
   exit 1
 }
 cleanup() {
@@ -981,7 +983,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# ─── selección de keys a procesar ────────────────────────────────────────────
+# ─── key selection ──────────────────────────────────────────────────────────
 CHOSEN=()
 if [[ ${#ONLY_KEYS[@]} -gt 0 ]]; then
   CHOSEN=("${ONLY_KEYS[@]}")
@@ -990,11 +992,11 @@ elif [[ "$NONINTERACTIVE" == "true" ]] || ! [ -t 0 ]; then
   CHOSEN=("${PKG_KEYS[@]}")
 else
   if ! command -v dialog &>/dev/null; then
-    err "dialog no encontrado — instálalo primero (sudo apt install dialog) o usa --all/--only=."
+    err "dialog not found — install it first (sudo apt install dialog) or use --all/--only=."
     exit 1
   fi
   if ! select_packages CHOSEN; then
-    warn "dev-packages cancelado."
+    warn "dev-packages cancelled."
     exit 0
   fi
 fi
@@ -1004,7 +1006,7 @@ if [[ ${#CHOSEN[@]} -eq 0 ]]; then
   exit 0
 fi
 
-# ─── ejecución + resumen ─────────────────────────────────────────────────────
+# ─── run + summary ──────────────────────────────────────────────────────────
 succeeded=0
 failed=()
 for key in "${CHOSEN[@]}"; do

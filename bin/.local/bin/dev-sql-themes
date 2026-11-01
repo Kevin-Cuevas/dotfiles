@@ -1,39 +1,39 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# dev-sql-themes — aplica/actualiza el tema de colores Nord en pgcli y/o mycli,
-# tocando únicamente las claves de color conocidas (syntax_style + [colors]).
-# Nunca toca el resto del archivo: alias de conexión ([alias_dsn] en mycli),
-# historial, ni ningún otro ajuste. Standalone, igual que dev-ssh/dev-packages:
-# no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR, corre suelto una vez
-# stow-eado a ~/.local/bin.
+# dev-sql-themes — applies/updates the Nord color theme in pgcli and/or mycli,
+# touching only the known color keys (syntax_style + [colors]). It never
+# touches the rest of the file: connection aliases ([alias_dsn] in mycli),
+# history, or any other setting. Standalone, like dev-ssh/dev-packages: it
+# doesn't depend on bootstrap.d/*.sh or $DOTFILES_DIR, and runs on its own
+# once stowed into ~/.local/bin.
 #
-# Motor: upsert clave por clave vía un heredoc de Python3 embebido — si la
-# clave ya existe dentro de su sección la reemplaza in-place; si no, la agrega
-# al final de esa sección (o crea la sección si no existía). Nunca toca líneas
-# fuera de la lista de claves del tema. Hace backup (<archivo>.bak.<timestamp>)
-# antes de escribir, y es idempotente: correrlo dos veces seguidas no vuelve a
-# tocar el archivo la segunda vez.
+# Engine: key-by-key upsert through an embedded Python3 heredoc — if the key
+# already exists in its section it's replaced in place; otherwise it's
+# appended to the end of that section (or the section is created if missing).
+# It never touches lines outside the theme's key list. It backs up
+# (<file>.bak.<timestamp>) before writing, and it's idempotent: running it
+# twice in a row doesn't touch the file the second time.
 #
-# Uso:
-#   dev-sql-themes                    pgcli y mycli, los que estén instalados
-#   dev-sql-themes --pgcli            solo pgcli
-#   dev-sql-themes --mycli            solo mycli
-#   dev-sql-themes --dry-run          muestra el diff, no escribe
-#   dev-sql-themes --pgcli-conf=PATH  usa otra ruta de config (pruebas)
+# Usage:
+#   dev-sql-themes                    pgcli and mycli, whichever are installed
+#   dev-sql-themes --pgcli            pgcli only
+#   dev-sql-themes --mycli            mycli only
+#   dev-sql-themes --dry-run          show the diff, don't write
+#   dev-sql-themes --pgcli-conf=PATH  use another config path (testing)
 #   dev-sql-themes --mycli-conf=PATH
 #   dev-sql-themes --help
 # ==============================================================================
 set -uo pipefail
 
-# ─── look & feel (mismo estilo que dev-ssh/dev-packages) ────────────────────
+# ─── look & feel (same style as dev-ssh/dev-packages) ───────────────────────
 RED='\e[38;2;191;97;106m'
 GRN='\e[38;2;163;190;140m'
 YLW='\e[38;2;235;203;139m'
 BLU='\e[38;2;136;192;208m'
-# shellcheck disable=SC2034 # paleta Nord compartida entre scripts; aquí no se usa
+# shellcheck disable=SC2034 # Nord palette shared across scripts; unused here
 CYN='\e[38;2;143;188;187m'
 DIM='\e[38;2;94;129;172m'
-# shellcheck disable=SC2034 # paleta Nord compartida entre scripts; aquí no se usa
+# shellcheck disable=SC2034 # Nord palette shared across scripts; unused here
 BLD='\e[1m'
 RST='\e[0m'
 
@@ -43,12 +43,12 @@ err() { printf "${RED}[ERR]${RST}   %s\n" "$*" >&2; }
 warn() { printf "${YLW}[WARN]${RST}  %s\n" "$*"; }
 sep() { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
 
-USAGE="Uso:
-  dev-sql-themes                    pgcli y mycli, los que estén instalados
-  dev-sql-themes --pgcli            solo pgcli
-  dev-sql-themes --mycli            solo mycli
-  dev-sql-themes --dry-run          muestra el diff, no escribe
-  dev-sql-themes --pgcli-conf=PATH  usa otra ruta de config (pruebas)
+USAGE="Usage:
+  dev-sql-themes                    pgcli and mycli, whichever are installed
+  dev-sql-themes --pgcli            pgcli only
+  dev-sql-themes --mycli            mycli only
+  dev-sql-themes --dry-run          show the diff, don't write
+  dev-sql-themes --pgcli-conf=PATH  use another config path (testing)
   dev-sql-themes --mycli-conf=PATH
   dev-sql-themes --help"
 
@@ -70,7 +70,7 @@ for arg in "$@"; do
       exit 0
       ;;
     *)
-      err "Argumento desconocido: $arg"
+      err "Unknown argument: $arg"
       printf "%s\n" "$USAGE" >&2
       exit 1
       ;;
@@ -84,7 +84,7 @@ if [[ -z "$DO_PGCLI" && -z "$DO_MYCLI" ]]; then
   DEFAULT_MODE=1
 fi
 
-# ─── paleta Nord embebida (idéntica a la que ya está viva en ambas configs) ──
+# ─── embedded Nord palette (identical to the one live in both configs) ─────
 PGCLI_PAYLOAD=$(
   cat <<'JSON'
 {
@@ -158,7 +158,7 @@ MYCLI_PAYLOAD=$(
 JSON
 )
 
-# ─── motor: upsert clave por clave, section-aware, dentro de un archivo INI ──
+# ─── engine: key-by-key, section-aware upsert inside an INI file ────────────
 upsert_ini() {
   local file="$1" payload_json="$2" payload_b64
   payload_b64=$(printf '%s' "$payload_json" | base64 -w0)
@@ -249,34 +249,34 @@ apply_theme() {
   out="$(upsert_ini "$file" "$payload")"
   rc=$?
   if ((rc == 2)); then
-    err "No se pudo leer $file"
+    err "Couldn't read $file"
     return 1
   elif ((rc != 0)); then
-    err "Fallo aplicando el tema a $file"
+    err "Failed to apply the theme to $file"
     return 1
   fi
 
   if [[ "$out" == "NOCHANGE" ]]; then
-    ok "$file ya tenía el tema Nord al día (sin cambios)"
+    ok "$file already had the Nord theme up to date (no changes)"
   elif [[ "$DRY_RUN" == 1 ]]; then
     printf "%s\n" "$out"
-    ok "dry-run: así quedaría $file"
+    ok "dry-run: this is how $file would look"
   else
-    ok "$file actualizado (backup: ${out#CHANGED })"
+    ok "$file updated (backup: ${out#CHANGED })"
   fi
 }
 
 do_pgcli() {
   if ! command -v pgcli &>/dev/null; then
     if ((DEFAULT_MODE)); then
-      warn "pgcli no está instalado — se salta."
+      warn "pgcli isn't installed — skipping."
       return 0
     fi
-    err "pgcli no está instalado."
+    err "pgcli isn't installed."
     return 1
   fi
   if [[ ! -f "$PGCLI_CONF" ]]; then
-    warn "No existe $PGCLI_CONF — corre pgcli una vez para que genere su config y vuelve a intentar."
+    warn "$PGCLI_CONF doesn't exist — run pgcli once so it generates its config, then try again."
     return 0
   fi
   sep
@@ -287,14 +287,14 @@ do_pgcli() {
 do_mycli() {
   if ! command -v mycli &>/dev/null; then
     if ((DEFAULT_MODE)); then
-      warn "mycli no está instalado — se salta."
+      warn "mycli isn't installed — skipping."
       return 0
     fi
-    err "mycli no está instalado."
+    err "mycli isn't installed."
     return 1
   fi
   if [[ ! -f "$MYCLI_CONF" ]]; then
-    warn "No existe $MYCLI_CONF — corre mycli una vez para que genere su config y vuelve a intentar."
+    warn "$MYCLI_CONF doesn't exist — run mycli once so it generates its config, then try again."
     return 0
   fi
   sep

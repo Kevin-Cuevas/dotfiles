@@ -50,6 +50,12 @@
 #                    the current wallpaper is KDE's stock one. A hand-picked
 #                    one is kept in --all; it's only replaced when you choose
 #                    this key.
+#   - yakuake     -> writes the Yakuake settings listed in plasma/yakuake/
+#                    yakuakerc (no borders, no title/tab bar, no tray icon...)
+#                    key by key, so everything else in your yakuakerc stays.
+#                    The Konsole profiles/colors come from the stowed konsole/
+#                    package, and switching them with the light/dark mode is
+#                    the job of dotfiles-konsole-theme-sync (dev-services).
 #
 # Outside KDE Plasma (servers, Termux) it does nothing and exits with 0.
 #
@@ -108,11 +114,16 @@ KURO_ID="a2n.kuro"
 PAPIRUS_FOLDERS_URL="https://raw.githubusercontent.com/PapirusDevelopmentTeam/papirus-folders/master/papirus-folders"
 PAPIRUS_FOLDERS_BIN="$HOME/.local/bin/papirus-folders"
 SDDM_DROPIN=/etc/sddm.conf.d/dev-plasma.conf
+YAKUAKE_RC_SRC="$SRC_DIR/yakuake/yakuakerc"
+KONSOLE_DIR="$HOME/.local/share/konsole"
+KONSOLE_DARK="NivekDarkNordKonsole"
+KONSOLE_LIGHT="NivekLightNordKonsole"
+TERM_SYNC_UNIT="dotfiles-konsole-theme-sync.service"
 
 # ─── registry ───────────────────────────────────────────────────────────────
 # PKG_KEYS order is the run order (regardless of --only's order): external
 # pieces first, then applying the theme that uses them.
-PKG_KEYS=(themes icons splash sddm-cursor apply wallpaper launcher-icon)
+PKG_KEYS=(themes icons splash sddm-cursor apply wallpaper launcher-icon yakuake)
 declare -A PKG_LABEL=(
   [themes]="Global Themes + colors + Nord Flare from the repo (kpackagetool6)"
   [icons]="Papirus from apt + $FOLDER_COLOR folders (papirus-folders)"
@@ -121,6 +132,7 @@ declare -A PKG_LABEL=(
   [apply]="Apply $THEME_DARK / $THEME_LIGHT for the current mode"
   [wallpaper]="Nord Flare wallpaper (if you have the stock one)"
   ["launcher-icon"]="$LAUNCHER_ICON icon on the launcher (icon only)"
+  [yakuake]="Yakuake settings: no borders, no title/tab bar, no tray icon"
 )
 declare -A PKG_FN=(
   [themes]="install_themes"
@@ -130,6 +142,7 @@ declare -A PKG_FN=(
   [apply]="apply_theme"
   [wallpaper]="apply_wallpaper"
   ["launcher-icon"]="set_launcher_icon"
+  [yakuake]="configure_yakuake"
 )
 
 # ─── utilities ──────────────────────────────────────────────────────────────
@@ -717,6 +730,134 @@ print(changed + ' ' + same + ' ' + custom);"
   fi
 }
 
+# ─── yakuake ────────────────────────────────────────────────────────────────
+# "group<TAB>key<TAB>value" for every key in the repo's yakuakerc.
+yakuake_keys() {
+  awk '
+    /^[[:space:]]*(#|$)/ { next }
+    /^\[/ { group = substr($0, 2, length($0) - 2); next }
+    { i = index($0, "="); printf "%s\t%s\t%s\n", group, substr($0, 1, i - 1), substr($0, i + 1) }
+  ' "$YAKUAKE_RC_SRC"
+}
+
+# The repo keys whose value in ~/.config/yakuakerc differs:
+# "group<TAB>key<TAB>wanted<TAB>current".
+yakuake_drift() {
+  local group key want cur
+  while IFS=$'\t' read -r group key want; do
+    cur="$(kreadconfig6 --file yakuakerc --group "$group" --key "$key" 2>/dev/null)"
+    [[ "$cur" == "$want" ]] || printf '%s\t%s\t%s\t%s\n' "$group" "$key" "$want" "$cur"
+  done < <(yakuake_keys)
+}
+
+# rc files (yakuakerc / konsolerc) whose DefaultProfile names a profile that
+# doesn't exist (e.g. one renamed in the repo): Konsole/Yakuake would open
+# with the stock profile until the theme-sync service runs again.
+broken_default_profiles() {
+  local rc cur
+  for rc in yakuakerc konsolerc; do
+    cur="$(kreadconfig6 --file "$rc" --group "Desktop Entry" --key DefaultProfile 2>/dev/null)"
+    [[ -n "$cur" && ! -f "$KONSOLE_DIR/$cur" ]] && echo "$rc"
+  done
+}
+
+yakuake_running() {
+  pgrep -u "$USER" -x yakuake &>/dev/null
+}
+
+# Yakuake writes its whole in-memory config back to yakuakerc when it quits,
+# so keys written while it runs would be undone on its next exit. It's
+# quit first (asking: its open tabs close), then started again.
+quit_yakuake() {
+  kquitapp6 yakuake &>/dev/null
+  local tries=10
+  while ((tries-- > 0)); do
+    yakuake_running || return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+configure_yakuake() {
+  sep
+  [[ -f "$YAKUAKE_RC_SRC" ]] || {
+    err "Can't find $YAKUAKE_RC_SRC"
+    return 1
+  }
+  need_cmd kwriteconfig6 || return 1
+  command -v yakuake &>/dev/null \
+    || warn "Yakuake isn't installed (sudo apt install yakuake) — writing its settings anyway"
+
+  # Links left behind by profiles/color schemes renamed in the repo: stow
+  # only knows the package's current files, so it never removes these.
+  local f
+  for f in "$KONSOLE_DIR"/*; do
+    [[ -L "$f" && ! -e "$f" && "$(readlink "$f")" == */konsole/.local/share/konsole/* ]] || continue
+    rm -f -- "$f" && ok "Removed stale link $(basename "$f") (renamed in the repo)"
+  done
+
+  local p missing=()
+  for p in "$KONSOLE_DARK" "$KONSOLE_LIGHT"; do
+    [[ -f "$KONSOLE_DIR/$p.profile" ]] || missing+=("$p.profile")
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    err "${missing[*]} missing in $KONSOLE_DIR — stow the konsole package first (bootstrap option 4)"
+    return 1
+  fi
+
+  local drift broken
+  drift="$(yakuake_drift)"
+  broken="$(broken_default_profiles)"
+  if [[ -z "$drift" && -z "$broken" ]]; then
+    skip "Yakuake settings are already up to date"
+  else
+    local restart=false
+    if yakuake_running; then
+      if [[ "$NONINTERACTIVE" == "true" ]]; then
+        warn "Yakuake is running and would write its old settings back on exit — close it and run: dev-plasma --only=yakuake"
+        return 0
+      fi
+      if ! ask_yes_no "Yakuake is running: it writes its own settings back when it quits, which would undo these.\n\nQuit Yakuake now and start it again? Its open tabs will close."; then
+        warn "Yakuake settings not changed (close it and run: dev-plasma --only=yakuake)"
+        return 0
+      fi
+      quit_yakuake || {
+        err "Yakuake didn't quit — close it by hand and run dev-plasma --only=yakuake again"
+        return 1
+      }
+      ok "Yakuake closed"
+      restart=true
+    fi
+
+    local group key want cur
+    while IFS=$'\t' read -r group key want cur; do
+      [[ -n "$group" ]] || continue
+      kwriteconfig6 --file yakuakerc --group "$group" --key "$key" "$want"
+      ok "yakuakerc [$group] $key: ${cur:-<unset>} → $want"
+    done <<<"$drift"
+
+    # The profile for the current mode; the theme-sync service keeps it right
+    # from then on.
+    local profile="$KONSOLE_DARK.profile" rc
+    is_light_mode && profile="$KONSOLE_LIGHT.profile"
+    while IFS= read -r rc; do
+      [[ -n "$rc" ]] || continue
+      kwriteconfig6 --file "$rc" --group "Desktop Entry" --key DefaultProfile "$profile"
+      ok "$rc: DefaultProfile → $profile (the previous one no longer exists)"
+    done <<<"$broken"
+
+    if $restart && has_session; then
+      setsid -f yakuake &>/dev/null
+      ok "Yakuake started again"
+    fi
+  fi
+
+  if command -v systemctl &>/dev/null && ! systemctl --user is-active -q "$TERM_SYNC_UNIT" 2>/dev/null; then
+    warn "$TERM_SYNC_UNIT isn't running: Konsole/Yakuake won't follow the light/dark mode (dev-services --install=konsole-theme-sync)"
+  fi
+  return 0
+}
+
 # ─── doctor ─────────────────────────────────────────────────────────────────
 # Checks that every piece the Global Themes name really exists. Changes
 # nothing. Returns 1 if something is broken (not for warnings).
@@ -792,6 +933,43 @@ doctor_theme() {
   fi
 }
 
+doctor_terminal() {
+  local p rc
+  for p in "$KONSOLE_DARK" "$KONSOLE_LIGHT"; do
+    if [[ -f "$KONSOLE_DIR/$p.profile" ]]; then
+      doc_ok "Konsole profile $p"
+    else
+      doc_warn "Konsole profile $p missing in $KONSOLE_DIR (stow the konsole package)"
+    fi
+  done
+  while IFS= read -r rc; do
+    [[ -n "$rc" ]] && doc_warn "$rc: DefaultProfile names a profile that doesn't exist (dev-plasma --only=yakuake)"
+  done < <(broken_default_profiles)
+
+  if ! command -v yakuake &>/dev/null; then
+    doc_warn "Yakuake isn't installed (sudo apt install yakuake)"
+  elif [[ -f "$YAKUAKE_RC_SRC" ]]; then
+    local drift group key want cur
+    drift="$(yakuake_drift)"
+    if [[ -z "$drift" ]]; then
+      doc_ok "Yakuake settings match the repo"
+    else
+      doc_warn "Yakuake settings differ from the repo (dev-plasma --only=yakuake):"
+      while IFS=$'\t' read -r group key want cur; do
+        doc_warn "  [$group] $key=${cur:-<unset>}, expected $want"
+      done <<<"$drift"
+    fi
+  fi
+
+  if command -v systemctl &>/dev/null; then
+    if systemctl --user is-active -q "$TERM_SYNC_UNIT" 2>/dev/null; then
+      doc_ok "$TERM_SYNC_UNIT active (Konsole/Yakuake follow the light/dark mode)"
+    else
+      doc_warn "$TERM_SYNC_UNIT isn't running (dev-services --install=konsole-theme-sync)"
+    fi
+  fi
+}
+
 run_doctor() {
   sep
   info "Doctor: $THEME_DARK / $THEME_LIGHT"
@@ -836,6 +1014,8 @@ run_doctor() {
     doc_warn "current pair: light=${light:-?} dark=${dark:-?} (dev-plasma --only=apply)"
   fi
 
+  doctor_terminal
+
   sep
   if [[ $DOC_FAIL -eq 0 ]]; then
     ok "Doctor: everything the themes reference exists"
@@ -857,7 +1037,7 @@ select_keys() {
   raw=$(dialog --clear --colors --backtitle "$BACKTITLE" \
     --title " dev-plasma " --separate-output --checklist \
     "Select what to install/apply  [SPACE=toggle  ENTER=confirm]\n\nThe doctor runs at the end and checks nothing is left broken." \
-    16 76 6 "${items[@]}" \
+    18 76 8 "${items[@]}" \
     3>&1 1>&2 2>&3) || return 1
   clear
   local line

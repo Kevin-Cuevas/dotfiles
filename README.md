@@ -343,8 +343,7 @@ outside the package folder (`kf.package: Path traversal attempt detected` in
 the journal): a theme symlinked into `~/dotfiles` gets its `contents/defaults`
 ignored and Plasma silently applies Breeze. So they're installed as **copies**,
 like any "Get New…" theme — the repo is the source of truth, edits happen
-there (the `nivek-plasma-global-theme` skill does that) and
-`dev-plasma --only=themes` reinstalls whatever changed. The themes carry
+there and `dev-plasma --only=themes` reinstalls whatever changed. The themes carry
 **no desktop/panel layout** on purpose: a layout replaces the whole panel,
 pinned apps included. The launcher icon (`nivek-debian`, a Nord frost Debian
 swirl kept in `plasma/icons/hicolor`) is set by its own key instead, which

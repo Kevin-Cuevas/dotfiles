@@ -380,8 +380,8 @@ on servers. A run always ends with the doctor.
 
 ## Boot themes (GRUB + Plymouth)
 
-The GRUB theme **`nord`** and the Plymouth animation **`cuts_alt`** are
-vendored in `boot/`: copies of their GPLv3 upstreams, byte-identical to them,
+The GRUB theme **`nord`** (plus two alternative icon sets) and the Plymouth
+animation **`cuts_alt`** are vendored in `boot/`: copies of their GPLv3 upstreams, byte-identical to them,
 with their `LICENSE`, so a fresh machine never depends on those repos still
 existing. Sources, commits and how the GRUB variant was built are in
 [`boot/README.md`](boot/README.md). They're installed system-wide by
@@ -389,17 +389,45 @@ existing. Sources, commits and how the GRUB variant was built are in
 real path:
 
 ```bash
-dev-boot                  # interactive checklist (dialog)
-dev-boot --all            # both keys, no prompts
-dev-boot --only=plymouth  # just one key
-dev-boot --dry-run        # print every sudo command it would run; changes nothing
-dev-boot --doctor         # check what the next boot will actually show; changes nothing
+dev-boot                      # interactive menu (dialog)
+dev-boot --all                # both keys, no prompts (keeps whatever was chosen before)
+dev-boot --only=plymouth      # just one key
+dev-boot --plymouth=liquid    # pick the animation: from boot/ or from the upstream repo
+dev-boot --grub-icons=color   # GRUB icon set: white | color | whitesur
+dev-boot --list-plymouth      # list every available Plymouth theme
+dev-boot --dry-run            # print every sudo command it would run; changes nothing
+dev-boot --doctor             # check what the next boot will actually show; changes nothing
 ```
+
+The menu shows the current state (theme, icon set, whether it's up to date)
+and has entries to apply everything, **pick the Plymouth animation**, **pick
+the GRUB icon set**, run the doctor or simulate. Before anything runs with
+sudo it shows a summary of what will change, computed by the same code in
+`--dry-run`, with *Apply* / *Cancel*; `update-grub` and `update-initramfs`
+output is shown in a dialog box.
+
+- **Plymouth animation**: the themes saved in `boot/plymouth/themes`
+  (`cuts_alt`, the default), the ones already installed from upstream, and
+  *View the upstream themes…*: the 80 themes of
+  [adi1090x/plymouth-themes](https://github.com/adi1090x/plymouth-themes),
+  pinned to the same commit as `cuts_alt`, with a name filter. Only the chosen
+  theme's folder is downloaded (sparse git checkout, not the whole ~270 MB) and
+  installed **on this machine only** — it is not added to the dotfiles. Before
+  installing, it must be in upstream's list, contain no symlinks or special
+  files, weigh under 50 MB, be a `script` theme whose `ImageDir`/`ScriptFile`
+  point to its own folder, and it never overwrites a theme owned by a Debian
+  package. It's marked with `.dev-boot-source` (repo, commit, path). The
+  choice isn't stored anywhere else: it's `Theme=` in `plymouthd.conf`, so
+  `--all` keeps it (and falls back to `cuts_alt` if it's a theme `dev-boot`
+  doesn't know).
+- **GRUB icons**: `white` (the default, inside the theme), `color` or
+  `whitesur` (in `boot/grub/icons/`). The theme is assembled in a temp dir with
+  the chosen set and marked with `.dev-boot-icons`.
 
 | Key        | What it does |
 | ---------- | ------------ |
-| `grub`     | installs the theme to `/boot/grub/themes/nord` and writes **only** `/etc/default/grub.d/dev-boot.cfg` (`GRUB_THEME` + `GRUB_GFXMODE=1920x1080,auto`, which falls back to `auto` on other screens). `/etc/default/grub` is never touched — it holds per-machine settings such as the kernel command line. `grub-mkconfig` reads `grub.d/*.cfg` after `/etc/default/grub`, so the drop-in wins. `update-grub` only runs when something changed; if it fails, the drop-in is restored (and `grub-mkconfig` validates `grub.cfg.new` before replacing the real one, so the bootable `grub.cfg` is never lost) |
-| `plymouth` | installs the theme to `/usr/share/plymouth/themes/cuts_alt` and keeps Debian's layers consistent: **(1)** `Theme=` in `/etc/plymouth/plymouthd.conf` — the one that wins; only that line is edited, with a backup; **(2)** `/usr/share/plymouth/plymouthd.defaults` belongs to the package (desktop-base) and is left alone; **(3)** the `default.plymouth` alternative, registered at priority 100 as a fallback. `plymouth-set-default-theme` isn't used: it edits with `sed -ie` and leaves a stray `plymouthd.confe`. Since the theme lives **inside the initramfs**, `update-initramfs` runs when something changed or the current initrd lacks the theme, after checking free space (it builds `.new` and only swaps it in on success) |
+| `grub`     | installs the theme (with the chosen icon set) to `/boot/grub/themes/nord` and writes **only** `/etc/default/grub.d/dev-boot.cfg` (`GRUB_THEME` + `GRUB_GFXMODE=1920x1080,auto`, which falls back to `auto` on other screens). `/etc/default/grub` is never touched — it holds per-machine settings such as the kernel command line. `grub-mkconfig` reads `grub.d/*.cfg` after `/etc/default/grub`, so the drop-in wins. `update-grub` only runs when something changed; if it fails, the drop-in is restored (and `grub-mkconfig` validates `grub.cfg.new` before replacing the real one, so the bootable `grub.cfg` is never lost) |
+| `plymouth` | installs the chosen theme to `/usr/share/plymouth/themes/<name>` and keeps Debian's layers consistent: **(1)** `Theme=` in `/etc/plymouth/plymouthd.conf` — the one that wins; only that line is edited, with a backup; **(2)** `/usr/share/plymouth/plymouthd.defaults` belongs to the package (desktop-base) and is left alone; **(3)** the `default.plymouth` alternative, registered at priority 100 as a fallback. `plymouth-set-default-theme` isn't used: it edits with `sed -ie` and leaves a stray `plymouthd.confe`. Since the theme lives **inside the initramfs**, `update-initramfs` runs when something changed or the current initrd lacks the theme, after checking free space (it builds `.new` and only swaps it in on success) |
 
 Themes are installed atomically (copied next to the target, then swapped), and
 every file `dev-boot` rewrites under `/etc` keeps a `*.dev-boot.bak` of its

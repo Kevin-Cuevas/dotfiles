@@ -69,6 +69,8 @@ stow_packages() {
     # que rechaza archivos symlinkeados fuera de la carpeta del paquete. Los
     # instala dev-plasma (kpackagetool6 + copias), menú 13.
     [[ "$name" == "plasma" ]] && continue
+    # boot/ (temas de GRUB y Plymouth) va a rutas de root: lo instala dev-boot.
+    [[ "$name" == "boot" ]] && continue
     [[ "$name" == "bootstrap"* ]] && continue
     [[ "$name" == "."* ]] && continue
     pkgs+=("$name")
@@ -102,7 +104,7 @@ stow_packages() {
       --title " Stow Packages " \
       --separate-output \
       --checklist \
-      "Select packages to stow  [SPACE=toggle  ENTER=confirm]\n\nTarget: $TARGET\n\nNote: system/ and plasma/ are always excluded (use the MOTD / dev-plasma options instead)" \
+      "Select packages to stow  [SPACE=toggle  ENTER=confirm]\n\nTarget: $TARGET\n\nNote: system/, plasma/ and boot/ are always excluded (use the MOTD / dev-plasma / dev-boot options instead)" \
       "$win_height" 64 "$list_height" \
       "${items[@]}" \
       3>&1 1>&2 2>&3) || {

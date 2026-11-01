@@ -3,7 +3,7 @@
 # ==============================================================================
 # Small, mostly-independent menu-option implementations that don't warrant
 # their own file: default-shell + dev-* script permissions, thin launchers
-# for the standalone bin/.local/bin/dev-{packages,motd,ssh,plasma} scripts, Nerd
+# for the standalone bin/.local/bin/dev-{packages,motd,ssh,plasma,boot} scripts, Nerd
 # Fonts, the Timewarrior hook, and TPM. Named "misc", not "system", to avoid
 # clashing with the repo's own system/ directory (MOTD + systemd units),
 # which is a different, unrelated thing.
@@ -113,6 +113,21 @@ run_dev_plasma() {
   [[ -x "$plasma_script" ]] || chmod +x "$plasma_script"
   info "Launching dev-plasma..."
   DEV_PLASMA_BACKTITLE="$BACKTITLE" "$plasma_script"
+}
+
+# dev-boot toca el arranque (GRUB + Plymouth, con sudo). Sin GRUB o sin
+# Plymouth salta esa parte, así que en --all se puede llamar en cualquier
+# máquina; si no hay nada que cambiar no pide sudo.
+run_dev_boot() {
+  sep
+  local boot_script="$DOTFILES_DIR/bin/.local/bin/dev-boot"
+  [[ -f "$boot_script" ]] || {
+    err "dev-boot not found at $boot_script"
+    return 1
+  }
+  [[ -x "$boot_script" ]] || chmod +x "$boot_script"
+  info "Launching dev-boot..."
+  DEV_BOOT_BACKTITLE="$BACKTITLE" "$boot_script"
 }
 
 run_dev_ssh() {

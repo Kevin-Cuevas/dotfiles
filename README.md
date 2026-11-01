@@ -37,6 +37,7 @@ all at once.
 ```
 dotfiles/
 ├── bin/          -> ~/.local/bin          personal CLI tools and dev-* helpers  [per-file]
+├── boot/                                GRUB + Plymouth themes (not stowed: dev-boot)
 ├── cava/         -> ~/.config/cava
 ├── icons/        -> ~/.icons              cursor and icon themes
 ├── kitty/        -> ~/.config/kitty
@@ -135,7 +136,7 @@ runs on its own:
 | `10-packages.sh` | apt packages only (menu option 2) — non-apt tools live in `dev-packages`, see below |
 | `20-runtimes.sh` | language runtimes: rust, node, deno, bun, java via SDKMAN (menu option 12) |
 | `30-stow.sh` | stow strategy (menu option 4) + systemd `--user` unit linking |
-| `40-misc.sh` | default shell, `dev-*` permissions, `dev-packages`/`dev-motd`/`dev-ssh`/`dev-plasma` launchers, fonts, TPM, Timewarrior hook |
+| `40-misc.sh` | default shell, `dev-*` permissions, `dev-packages`/`dev-motd`/`dev-ssh`/`dev-plasma`/`dev-boot` launchers, fonts, TPM, Timewarrior hook |
 
 Modules are sourced in lexical order (`NN-` prefixes, stepped by 10 so a new
 one can slot in without renumbering) purely to guarantee `00-core.sh` loads
@@ -150,7 +151,7 @@ there. For a new non-apt tool, add it to `dev-packages` instead (see below).
 
 | #   | Action                                       |
 | --- | -------------------------------------------- |
-| 1   | Run everything (2 through 13)                |
+| 1   | Run everything (2 through 14)                |
 | 2   | Install apt packages                         |
 | 3   | Set permissions on `dev-*` scripts           |
 | 4   | Stow packages into `$HOME`                   |
@@ -163,6 +164,7 @@ there. For a new non-apt tool, add it to `dev-packages` instead (see below).
 | 11  | Set zsh as default shell                     |
 | 12  | Install language runtimes (rust, node, ...)  |
 | 13  | KDE Plasma themes via `dev-plasma`           |
+| 14  | Boot themes (GRUB + Plymouth) via `dev-boot` |
 
 **Test mode** — stow into a throwaway directory instead of `$HOME`:
 
@@ -373,6 +375,40 @@ The doctor also applies KPackage's own rule (every file must resolve inside its 
 
 Outside KDE Plasma `dev-plasma` does nothing and exits 0, so `--all` is safe
 on servers. A run always ends with the doctor.
+
+---
+
+## Boot themes (GRUB + Plymouth)
+
+The GRUB theme **`nord`** and the Plymouth animation **`cuts_alt`** are
+vendored in `boot/`: copies of their GPLv3 upstreams, byte-identical to them,
+with their `LICENSE`, so a fresh machine never depends on those repos still
+existing. Sources, commits and how the GRUB variant was built are in
+[`boot/README.md`](boot/README.md). They're installed system-wide by
+**`dev-boot`** (bootstrap menu option **14**), which finds `boot/` from its own
+real path:
+
+```bash
+dev-boot                  # interactive checklist (dialog)
+dev-boot --all            # both keys, no prompts
+dev-boot --only=plymouth  # just one key
+dev-boot --dry-run        # print every sudo command it would run; changes nothing
+dev-boot --doctor         # check what the next boot will actually show; changes nothing
+```
+
+| Key        | What it does |
+| ---------- | ------------ |
+| `grub`     | installs the theme to `/boot/grub/themes/nord` and writes **only** `/etc/default/grub.d/dev-boot.cfg` (`GRUB_THEME` + `GRUB_GFXMODE=1920x1080,auto`, which falls back to `auto` on other screens). `/etc/default/grub` is never touched — it holds per-machine settings such as the kernel command line. `grub-mkconfig` reads `grub.d/*.cfg` after `/etc/default/grub`, so the drop-in wins. `update-grub` only runs when something changed; if it fails, the drop-in is restored (and `grub-mkconfig` validates `grub.cfg.new` before replacing the real one, so the bootable `grub.cfg` is never lost) |
+| `plymouth` | installs the theme to `/usr/share/plymouth/themes/cuts_alt` and keeps Debian's layers consistent: **(1)** `Theme=` in `/etc/plymouth/plymouthd.conf` — the one that wins; only that line is edited, with a backup; **(2)** `/usr/share/plymouth/plymouthd.defaults` belongs to the package (desktop-base) and is left alone; **(3)** the `default.plymouth` alternative, registered at priority 100 as a fallback. `plymouth-set-default-theme` isn't used: it edits with `sed -ie` and leaves a stray `plymouthd.confe`. Since the theme lives **inside the initramfs**, `update-initramfs` runs when something changed or the current initrd lacks the theme, after checking free space (it builds `.new` and only swaps it in on success) |
+
+Themes are installed atomically (copied next to the target, then swapped), and
+every file `dev-boot` rewrites under `/etc` keeps a `*.dev-boot.bak` of its
+previous version. Neither key edits the kernel command line: if `splash` is
+missing (Plymouth won't show without it) they only warn. Without GRUB or
+Plymouth (VMs, Termux, servers) a key is skipped, and when there's nothing to
+change `dev-boot` doesn't even ask for sudo. The doctor checks the effective
+`GRUB_THEME`, the three Plymouth layers and whether the theme is actually
+inside the initramfs — what the next boot will really show.
 
 ---
 

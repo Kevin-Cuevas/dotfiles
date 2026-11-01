@@ -1,0 +1,615 @@
+#!/usr/bin/env bash
+# dev-boot — instala los temas de arranque de los dotfiles: el tema de GRUB
+# "nord" y la animación de Plymouth "cuts_alt", ambos guardados en boot/ del
+# repo (copias GPLv3 de sus upstreams, ver boot/README.md). Standalone, igual
+# que dev-plasma: no depende de bootstrap.d/*.sh ni de $DOTFILES_DIR (boot/ se
+# ubica desde la ruta real de este mismo script).
+#
+# Todo esto es del sistema (root) y toca el arranque, así que cada paso es
+# conservador:
+#   - grub     -> copia el tema a /boot/grub/themes/nord y escribe SOLO
+#                 /etc/default/grub.d/dev-boot.cfg (GRUB_THEME + GRUB_GFXMODE).
+#                 /etc/default/grub no se toca nunca: tiene cosas propias de
+#                 cada máquina (p. ej. hid_apple.fnmode=2 en la línea del
+#                 kernel). grub-mkconfig lee grub.d/*.cfg DESPUÉS de
+#                 /etc/default/grub, así que el drop-in gana. update-grub solo
+#                 corre si algo cambió; si falla se restaura el drop-in
+#                 anterior (grub-mkconfig valida grub.cfg.new antes de
+#                 reemplazar el real, así que el grub.cfg que arranca no se
+#                 pierde).
+#   - plymouth -> copia el tema a /usr/share/plymouth/themes/cuts_alt y deja
+#                 consistentes las capas que deciden el tema en Debian:
+#                   1. /etc/plymouth/plymouthd.conf  Theme=   (la que manda)
+#                   2. /usr/share/plymouth/plymouthd.defaults (del paquete;
+#                      desktop-base la pisa en cada upgrade: no se toca)
+#                   3. alternative default.plymouth (respaldo; prioridad 100)
+#                 De la capa 1 solo se cambia la línea Theme= (backup antes).
+#                 No se usa plymouth-set-default-theme: edita con `sed -ie` y
+#                 deja un archivo basura "plymouthd.confe". El tema vive DENTRO
+#                 del initramfs, así que update-initramfs corre si algo cambió o
+#                 si el initramfs no lo trae (es atómico: genera .new y solo lo
+#                 mueve si mkinitramfs terminó bien). Antes revisa espacio libre.
+#
+# Ninguno edita la línea del kernel: si falta "splash" (sin él Plymouth no se
+# ve) solo avisa. Sin GRUB o sin Plymouth (VM, Termux, servidores) la key se
+# salta. Idempotente: si no hay nada que cambiar no pide sudo.
+#
+# Uso:
+#   dev-boot                 checklist interactivo (dialog)
+#   dev-boot --all           todas las keys, sin diálogo
+#   dev-boot --only=a,b      solo esas keys, sin diálogo
+#   dev-boot --dry-run       muestra lo que haría, sin cambiar nada
+#   dev-boot --doctor        solo revisa (no instala ni cambia nada)
+#   dev-boot -h | --help     esta ayuda
+set -uo pipefail
+
+# ─── helpers (mismo estilo que bootstrap.d/00-core.sh) ───────────────────────
+RED='\e[38;2;191;97;106m'
+GRN='\e[38;2;163;190;140m'
+YLW='\e[38;2;235;203;139m'
+BLU='\e[38;2;136;192;208m'
+CYN='\e[38;2;143;188;187m'
+DIM='\e[38;2;94;129;172m'
+# shellcheck disable=SC2034 # paleta Nord compartida entre scripts; aquí no se usa
+BLD='\e[1m'
+RST='\e[0m'
+
+info() { printf "${BLU}[INFO]${RST}  %s\n" "$*"; }
+ok() { printf "${GRN}[OK]${RST}    %s\n" "$*"; }
+err() { printf "${RED}[ERR]${RST}   %s\n" "$*" >&2; }
+warn() { printf "${YLW}[WARN]${RST}  %s\n" "$*"; }
+skip() { printf "${CYN}[SKIP]${RST}  %s\n" "$*"; }
+sep() { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
+
+NONINTERACTIVE="${NONINTERACTIVE:-false}"
+BACKTITLE="${DEV_BOOT_BACKTITLE:-dev-boot · $(hostname) · $(date '+%Y-%m-%d %H:%M')}"
+DRY_RUN=false
+
+# boot/ del repo, desde la ruta real del script (bin/.local/bin/dev-boot,
+# stoweado per-file a ~/.local/bin). DEV_BOOT_SRC lo pisa.
+SRC_DIR="${DEV_BOOT_SRC:-$(cd "$(dirname "$(readlink -f "$0")")/../../.." && pwd)/boot}"
+
+GRUB_THEME_NAME="nord"
+GRUB_THEMES_DIR="/boot/grub/themes"
+GRUB_GFXMODE_WANT="1920x1080,auto" # otra resolución cae a "auto" sola
+GRUB_DROPIN="/etc/default/grub.d/dev-boot.cfg"
+
+PLY_THEME="cuts_alt"
+PLY_THEMES_DIR="/usr/share/plymouth/themes"
+PLY_CONF="/etc/plymouth/plymouthd.conf"
+PLY_DEFAULTS="/usr/share/plymouth/plymouthd.defaults"
+PLY_ALT_LINK="$PLY_THEMES_DIR/default.plymouth"
+
+# ─── registro ─────────────────────────────────────────────────────────────
+PKG_KEYS=(grub plymouth)
+declare -A PKG_LABEL=(
+  [grub]="Tema de GRUB $GRUB_THEME_NAME (drop-in en grub.d, sudo)"
+  [plymouth]="Animación de Plymouth $PLY_THEME (+ initramfs, sudo)"
+)
+declare -A PKG_FN=(
+  [grub]="install_grub"
+  [plymouth]="install_plymouth"
+)
+
+# ─── utilidades ──────────────────────────────────────────────────────────────
+
+# Todo lo que requiere root pasa por aquí: en --dry-run solo se muestra.
+run_root() {
+  if $DRY_RUN; then
+    info "[dry-run] sudo $*"
+    return 0
+  fi
+  sudo "$@"
+}
+
+# ¿$2 (instalado) es una copia fiel de $1 (repo)? Compara contenido; no
+# permisos ni dueño (los fija install_tree).
+same_tree() {
+  [[ -d "$2" && ! -L "$2" ]] || return 1
+  diff -rq "$1" "$2" &>/dev/null
+}
+
+# Instala la carpeta $1 en $2 (root:root, 644/755) solo si difiere. Atómico:
+# copia a $2.dev-boot-new y luego intercambia, así nunca queda un tema a
+# medias si algo se corta. Deja TREE_CHANGED=true/false.
+TREE_CHANGED=false
+install_tree() {
+  local src="$1" dst="$2" name
+  name="$(basename "$dst")"
+  TREE_CHANGED=false
+  if same_tree "$src" "$dst"; then
+    skip "$name ya está al día en $dst"
+    return 0
+  fi
+  local new="${dst:?}.dev-boot-new" old="${dst:?}.dev-boot-old"
+  info "Instalando $name en $dst..."
+  if ! { run_root rm -rf -- "$new" "$old" \
+    && run_root cp -r -- "$src" "$new" \
+    && run_root chown -R root:root "$new" \
+    && run_root chmod -R u=rwX,go=rX "$new"; }; then
+    err "No se pudo preparar $new"
+    run_root rm -rf -- "$new"
+    return 1
+  fi
+  if [[ -e "$dst" ]]; then
+    run_root mv -- "$dst" "$old" || {
+      err "No se pudo apartar el $name anterior"
+      return 1
+    }
+  fi
+  run_root mv -- "$new" "$dst" || {
+    err "No se pudo instalar $dst — restaurando el anterior"
+    [[ -e "$old" ]] && run_root mv -- "$old" "$dst"
+    return 1
+  }
+  run_root rm -rf -- "$old"
+  TREE_CHANGED=true
+  ok "$name instalado en $dst"
+}
+
+# Escribe el archivo de sistema $2 con el contenido del temporal $1 (root,
+# 644) si difiere. Si ya existía, lo respalda como $2.dev-boot.bak (el
+# respaldo anterior se pisa: siempre es el estado previo al último cambio).
+FILE_CHANGED=false
+write_root_file() {
+  local tmp="$1" dst="$2"
+  FILE_CHANGED=false
+  if [[ -f "$dst" ]] && cmp -s "$tmp" "$dst"; then
+    skip "$dst ya está al día"
+    return 0
+  fi
+  run_root mkdir -p -- "$(dirname "$dst")" || return 1
+  if [[ -f "$dst" ]]; then
+    run_root cp -p -- "$dst" "$dst.dev-boot.bak" || {
+      err "No se pudo respaldar $dst"
+      return 1
+    }
+    info "Respaldo: $dst.dev-boot.bak"
+  fi
+  run_root install -m 644 -o root -g root -- "$tmp" "$dst" || {
+    err "No se pudo escribir $dst"
+    return 1
+  }
+  FILE_CHANGED=true
+  ok "$dst escrito"
+}
+
+# Deshace write_root_file: vuelve al respaldo, o borra el archivo si no
+# existía antes de esta corrida.
+restore_root_file() {
+  local dst="$1" existed="$2"
+  if [[ "$existed" == true && -f "$dst.dev-boot.bak" ]]; then
+    run_root cp -p -- "$dst.dev-boot.bak" "$dst" && warn "Restaurado $dst desde su respaldo"
+  else
+    run_root rm -f -- "$dst" && warn "Quitado $dst (no existía antes)"
+  fi
+}
+
+# Valores efectivos de la config de GRUB, leídos igual que grub-mkconfig:
+# /etc/default/grub y luego /etc/default/grub.d/*.cfg (el último gana), en un
+# bash limpio para no heredar nada de este script. Imprime 3 líneas: tema,
+# gfxmode y la línea del kernel.
+grub_effective() {
+  # shellcheck disable=SC2016 # se expande en el bash limpio, no aquí
+  env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin bash -c '
+    [ -f /etc/default/grub ] && . /etc/default/grub
+    for f in /etc/default/grub.d/*.cfg; do [ -e "$f" ] && . "$f"; done
+    printf "%s\n%s\n%s\n" "${GRUB_THEME:-}" "${GRUB_GFXMODE:-}" \
+      "${GRUB_CMDLINE_LINUX_DEFAULT:-} ${GRUB_CMDLINE_LINUX:-}"
+  ' 2>/dev/null
+}
+
+# Theme= de la sección [Daemon] de un plymouthd.conf/.defaults.
+ply_conf_theme() {
+  [[ -f "$1" ]] || return 0
+  awk '/^\[/ { d = ($0 == "[Daemon]"); next }
+       d && /^[[:space:]]*Theme[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); print; exit }' "$1"
+}
+
+# initrd del kernel en uso. Es el que se revisa y regenera: tras un upgrade
+# de kernel, el hook de initramfs-tools arma el nuevo con la config de
+# plymouthd.conf que ya dejamos, así que también traerá el tema.
+current_initrd() {
+  echo "/boot/initrd.img-$(uname -r)"
+}
+
+# ¿El initramfs trae el tema? 0 sí, 1 no, 2 no se pudo leer.
+initramfs_has_theme() {
+  local initrd
+  initrd="$(current_initrd)"
+  [[ -r "$initrd" ]] && command -v lsinitramfs &>/dev/null || return 2
+  lsinitramfs "$initrd" 2>/dev/null \
+    | grep -q "usr/share/plymouth/themes/$PLY_THEME/$PLY_THEME.plymouth"
+}
+
+# ─── grub ────────────────────────────────────────────────────────────────────
+install_grub() {
+  sep
+  if ! command -v update-grub &>/dev/null || [[ ! -d /boot/grub ]]; then
+    skip "GRUB no está instalado aquí (sin update-grub o /boot/grub)"
+    return 0
+  fi
+  local src="$SRC_DIR/grub/themes/$GRUB_THEME_NAME"
+  local theme_txt="$GRUB_THEMES_DIR/$GRUB_THEME_NAME/theme.txt"
+  [[ -f "$src/theme.txt" ]] || {
+    err "No encuentro $src/theme.txt (DEV_BOOT_SRC=<repo>/boot para indicarlo)"
+    return 1
+  }
+
+  install_tree "$src" "$GRUB_THEMES_DIR/$GRUB_THEME_NAME" || return 1
+  local changed=$TREE_CHANGED
+
+  # Antes de apuntar GRUB al tema, el tema tiene que estar en su sitio.
+  if ! $DRY_RUN && [[ ! -f "$theme_txt" ]]; then
+    err "$theme_txt no existe — no escribo GRUB_THEME apuntando a nada"
+    return 1
+  fi
+
+  local tmp existed=false
+  tmp="$(mktemp -p "$WORK_DIR" grub-dropin.XXXXXX)" || return 1
+  cat >"$tmp" <<EOF
+# Gestionado por dev-boot (dotfiles): se reescribe en cada corrida.
+# Solo el tema; lo propio de cada máquina sigue en /etc/default/grub.
+GRUB_THEME="$theme_txt"
+GRUB_GFXMODE="$GRUB_GFXMODE_WANT"
+EOF
+  bash -n "$tmp" || {
+    err "El drop-in generado no es shell válido — no lo instalo"
+    return 1
+  }
+  [[ -f "$GRUB_DROPIN" ]] && existed=true
+  write_root_file "$tmp" "$GRUB_DROPIN" || return 1
+  local dropin_changed=$FILE_CHANGED
+  $FILE_CHANGED && changed=true
+
+  if ! $changed; then
+    skip "GRUB sin cambios — no hace falta update-grub"
+  else
+    info "Regenerando grub.cfg (update-grub)..."
+    if ! run_root update-grub; then
+      err "update-grub falló — tu grub.cfg anterior sigue intacto"
+      $dropin_changed && restore_root_file "$GRUB_DROPIN" "$existed"
+      return 1
+    fi
+    ok "grub.cfg regenerado"
+  fi
+
+  local cmdline
+  cmdline="$(grub_effective | sed -n 3p)"
+  [[ " $cmdline " == *" splash "* ]] \
+    || warn "Tu línea del kernel no tiene 'splash': Plymouth no se verá (agrégalo en /etc/default/grub)"
+  return 0
+}
+
+# ─── plymouth ────────────────────────────────────────────────────────────────
+install_plymouth() {
+  sep
+  if [[ ! -d "$PLY_THEMES_DIR" ]] || ! command -v plymouth &>/dev/null; then
+    skip "Plymouth no está instalado aquí"
+    return 0
+  fi
+  local src="$SRC_DIR/plymouth/themes/$PLY_THEME"
+  local want="$PLY_THEMES_DIR/$PLY_THEME/$PLY_THEME.plymouth"
+  [[ -f "$src/$PLY_THEME.plymouth" ]] || {
+    err "No encuentro $src/$PLY_THEME.plymouth (DEV_BOOT_SRC=<repo>/boot para indicarlo)"
+    return 1
+  }
+
+  install_tree "$src" "$PLY_THEMES_DIR/$PLY_THEME" || return 1
+  local rebuild=$TREE_CHANGED
+
+  # Capa 1: solo la línea Theme= de [Daemon]; el resto (ShowDelay...) se
+  # conserva. Sin Theme= se agrega bajo [Daemon]; sin [Daemon], se crea.
+  local cur tmp
+  cur="$(ply_conf_theme "$PLY_CONF")"
+  if [[ "$cur" == "$PLY_THEME" ]]; then
+    skip "$PLY_CONF ya tiene Theme=$PLY_THEME"
+  else
+    tmp="$(mktemp -p "$WORK_DIR" plymouthd.XXXXXX)" || return 1
+    if [[ -f "$PLY_CONF" ]]; then
+      awk -v t="$PLY_THEME" '
+        /^\[/ { if (d && !done) { print "Theme=" t; done = 1 } d = ($0 == "[Daemon]"); print; next }
+        d && /^[[:space:]]*Theme[[:space:]]*=/ { if (!done) { print "Theme=" t; done = 1 } next }
+        { print }
+        END { if (!done) { if (!d) print "[Daemon]"; print "Theme=" t } }
+      ' "$PLY_CONF" >"$tmp"
+    else
+      printf '[Daemon]\nTheme=%s\n' "$PLY_THEME" >"$tmp"
+    fi
+    info "Capa 1: Theme=${cur:-<ninguno>} → $PLY_THEME"
+    write_root_file "$tmp" "$PLY_CONF" || return 1
+    rebuild=true
+  fi
+
+  # Capa 3: alternative de respaldo. --install es idempotente; --set solo si
+  # apunta a otro tema (eso lo deja en modo manual, a propósito).
+  local alt_value
+  alt_value="$(update-alternatives --query default.plymouth 2>/dev/null | sed -n 's/^Value: //p')"
+  if ! update-alternatives --list default.plymouth 2>/dev/null | grep -qx "$want"; then
+    run_root update-alternatives --install "$PLY_ALT_LINK" default.plymouth "$want" 100 >/dev/null \
+      && ok "Capa 3: $want registrado como alternative (prioridad 100)"
+    alt_value="$(update-alternatives --query default.plymouth 2>/dev/null | sed -n 's/^Value: //p')"
+  fi
+  if [[ "$alt_value" == "$want" ]]; then
+    skip "Capa 3: default.plymouth ya apunta a $PLY_THEME"
+  else
+    run_root update-alternatives --set default.plymouth "$want" >/dev/null \
+      && ok "Capa 3: default.plymouth → $PLY_THEME"
+  fi
+
+  local has rc=0
+  initramfs_has_theme || rc=$?
+  case $rc in
+    0) has=true ;;
+    1)
+      has=false
+      rebuild=true
+      ;;
+    *) has=unknown ;;
+  esac
+
+  if ! $rebuild; then
+    skip "initramfs ya trae $PLY_THEME — no hace falta regenerarlo"
+  else
+    [[ "$has" == unknown ]] && warn "No pude leer $(current_initrd); lo regenero por si acaso"
+    local initrd need avail
+    initrd="$(current_initrd)"
+    need=$(($(stat -c %s "$initrd" 2>/dev/null || echo 0) * 2))
+    avail="$(df --output=avail -B1 /boot 2>/dev/null | tail -1 | tr -d ' ')"
+    if [[ -n "$avail" && "$need" -gt 0 && "$avail" -lt "$need" ]]; then
+      err "Poco espacio en /boot ($((avail / 1048576)) MB libres, hacen falta ~$((need / 1048576)) MB) — no regenero el initramfs"
+      return 1
+    fi
+    info "Regenerando el initramfs de $(uname -r) (puede tardar un poco)..."
+    if ! run_root update-initramfs -u -k "$(uname -r)"; then
+      err "update-initramfs falló — el initramfs anterior sigue intacto (se genera aparte y solo se reemplaza si termina bien)"
+      return 1
+    fi
+    ok "initramfs regenerado con $PLY_THEME"
+  fi
+
+  grep -qw splash /proc/cmdline 2>/dev/null \
+    || warn "El kernel arrancó sin 'splash': Plymouth no se verá (agrégalo en /etc/default/grub y corre update-grub)"
+  return 0
+}
+
+# ─── doctor ──────────────────────────────────────────────────────────────────
+DOC_FAIL=0
+doc_ok() { ok "$*"; }
+doc_warn() { warn "$*"; }
+doc_fail() {
+  err "$*"
+  DOC_FAIL=1
+}
+
+doctor_grub() {
+  if ! command -v update-grub &>/dev/null || [[ ! -d /boot/grub ]]; then
+    skip "GRUB: no instalado aquí"
+    return
+  fi
+  local dir="$GRUB_THEMES_DIR/$GRUB_THEME_NAME" eff theme gfx cmdline
+  if [[ ! -f "$dir/theme.txt" ]]; then
+    doc_fail "GRUB: tema $GRUB_THEME_NAME no instalado (dev-boot --only=grub)"
+  elif same_tree "$SRC_DIR/grub/themes/$GRUB_THEME_NAME" "$dir"; then
+    doc_ok "GRUB: tema $GRUB_THEME_NAME ($dir) igual al repo"
+  else
+    doc_warn "GRUB: $dir difiere del repo (dev-boot --only=grub)"
+  fi
+
+  eff="$(grub_effective)"
+  theme="$(sed -n 1p <<<"$eff")"
+  gfx="$(sed -n 2p <<<"$eff")"
+  cmdline="$(sed -n 3p <<<"$eff")"
+  if [[ "$theme" == "$dir/theme.txt" ]]; then
+    doc_ok "      GRUB_THEME efectivo = $theme"
+  else
+    doc_fail "      GRUB_THEME efectivo = ${theme:-<vacío>} (se esperaba $dir/theme.txt)"
+  fi
+  if [[ "$gfx" == "$GRUB_GFXMODE_WANT" ]]; then
+    doc_ok "      GRUB_GFXMODE efectivo = $gfx"
+  else
+    doc_warn "      GRUB_GFXMODE efectivo = ${gfx:-<vacío>} (se esperaba $GRUB_GFXMODE_WANT)"
+  fi
+  if [[ -f "$GRUB_DROPIN" ]]; then
+    doc_ok "      drop-in $GRUB_DROPIN"
+  else
+    doc_warn "      sin $GRUB_DROPIN: el tema depende de /etc/default/grub (dev-boot --only=grub)"
+  fi
+  if [[ " $cmdline " == *" splash "* ]]; then
+    doc_ok "      línea del kernel con 'splash'"
+  else
+    doc_warn "      la línea del kernel no tiene 'splash' (Plymouth no se verá)"
+  fi
+
+  if [[ -r /boot/grub/grub.cfg ]]; then
+    if grep -qF "$dir/theme.txt" /boot/grub/grub.cfg; then
+      doc_ok "      grub.cfg carga el tema"
+    else
+      doc_warn "      grub.cfg no carga el tema todavía (dev-boot --only=grub)"
+    fi
+  else
+    skip "      grub.cfg solo lo puede leer root (no se revisa)"
+  fi
+}
+
+doctor_plymouth() {
+  if [[ ! -d "$PLY_THEMES_DIR" ]] || ! command -v plymouth &>/dev/null; then
+    skip "Plymouth: no instalado aquí"
+    return
+  fi
+  local dir="$PLY_THEMES_DIR/$PLY_THEME" want v
+  want="$dir/$PLY_THEME.plymouth"
+  if [[ ! -f "$want" ]]; then
+    doc_fail "Plymouth: tema $PLY_THEME no instalado (dev-boot --only=plymouth)"
+  elif same_tree "$SRC_DIR/plymouth/themes/$PLY_THEME" "$dir"; then
+    doc_ok "Plymouth: tema $PLY_THEME ($dir) igual al repo"
+  else
+    doc_warn "Plymouth: $dir difiere del repo (dev-boot --only=plymouth)"
+  fi
+
+  v="$(ply_conf_theme "$PLY_CONF")"
+  if [[ "$v" == "$PLY_THEME" ]]; then
+    doc_ok "      capa 1 $PLY_CONF: Theme=$v (manda)"
+  else
+    doc_fail "      capa 1 $PLY_CONF: Theme=${v:-<ninguno>} (dev-boot --only=plymouth)"
+  fi
+  v="$(ply_conf_theme "$PLY_DEFAULTS")"
+  skip "      capa 2 $PLY_DEFAULTS: Theme=${v:-<ninguno>} (del paquete; no aplica mientras exista la capa 1)"
+  v="$(update-alternatives --query default.plymouth 2>/dev/null | sed -n 's/^Value: //p')"
+  if [[ "$v" == "$want" ]]; then
+    doc_ok "      capa 3 default.plymouth → $PLY_THEME"
+  else
+    doc_warn "      capa 3 default.plymouth → ${v:-<ninguno>} (dev-boot --only=plymouth)"
+  fi
+
+  local rc=0
+  initramfs_has_theme || rc=$?
+  case $rc in
+    0) doc_ok "      initramfs $(current_initrd) trae $PLY_THEME" ;;
+    1) doc_fail "      initramfs $(current_initrd) NO trae $PLY_THEME: al arrancar se verá otro (dev-boot --only=plymouth)" ;;
+    *) skip "      no pude leer $(current_initrd) (no se revisa)" ;;
+  esac
+  if grep -qw splash /proc/cmdline 2>/dev/null; then
+    doc_ok "      el kernel arrancó con 'splash'"
+  else
+    doc_warn "      el kernel arrancó sin 'splash' (Plymouth no se ve)"
+  fi
+}
+
+run_doctor() {
+  sep
+  info "Doctor: GRUB $GRUB_THEME_NAME / Plymouth $PLY_THEME"
+  DOC_FAIL=0
+  doctor_grub
+  doctor_plymouth
+  sep
+  if [[ $DOC_FAIL -eq 0 ]]; then
+    ok "Doctor: el arranque usa los temas de los dotfiles"
+  else
+    err "Doctor: hay algo roto o pendiente — revisa arriba"
+  fi
+  return "$DOC_FAIL"
+}
+
+# ─── checklist ───────────────────────────────────────────────────────────────
+select_keys() {
+  local -n _out="$1"
+  _out=()
+  local items=() key
+  for key in "${PKG_KEYS[@]}"; do
+    items+=("$key" "${PKG_LABEL[$key]}" "on")
+  done
+  local raw
+  raw=$(dialog --clear --colors --backtitle "$BACKTITLE" \
+    --title " dev-boot " --separate-output --checklist \
+    "Select what to install  [SPACE=toggle  ENTER=confirm]\n\nRequiere sudo. Nunca toca /etc/default/grub ni la línea del kernel." \
+    13 76 3 "${items[@]}" \
+    3>&1 1>&2 2>&3) || return 1
+  clear
+  local line
+  while IFS= read -r line; do [[ -n "$line" ]] && _out+=("$line"); done <<<"$raw"
+}
+
+# ─── ayuda ───────────────────────────────────────────────────────────────────
+usage() {
+  sed -n '/^# Uso:/,/^[^#]/{/^#/s/^# \{0,1\}//p}' "$0"
+  printf '\nKeys: %s\n' "${PKG_KEYS[*]}"
+}
+
+# ─── arg parsing ─────────────────────────────────────────────────────────────
+ONLY_KEYS=()
+DOCTOR_ONLY=false
+for arg in "$@"; do
+  case "$arg" in
+    --all) NONINTERACTIVE=true ;;
+    --only=*) IFS=',' read -ra ONLY_KEYS <<<"${arg#--only=}" ;;
+    --dry-run) DRY_RUN=true ;;
+    --doctor) DOCTOR_ONLY=true ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      err "Argumento desconocido: $arg"
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if $DOCTOR_ONLY; then
+  run_doctor
+  exit $?
+fi
+
+[[ -d "$SRC_DIR" ]] || {
+  err "No encuentro $SRC_DIR (DEV_BOOT_SRC=<repo>/boot para indicarlo)"
+  exit 1
+}
+
+# ─── directorio de trabajo + limpieza ────────────────────────────────────────
+WORK_DIR="$(mktemp -d -t dev-boot.XXXXXX)" || {
+  err "No se pudo crear el directorio de trabajo"
+  exit 1
+}
+trap 'rm -rf "$WORK_DIR"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# ─── selección de keys ───────────────────────────────────────────────────────
+CHOSEN=()
+if [[ ${#ONLY_KEYS[@]} -gt 0 ]]; then
+  CHOSEN=("${ONLY_KEYS[@]}")
+elif [[ "$NONINTERACTIVE" == "true" ]] || ! [ -t 0 ]; then
+  info "Non-interactive mode — todas las keys (${PKG_KEYS[*]})"
+  CHOSEN=("${PKG_KEYS[@]}")
+else
+  command -v dialog &>/dev/null || {
+    err "dialog no encontrado — instálalo (sudo apt install dialog) o usa --all/--only="
+    exit 1
+  }
+  if ! select_keys CHOSEN; then
+    warn "dev-boot cancelado."
+    exit 0
+  fi
+fi
+
+if [[ ${#CHOSEN[@]} -eq 0 ]]; then
+  skip "Nada seleccionado."
+  exit 0
+fi
+for key in "${CHOSEN[@]}"; do
+  [[ -n "${PKG_FN[$key]:-}" ]] || {
+    err "Key desconocida: $key"
+    usage >&2
+    exit 1
+  }
+done
+$DRY_RUN && warn "Modo --dry-run: no se cambia nada, solo se muestra"
+
+# ─── ejecución (en el orden de PKG_KEYS) + doctor ────────────────────────────
+succeeded=0
+failed=()
+for key in "${PKG_KEYS[@]}"; do
+  [[ " ${CHOSEN[*]} " == *" $key "* ]] || continue
+  if "${PKG_FN[$key]}"; then
+    ((succeeded++)) || true
+  else
+    warn "Falló: ${PKG_LABEL[$key]}"
+    failed+=("$key")
+  fi
+done
+
+doctor_rc=0
+$DRY_RUN || {
+  run_doctor
+  doctor_rc=$?
+}
+
+sep
+ok "Done — ok: $succeeded  failed: ${#failed[@]}"
+if [[ ${#failed[@]} -gt 0 ]]; then
+  warn "Failed: ${failed[*]}"
+  exit 1
+fi
+exit "$doctor_rc"

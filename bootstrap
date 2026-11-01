@@ -53,8 +53,16 @@ run_all() {
   set_permissions
   stow_packages
   run_dev_motd || warn "dev-motd encountered errors — check output above"
-  run_dev_plasma || warn "dev-plasma encountered errors — check output above"
-  run_dev_boot || warn "dev-boot encountered errors — check output above"
+  # Desktop and boot themes are opt-in: an unattended --all run (servers, the
+  # Termux VM, a fresh machine you haven't looked at yet) must not swap the
+  # Plasma look or touch GRUB/Plymouth/initramfs with sudo. Menu option 1, 13
+  # and 14 still run them.
+  if [[ "$NONINTERACTIVE" == true ]]; then
+    skip "Plasma and boot themes (--all) — run dev-plasma / dev-boot when you want them"
+  else
+    run_dev_plasma || warn "dev-plasma encountered errors — check output above"
+    run_dev_boot || warn "dev-boot encountered errors — check output above"
+  fi
   install_fonts
   setup_tw_hook || warn "Timewarrior hook setup failed — check output above"
   install_tpm

@@ -458,13 +458,16 @@ shows the plans).
 
 | Key        | What it does |
 | ---------- | ------------ |
-| `grub`     | installs the theme (with the chosen icon set) to `/boot/grub/themes/nord` and writes **only** `/etc/default/grub.d/dev-boot.cfg` (`GRUB_THEME` + `GRUB_GFXMODE=1920x1080,auto`, which falls back to `auto` on other screens). `/etc/default/grub` is never touched — it holds per-machine settings such as the kernel command line. `grub-mkconfig` reads `grub.d/*.cfg` after `/etc/default/grub`, so the drop-in wins. `update-grub` only runs when something changed; if it fails, the drop-in is restored (and `grub-mkconfig` validates `grub.cfg.new` before replacing the real one, so the bootable `grub.cfg` is never lost) |
+| `grub`     | installs the theme (with the chosen icon set) to `/boot/grub/themes/nord` and writes **only** `/etc/default/grub.d/dev-boot.cfg` (`GRUB_THEME` + `GRUB_GFXMODE=1920x1080,auto`, which falls back to `auto` on other screens, and — when Plymouth is installed — `quiet splash` appended to the kernel command line). `/etc/default/grub` is never touched — it holds per-machine settings such as the kernel command line. `grub-mkconfig` reads `grub.d/*.cfg` after `/etc/default/grub`, so the drop-in wins. `update-grub` only runs when something changed; if it fails, the drop-in is restored (and `grub-mkconfig` validates `grub.cfg.new` before replacing the real one, so the bootable `grub.cfg` is never lost) |
 | `plymouth` | installs the chosen theme to `/usr/share/plymouth/themes/<name>` and keeps Debian's layers consistent: **(1)** `Theme=` in `/etc/plymouth/plymouthd.conf` — the one that wins; only that line is edited, with a backup; **(2)** `/usr/share/plymouth/plymouthd.defaults` belongs to the package (desktop-base) and is left alone; **(3)** the `default.plymouth` alternative, registered at priority 100 as a fallback. `plymouth-set-default-theme` isn't used: it edits with `sed -ie` and leaves a stray `plymouthd.confe`. Since the theme lives **inside the initramfs**, `update-initramfs` runs when something changed or the current initrd lacks the theme, after checking free space (it builds `.new` and only swaps it in on success) |
 
 Themes are installed atomically (copied next to the target, then swapped), and
 every file `dev-boot` rewrites under `/etc` keeps a `*.dev-boot.bak` of its
-previous version. Neither key edits the kernel command line: if `splash` is
-missing (Plymouth won't show without it) they only warn. Without GRUB or
+previous version. Plymouth only shows with `splash` on the kernel command
+line, and Debian only adds it when installed with a desktop, so the drop-in
+appends `quiet` and `splash` to `GRUB_CMDLINE_LINUX_DEFAULT` when they're
+missing — the machine's own options stay as they are, and deleting the drop-in
+undoes it. Without GRUB or
 Plymouth (VMs, Termux, servers) a key is skipped, and when there's nothing to
 change `dev-boot` doesn't even ask for sudo. The doctor checks the effective
 `GRUB_THEME`, the three Plymouth layers and whether the theme is actually

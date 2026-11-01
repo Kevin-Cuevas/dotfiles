@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+# konsole-theme-sync — keeps Konsole and Yakuake on the color scheme that
+# matches Plasma's light/dark mode, live, through the freedesktop settings
+# portal. Installed by dev-services as dotfiles-konsole-theme-sync.service.
+set -uo pipefail
+
+DARK_PROFILE="NivekDarkNordKonsole.profile"
+LIGHT_PROFILE="NivekLightNordKonsole.profile"
+DARK_SCHEME="NivekDarkNordKonsoleColors"
+LIGHT_SCHEME="NivekLightNordKonsoleColors"
+STATE_FILE="${XDG_RUNTIME_DIR:-/tmp}/dotfiles-konsole-theme-sync.profile"
+
+log() { echo "[konsole-theme-sync] $*"; }
+
+# Konsole/Yakuake services currently on the session bus.
+terminal_services() {
+  qdbus6 2>/dev/null | awk '{print $1}' | grep -E '^org\.kde\.(yakuake|konsole-[0-9]+)$' || true
+}
+
+# Session object paths of one service (/Sessions/N).
+service_sessions() {
+  qdbus6 "$1" 2>/dev/null | awk '{print $1}' | grep -E '^/Sessions/[0-9]+$' || true
+}
+
+# The pty of a session: the stdin of its shell.
+session_pty() {
+  local pid
+  pid=$(qdbus6 "$1" "$2" org.kde.konsole.Session.processId 2>/dev/null || true)
+  [[ -n "$pid" ]] || return 1
+  readlink -f "/proc/$pid/fd/0" 2>/dev/null
+}
+
+# Applies a color scheme to every open Konsole and Yakuake session by writing
+# OSC 50 (the same sequence konsoleprofile uses) straight into each session's
+# pty. Not runCommand: that would type something visible and pollute the
+# user's history/command line. Live, instant, nothing restarts.
+apply_scheme_live() {
+  local osc svc path pty
+  osc=$(printf '\033]50;colors=%s\007' "$1")
+  while IFS= read -r svc; do
+    [[ -n "$svc" ]] || continue
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      pty=$(session_pty "$svc" "$path") || continue
+      [[ "$pty" == /dev/pts/* ]] && printf '%s' "$osc" >"$pty" 2>/dev/null
+    done < <(service_sessions "$svc")
+  done < <(terminal_services)
+  return 0
+}
+
+# Sets the default profile of Yakuake and of standalone Konsole with
+# kwriteconfig6 (safe ini edits, no hand-rolled sed). This is the root fix:
+# any Yakuake or Konsole window started afterwards -- even after killing it
+# completely or closing it with Ctrl+D -- is born with the right scheme, with
+# no flash and without racing its own autostart. Standalone Konsole has its
+# own rc (konsolerc), separate from Yakuake's (yakuakerc); without this
+# second write a new Konsole fell back to its "Profile 1" (light) regardless
+# of Plasma's mode.
+set_default_profile() {
+  kwriteconfig6 --file yakuakerc --group "Desktop Entry" --key DefaultProfile "$1"
+  kwriteconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile "$1"
+  printf '%s' "$1" >"$STATE_FILE"
+}
+
+apply_theme() {
+  local mode="$1" profile scheme
+  if [[ "$mode" == light ]]; then
+    profile="$LIGHT_PROFILE"
+    scheme="$LIGHT_SCHEME"
+  else
+    profile="$DARK_PROFILE"
+    scheme="$DARK_SCHEME"
+  fi
+  log "applying $mode"
+  set_default_profile "$profile"
+  apply_scheme_live "$scheme"
+}
+
+# The portal's color-scheme: 1 = prefer dark, 2 = prefer light.
+current_mode() {
+  local out
+  out=$(gdbus call --session --dest org.freedesktop.portal.Desktop \
+    --object-path /org/freedesktop/portal/desktop \
+    --method org.freedesktop.portal.Settings.Read \
+    org.freedesktop.appearance color-scheme 2>/dev/null || true)
+  if [[ "$out" == *"uint32 2"* ]]; then echo light; else echo dark; fi
+}
+
+current_scheme() {
+  local profile
+  profile=$(cat "$STATE_FILE" 2>/dev/null || echo "$DARK_PROFILE")
+  if [[ "$profile" == "$LIGHT_PROFILE" ]]; then echo "$LIGHT_SCHEME"; else echo "$DARK_SCHEME"; fi
+}
+
+# A brief burst, not a single write: a session that was just created may need
+# a moment before its TerminalDisplay processes incoming OSC sequences, and a
+# single write can get lost in that window.
+send_osc_retry() {
+  local pty="$1" osc="$2" delay
+  for delay in 0 0.15 0.4 0.8; do
+    [[ "$delay" != "0" ]] && sleep "$delay"
+    printf '%s' "$osc" >"$pty" 2>/dev/null
+  done
+}
+
+# Applies OSC 50 to any Konsole/Yakuake session not seen before. It exists for
+# a case neither DefaultProfile nor the NameOwnerChanged watcher covers: Ctrl+D
+# on Yakuake's last tab does NOT kill the process (killall does); Yakuake just
+# creates a new session inside the same live process. That session uses the
+# DefaultProfile Yakuake cached in memory (org.kde.config.Settings) when the
+# process started -- never refreshed even if yakuakerc on disk says otherwise
+# -- so it comes up with the theme that was active at startup, not the
+# current one. Confirmed by hand: with Yakuake running, switching theme and
+# then closing/reopening the last tab left the new session on the old
+# profile. Polling (1 s, a couple of cheap qdbus6 calls) is the only way to
+# notice "new session", because Yakuake emits no D-Bus signal for it.
+watch_new_sessions() {
+  local seen="" osc svc path pty key pid
+  while true; do
+    sleep 1
+    osc=$(printf '\033]50;colors=%s\007' "$(current_scheme)")
+    while IFS= read -r svc; do
+      [[ -n "$svc" ]] || continue
+      while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        pid=$(qdbus6 "$svc" "$path" org.kde.konsole.Session.processId 2>/dev/null || true)
+        [[ -n "$pid" ]] || continue
+        # The key includes the pid, not just service+path: Yakuake reuses the
+        # same path (/Sessions/1) for the session it creates after Ctrl+D on
+        # the last tab, so the pid is what tells it apart from the old one.
+        key="$svc$path:$pid"
+        case " $seen " in *" $key "*) continue ;; esac
+        seen="$seen $key"
+        pty=$(readlink -f "/proc/$pid/fd/0" 2>/dev/null || true)
+        # In the background: doesn't block polling the other sessions.
+        [[ "$pty" == /dev/pts/* ]] && send_osc_retry "$pty" "$osc" &
+      done < <(service_sessions "$svc")
+    done < <(terminal_services)
+  done
+}
+
+# Re-asserts yakuakerc's DefaultProfile right when Yakuake exits (Ctrl+D on
+# the last session with KeepOpen=false, or a killall). On exit Yakuake dumps
+# its in-memory copy of yakuakerc to disk; if that copy is stale -- e.g. the
+# theme changed while the old process was alive -- the dump overwrites the
+# right DefaultProfile with the one the process started with. Rewriting it as
+# soon as Yakuake leaves D-Bus guarantees the next start (manual or through
+# D-Bus activation) reads the right value.
+watch_yakuake_exit() {
+  local line profile
+  gdbus monitor --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus 2>/dev/null \
+    | while IFS= read -r line; do
+      case "$line" in
+        *NameOwnerChanged*"'org.kde.yakuake'"*", '')"*)
+          profile=$(cat "$STATE_FILE" 2>/dev/null || echo "$DARK_PROFILE")
+          log "yakuake exited, re-asserting DefaultProfile=$profile"
+          kwriteconfig6 --file yakuakerc --group "Desktop Entry" --key DefaultProfile "$profile"
+          ;;
+      esac
+    done
+}
+
+apply_theme "$(current_mode)"
+watch_new_sessions &
+watch_yakuake_exit &
+
+# Listens for theme changes through the portal and reacts instantly.
+gdbus monitor --session --dest org.freedesktop.portal.Desktop \
+  --object-path /org/freedesktop/portal/desktop 2>/dev/null \
+  | while IFS= read -r line; do
+    case "$line" in
+      *org.freedesktop.appearance*color-scheme*)
+        if [[ "$line" == *"uint32 2"* ]]; then
+          apply_theme light
+        else
+          apply_theme dark
+        fi
+        ;;
+    esac
+  done

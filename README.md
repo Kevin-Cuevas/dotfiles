@@ -401,10 +401,12 @@ dev-boot --doctor             # check what the next boot will actually show; cha
 
 The menu shows the current state (theme, icon set, whether it's up to date)
 and has entries to apply everything, **pick the Plymouth animation**, **pick
-the GRUB icon set**, run the doctor or simulate. Before anything runs with
-sudo it shows a summary of what will change, computed by the same code in
+the GRUB icon set** and run the doctor. Before anything runs with sudo it
+shows a summary of what will change, computed by the same code in
 `--dry-run`, with *Apply* / *Cancel*; `update-grub` and `update-initramfs`
-output is shown in a dialog box.
+output is shown in a dialog box. Simulating is a CLI flag like the rest:
+`dev-boot --dry-run` (also in combination with the menu, which then only
+shows the plans).
 
 - **Plymouth animation**: the themes saved in `boot/plymouth/themes`
   (`cuts_alt`, the default), the ones already installed from upstream, and

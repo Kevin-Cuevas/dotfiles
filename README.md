@@ -533,7 +533,7 @@ stow --no-folding bin konsole ssh zsh-completions
   handled outside of stow is documented in **Stow strategy** above.
 - `bin/` only ever holds tools we actually maintain as dotfiles (`dev-*`,
   `tmux-theme-*`). Everything installed by a native installer (pipx, curl
-  releases, the Claude Code / aws-cli installers, ...) lands in the *real*
+  releases, the aws-cli installer, ...) lands in the *real*
   `~/.local/bin` and is invisible to git.
 - Neovim, tmux, kitty, yazi, tree-sitter, tmuxp, pgcli, mycli, csvkit,
   peaclock and lavat are all installed/updated via **`dev-packages`**, not

@@ -1,14 +1,12 @@
 # shellcheck shell=bash
-# bootstrap.d/30-stow.sh — stow strategy + systemd --user unit linking
+# bootstrap.d/30-stow.sh — stow strategy
 # ==============================================================================
 # stow_packages() (menu option 4) dispatches each package to
 # stow_whole_folder() or stow_per_file() based on STOW_PER_FILE_PACKAGES —
 # see the comment above that array for the whole-folder vs per-file
 # rationale, also documented in README.md's "Stow strategy" section.
-# link_systemd_units() runs at the end of stow_packages(): system/ is
-# excluded from stow entirely, so this is the mechanism that actually links
-# system/services/ and system/timers/ infra-*.service/.timer units into
-# ~/.config/systemd/user and enables them.
+# system/ is never stowed: its systemd --user jobs are installed by
+# dev-services (menu option 15) and the MOTD by dev-motd.
 # ==============================================================================
 
 # ==============================================================================
@@ -157,68 +155,4 @@ stow_packages() {
   # No need to touch ~/.zcompdump here: zsh/.zshrc only takes the compinit -C
   # fast path when the dump is newer than every file in ~/.zsh/completions, so
   # a completion just linked here is picked up on the next shell on its own.
-
-  link_systemd_units
-}
-
-# Links the systemd --user units from system/services/ (long-running
-# services) and system/timers/ (oneshot .service + .timer pairs) into
-# ~/.config/systemd/user, and enables them. system/ is excluded from the stow
-# packages (see stow_packages), so this is the mechanism that puts them to
-# work. Naming: every file is called infra-*.
-link_systemd_units() {
-  sep
-
-  if [[ "$TEST_MODE" == true ]]; then
-    skip "TEST MODE — real systemd units are left alone"
-    return
-  fi
-
-  if ! command -v systemctl &>/dev/null || ! systemctl --user show-environment &>/dev/null 2>&1; then
-    skip "systemd --user unavailable — skipping systemd units"
-    return
-  fi
-
-  local unit_dir="$TARGET/.config/systemd/user"
-  mkdir -p "$unit_dir"
-
-  local linked=0 f name
-  for f in "$DOTFILES_DIR"/system/services/infra-*.service \
-    "$DOTFILES_DIR"/system/timers/infra-*.service \
-    "$DOTFILES_DIR"/system/timers/infra-*.timer; do
-    [[ -e "$f" ]] || continue
-    name="$(basename "$f")"
-    ln -sf "$f" "$unit_dir/$name"
-    ok "Linked $name"
-    ((linked++)) || true
-  done
-
-  if [[ $linked -eq 0 ]]; then
-    skip "No infra-* units in system/services or system/timers."
-    return
-  fi
-
-  systemctl --user daemon-reload
-
-  # Long-running services: enabled and started directly.
-  for f in "$DOTFILES_DIR"/system/services/infra-*.service; do
-    [[ -e "$f" ]] || continue
-    name="$(basename "$f")"
-    if systemctl --user enable --now "$name" &>/dev/null; then
-      ok "Enabled $name"
-    else
-      warn "Couldn't enable $name"
-    fi
-  done
-
-  # Oneshot + timer pairs: only the .timer is enabled (it triggers the .service).
-  for f in "$DOTFILES_DIR"/system/timers/infra-*.timer; do
-    [[ -e "$f" ]] || continue
-    name="$(basename "$f")"
-    if systemctl --user enable --now "$name" &>/dev/null; then
-      ok "Enabled $name"
-    else
-      warn "Couldn't enable $name"
-    fi
-  done
 }

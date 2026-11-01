@@ -53,15 +53,16 @@ run_all() {
   set_permissions
   stow_packages
   run_dev_motd || warn "dev-motd encountered errors — check output above"
-  # Desktop and boot themes are opt-in: an unattended --all run (servers, the
-  # Termux VM, a fresh machine you haven't looked at yet) must not swap the
-  # Plasma look or touch GRUB/Plymouth/initramfs with sudo. Menu option 1, 13
-  # and 14 still run them.
+  # Desktop/boot themes and background jobs are opt-in: an unattended --all
+  # run (servers, the Termux VM, a fresh machine you haven't looked at yet)
+  # must not swap the Plasma look, touch GRUB/Plymouth/initramfs with sudo or
+  # start systemd units. Menu options 1, 13, 14 and 15 still run them.
   if [[ "$NONINTERACTIVE" == true ]]; then
-    skip "Plasma and boot themes (--all) — run dev-plasma / dev-boot when you want them"
+    skip "Plasma/boot themes and services (--all) — run dev-plasma / dev-boot / dev-services when you want them"
   else
     run_dev_plasma || warn "dev-plasma encountered errors — check output above"
     run_dev_boot || warn "dev-boot encountered errors — check output above"
+    run_dev_services || warn "dev-services encountered errors — check output above"
   fi
   install_fonts
   setup_tw_hook || warn "Timewarrior hook setup failed — check output above"
@@ -88,7 +89,7 @@ main_menu() {
       --title " Main Menu " \
       --menu "\ZbSelect an action:\ZB" \
       28 64 16 \
-      "1" "Run everything  (2 through 14)" \
+      "1" "Run everything  (2 through 15)" \
       "2" "Install apt packages" \
       "3" "Set permissions on dev-* scripts" \
       "4" "$stow_label" \
@@ -102,6 +103,7 @@ main_menu() {
       "12" "Install language runtimes (rust, node, ...)" \
       "13" "KDE Plasma themes  (dev-plasma)" \
       "14" "Boot themes: GRUB + Plymouth  (dev-boot)" \
+      "15" "Background services (dev-services)" \
       "q" "Quit" \
       3>&1 1>&2 2>&3) || break
 
@@ -121,6 +123,7 @@ main_menu() {
       12) (install_runtimes) || true ;;
       13) (run_dev_plasma) || true ;;
       14) (run_dev_boot) || true ;;
+      15) (run_dev_services) || true ;;
       q | Q) break ;;
     esac
 

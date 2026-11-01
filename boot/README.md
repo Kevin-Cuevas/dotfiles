@@ -12,6 +12,7 @@ folder here, bump the commit in this file and run `dev-boot`.
 | Theme | Installed to | Upstream | Commit | License |
 | ----- | ------------ | -------- | ------ | ------- |
 | GRUB `nord` | `/boot/grub/themes/nord` | [stevendejongnl/grub2-nord-theme](https://github.com/stevendejongnl/grub2-nord-theme) | `f2bf575` (2025-04-07) | GPLv3 |
+| GRUB icon sets `color`, `whitesur` | `/boot/grub/themes/nord/icons` (when chosen) | same repo, `assets/assets-{color,whitesur}/icons-1080p` | `f2bf575` | GPLv3 |
 | Plymouth `cuts_alt` | `/usr/share/plymouth/themes/cuts_alt` | [adi1090x/plymouth-themes](https://github.com/adi1090x/plymouth-themes) `pack_1/cuts_alt` | `5d88174` (2023-08-22) | GPLv3 |
 
 ## GRUB `nord`: how it was built
@@ -31,7 +32,20 @@ cp assets/info-1080p.png                     nord/info.png
 cp LICENSE                                   nord/
 ```
 
+## GRUB icon sets
+
+`nord/icons` is the **white** set. `grub/icons/color` and
+`grub/icons/whitesur` are upstream's other two 1080p sets, copied as-is
+(`assets/assets-color/icons-1080p`, `assets/assets-whitesur/icons-1080p`).
+Upstream's `install.sh` only offers white; `dev-boot --grub-icons=<set>`
+assembles the theme with the chosen set replacing `icons/`.
+
 ## Plymouth `cuts_alt`
 
 Copied as-is from `pack_1/cuts_alt` (it already includes its `LICENSE`). The
 `.plymouth`/`.script` files are stored as 644: they're data, not executables.
+
+The other 79 themes of that repo are **not** vendored: `dev-boot` can install
+any of them on a single machine, downloading only that theme's folder at the
+same pinned commit (`PLY_UPSTREAM_COMMIT` in `dev-boot`; bump it together with
+the commit above).

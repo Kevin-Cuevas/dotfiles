@@ -30,12 +30,12 @@ sep() { printf "${DIM}%s${RST}\n" "  ──────────────�
 # checklist_select_or_all <title> <prompt> <win_h> <win_w> <list_h> \
 #                          <out_array_name> <keys_array_name> [labels_assoc_name]
 #
-# Checklist compartido con semántica "instalar algunos / todos / ninguno":
-#   - Todos los items empiezan desmarcados, más una fila extra "__skip__".
-#   - Si se marca __skip__          -> el array de salida queda vacío.
-#   - Si no se marca nada (ENTER)   -> el array de salida = la lista completa.
-#   - Si se marcan items concretos  -> el array de salida = solo esos.
-#   - Devuelve 1 si el diálogo se cancela (ESC/Cancel).
+# Shared checklist with "install some / all / none" semantics:
+#   - Every item starts unchecked, plus an extra "__skip__" row.
+#   - If __skip__ is checked        -> the output array is empty.
+#   - If nothing is checked (ENTER) -> the output array = the full list.
+#   - If specific items are checked -> the output array = just those.
+#   - Returns 1 if the dialog is cancelled (ESC/Cancel).
 checklist_select_or_all() {
   local _title="$1" _prompt="$2" _wh="$3" _ww="$4" _lh="$5"
   local -n _out_ref="$6"

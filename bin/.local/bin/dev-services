@@ -1,0 +1,698 @@
+#!/usr/bin/env bash
+# dev-services — installs the dotfiles' background jobs as systemd --user
+# units. Standalone, like the other dev-* CLIs: it doesn't depend on
+# bootstrap.d/*.sh or $DOTFILES_DIR (system/ is located from this script's own
+# real path).
+#
+# Every job is a PROJECT: a folder holding its unit file(s) and an app/ with
+# what actually runs. The folder it lives in says how it runs:
+#
+#   system/services/<name>/          runs all the time (a daemon)
+#     dotfiles-<name>.service
+#     app/main                       executable (any language, with a shebang)
+#
+#   system/timers/<name>/            runs on a schedule
+#     dotfiles-<name>.service        Type=oneshot: does the work, then exits
+#     dotfiles-<name>.timer          when to run it (it triggers the .service)
+#     app/main
+#
+# A project must bring its own units: nothing is generated at install time,
+# so the repo shows exactly what runs. ExecStart points to the installed copy,
+# %h/.local/lib/dotfiles-services/<name>/main (%h = home), so units work no
+# matter where the repo is cloned.
+#
+# Installing COPIES app/ to ~/.local/lib/dotfiles-services/<name>/ and the
+# units to ~/.config/systemd/user/ (no symlinks into the repo: editing the
+# repo never changes a running job behind your back; --doctor shows drift).
+# A service is enabled and started; for a timer only the .timer is enabled.
+#
+# Scope, on purpose: it only ever touches dotfiles-* units and its own
+# ~/.local/lib/dotfiles-services/. It never enables lingering (`loginctl
+# enable-linger` made user@.service start at boot, ahead of the session, and
+# raced WirePlumber's audio-volume restore on this setup), never edits
+# default.target, never writes drop-ins/overrides and never touches units it
+# didn't install (e.g. host-local infra-* ones). Without lingering, user units
+# only run while you're logged in; that's why timers use Persistent=true: a
+# run missed while logged out happens at the next login.
+#
+# Usage:
+#   dev-services                   interactive menu (dialog)
+#   dev-services --list            every project: kind, installed, state
+#   dev-services --install=a,b     install/update those projects
+#   dev-services --all             install/update every project
+#   dev-services --remove=a,b      stop, disable and delete those projects' units
+#   dev-services --new=NAME        scaffold a new service project in the repo
+#   dev-services --new=NAME --timer   ... or a timer project
+#   dev-services --dry-run         with --install/--all/--remove: print what it would do
+#   dev-services --doctor          check the repo against what's installed; changes nothing
+#   dev-services -h | --help       this help
+set -uo pipefail
+
+# ─── helpers (same style as bootstrap.d/00-core.sh) ──────────────────────────
+RED='\e[38;2;191;97;106m'
+GRN='\e[38;2;163;190;140m'
+YLW='\e[38;2;235;203;139m'
+BLU='\e[38;2;136;192;208m'
+CYN='\e[38;2;143;188;187m'
+DIM='\e[38;2;94;129;172m'
+RST='\e[0m'
+
+info() { printf "${BLU}[INFO]${RST}  %s\n" "$*"; }
+ok() { printf "${GRN}[OK]${RST}    %s\n" "$*"; }
+err() { printf "${RED}[ERR]${RST}   %s\n" "$*" >&2; }
+warn() { printf "${YLW}[WARN]${RST}  %s\n" "$*"; }
+skip() { printf "${CYN}[SKIP]${RST}  %s\n" "$*"; }
+sep() { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
+
+# The repo's system/, from the script's real path (bin/.local/bin/dev-services,
+# stowed per-file into ~/.local/bin). DEV_SERVICES_SRC overrides it.
+SRC_DIR="${DEV_SERVICES_SRC:-$(cd "$(dirname "$(readlink -f "$0")")/../../.." && pwd)/system}"
+BACKTITLE="${DEV_SERVICES_BACKTITLE:-dev-services · $(hostname) · $(date '+%Y-%m-%d %H:%M')}"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+APP_ROOT="$HOME/.local/lib/dotfiles-services"
+PREFIX="dotfiles-"
+KINDS=(services timers)
+# [Install] targets a unit may hook into. Anything else (multi-user.target,
+# another service...) is outside what a user job of these dotfiles needs.
+ALLOWED_TARGETS=(default.target graphical-session.target timers.target)
+
+DRY_RUN=false
+
+# ─── projects ───────────────────────────────────────────────────────────────
+# "kind name" for every project folder in the repo, services first.
+list_projects() {
+  local kind d
+  for kind in "${KINDS[@]}"; do
+    for d in "$SRC_DIR/$kind"/*/; do
+      [[ -d "$d" ]] || continue
+      d="${d%/}"
+      echo "$kind $(basename "$d")"
+    done
+  done
+}
+
+# Kind of a project by name (services|timers); fails if it isn't in the repo.
+project_kind() {
+  local kind
+  for kind in "${KINDS[@]}"; do
+    [[ -d "$SRC_DIR/$kind/$1" ]] && {
+      echo "$kind"
+      return 0
+    }
+  done
+  return 1
+}
+
+# Unit file names of a project: the .service, plus the .timer for timers.
+project_units() {
+  echo "$PREFIX$2.service"
+  [[ "$1" == timers ]] && echo "$PREFIX$2.timer"
+}
+
+# The unit systemctl enables: the .timer for timers, the .service otherwise.
+main_unit() {
+  if [[ "$1" == timers ]]; then echo "$PREFIX$2.timer"; else echo "$PREFIX$2.service"; fi
+}
+
+# Every value of KEY= in an ini-style unit file.
+unit_values() {
+  sed -n "s/^[[:space:]]*$2=[[:space:]]*//p" "$1"
+}
+
+unit_has_section() {
+  grep -q "^\[$2\]" "$1"
+}
+
+# Checks the repo layout of a project. Prints one line per problem; returns 1
+# if there's any. Run before every install, and by --doctor.
+validate_project() {
+  local kind="$1" name="$2" dir="$SRC_DIR/$1/$2" problems=()
+  local svc="$dir/$PREFIX$name.service" tmr="$dir/$PREFIX$name.timer"
+  local exec_path="%h/.local/lib/dotfiles-services/$name/main"
+
+  [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+    || problems+=("the name must be lowercase letters, digits and dashes")
+  [[ -f "$dir/app/main" && -x "$dir/app/main" ]] \
+    || problems+=("app/main is missing or not executable")
+  [[ -f "$dir/app/package.json" ]] \
+    && problems+=("app/package.json: projects with dependencies to install aren't supported yet")
+  [[ -n "$(find "$dir" ! -type f ! -type d -print -quit 2>/dev/null)" ]] \
+    && problems+=("contains symlinks or special files")
+
+  # Nothing at the top level besides the project's own units, app/ and docs:
+  # a stray unit would be silently ignored.
+  local f base
+  for f in "$dir"/* "$dir"/.[!.]*; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    case "$base" in
+      app | README.md | "$PREFIX$name.service") ;;
+      "$PREFIX$name.timer") [[ "$kind" == timers ]] || problems+=("$base: a services/ project has no timer (move it to timers/)") ;;
+      *) problems+=("unexpected file at the top level: $base") ;;
+    esac
+  done
+
+  if [[ ! -f "$svc" ]]; then
+    problems+=("$PREFIX$name.service is missing")
+  else
+    local exec_start
+    exec_start="$(unit_values "$svc" ExecStart)"
+    [[ "$exec_start" == "$exec_path"* ]] \
+      || problems+=("ExecStart must run $exec_path")
+    local svc_type
+    svc_type="$(unit_values "$svc" Type | tail -1)"
+    if [[ "$kind" == timers ]]; then
+      [[ "$svc_type" == oneshot ]] || problems+=("$PREFIX$name.service must be Type=oneshot (the timer starts it)")
+      unit_has_section "$svc" Install \
+        && problems+=("$PREFIX$name.service must have no [Install]: the timer is what gets enabled")
+    else
+      unit_has_section "$svc" Install || problems+=("$PREFIX$name.service needs an [Install] section")
+    fi
+  fi
+  if [[ "$kind" == timers ]]; then
+    if [[ ! -f "$tmr" ]]; then
+      problems+=("$PREFIX$name.timer is missing")
+    else
+      unit_has_section "$tmr" Timer || problems+=("$PREFIX$name.timer has no [Timer] section")
+      unit_has_section "$tmr" Install || problems+=("$PREFIX$name.timer needs an [Install] section")
+    fi
+  fi
+
+  local unit target
+  while IFS= read -r unit; do
+    [[ -f "$dir/$unit" ]] || continue
+    for target in $(unit_values "$dir/$unit" WantedBy); do
+      [[ " ${ALLOWED_TARGETS[*]} " == *" $target "* ]] \
+        || problems+=("$unit: WantedBy=$target isn't allowed (${ALLOWED_TARGETS[*]})")
+    done
+  done < <(project_units "$kind" "$name")
+
+  [[ ${#problems[@]} -eq 0 ]] && return 0
+  printf '%s\n' "${problems[@]}"
+  return 1
+}
+
+# Is the installed copy of a project identical to the repo? (units + app/)
+is_current() {
+  local kind="$1" name="$2" unit
+  while IFS= read -r unit; do
+    cmp -s "$SRC_DIR/$kind/$name/$unit" "$UNIT_DIR/$unit" || return 1
+  done < <(project_units "$kind" "$name")
+  diff -rq "$SRC_DIR/$kind/$name/app" "$APP_ROOT/$name" &>/dev/null
+}
+
+is_installed() {
+  [[ -f "$UNIT_DIR/$(main_unit "$1" "$2")" ]]
+}
+
+# Installed dotfiles-* units whose project is no longer in the repo.
+orphan_names() {
+  local f name
+  for f in "$UNIT_DIR/$PREFIX"*.service "$UNIT_DIR/$PREFIX"*.timer; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f")"
+    name="${name#"$PREFIX"}"
+    name="${name%.*}"
+    project_kind "$name" >/dev/null || echo "$name"
+  done | sort -u
+}
+
+# One-word state: active, inactive, failed, not-installed, outdated.
+project_state() {
+  local kind="$1" name="$2" state
+  is_installed "$kind" "$name" || {
+    echo not-installed
+    return
+  }
+  state="$(systemctl --user is-active "$(main_unit "$kind" "$name")" 2>/dev/null)"
+  if [[ "$state" == failed ]] || systemctl --user is-failed -q "$PREFIX$name.service" 2>/dev/null; then
+    echo failed
+  elif ! is_current "$kind" "$name"; then
+    echo outdated
+  elif [[ "$state" == active ]]; then
+    echo active
+  else
+    echo inactive
+  fi
+}
+
+state_label() {
+  case "$1" in
+    active) echo "✔ active" ;;
+    inactive) echo "· inactive" ;;
+    failed) echo "✖ failed" ;;
+    outdated) echo "⚠ outdated" ;;
+    not-installed) echo "○ not installed" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+kind_label() {
+  if [[ "$1" == timers ]]; then echo timer; else echo service; fi
+}
+
+# Pads $1 with spaces up to $2 characters. printf "%-Ns" counts bytes and the
+# state glyphs take several, which misaligns columns; ${#} counts characters.
+pad() {
+  local s="$1"
+  while ((${#s} < $2)); do s+=" "; done
+  printf '%s' "$s"
+}
+
+# ─── running commands ───────────────────────────────────────────────────────
+# Runs a command, or only prints it with --dry-run.
+run() {
+  if $DRY_RUN; then
+    printf "${DIM}  [dry-run]${RST} %s\n" "$*"
+    return 0
+  fi
+  "$@"
+}
+
+systemd_available() {
+  command -v systemctl &>/dev/null && systemctl --user show-environment &>/dev/null
+}
+
+# ─── install / remove ───────────────────────────────────────────────────────
+install_project() {
+  local name="$1" kind problems
+  sep
+  kind="$(project_kind "$name")" || {
+    err "$name: no such project in $SRC_DIR/{services,timers}"
+    return 1
+  }
+  if ! problems="$(validate_project "$kind" "$name")"; then
+    err "$name: not installed, fix the project first:"
+    printf '         %s\n' "${problems//$'\n'/$'\n'         }" >&2
+    return 1
+  fi
+
+  local unit main changed=false was_installed=false
+  main="$(main_unit "$kind" "$name")"
+  is_installed "$kind" "$name" && was_installed=true
+
+  if diff -rq "$SRC_DIR/$kind/$name/app" "$APP_ROOT/$name" &>/dev/null; then
+    skip "$name: app is up to date"
+  else
+    # Copied next to the old one and swapped in, so a running job never sees
+    # a half-copied folder.
+    run mkdir -p "$APP_ROOT"
+    run rm -rf "${APP_ROOT:?}/.$name.new"
+    run cp -r "$SRC_DIR/$kind/$name/app" "$APP_ROOT/.$name.new"
+    run rm -rf "${APP_ROOT:?}/$name"
+    run mv "$APP_ROOT/.$name.new" "$APP_ROOT/$name"
+    $DRY_RUN || ok "$name: app -> $APP_ROOT/$name"
+    changed=true
+  fi
+
+  while IFS= read -r unit; do
+    if cmp -s "$SRC_DIR/$kind/$name/$unit" "$UNIT_DIR/$unit"; then
+      skip "$unit is up to date"
+      continue
+    fi
+    run install -D -m 644 "$SRC_DIR/$kind/$name/$unit" "$UNIT_DIR/$unit"
+    $DRY_RUN || ok "$unit -> $UNIT_DIR"
+    changed=true
+  done < <(project_units "$kind" "$name")
+
+  $changed && { run systemctl --user daemon-reload || return 1; }
+
+  if ! systemctl --user is-enabled -q "$main" 2>/dev/null || ! $was_installed; then
+    run systemctl --user --quiet enable --now "$main" || {
+      err "Couldn't enable $main (journalctl --user -u $PREFIX$name.service)"
+      return 1
+    }
+    $DRY_RUN || ok "$main enabled and started"
+  elif $changed && [[ "$kind" == services ]]; then
+    # A running daemon keeps the old code until restarted; try-restart leaves
+    # it stopped if it was stopped. A timer's .service picks up the change on
+    # its next run.
+    run systemctl --user try-restart "$main" || return 1
+    $DRY_RUN || ok "$main restarted with the new version"
+  else
+    skip "$main is already enabled"
+  fi
+
+  if ! $DRY_RUN && [[ "$kind" == services ]]; then
+    local wanted
+    wanted="$(unit_values "$SRC_DIR/$kind/$name/$PREFIX$name.service" WantedBy)"
+    if [[ "$wanted" == *graphical-session.target* ]] && ! systemctl --user is-active -q graphical-session.target; then
+      info "$main starts with the graphical session (there's none here)"
+    elif ! systemctl --user is-active -q "$main"; then
+      warn "$main isn't running — journalctl --user -u $main"
+    fi
+  fi
+}
+
+# Removes whatever dev-services installed for a name, whether or not the
+# project is still in the repo (so orphans can be cleaned up too).
+remove_project() {
+  local name="$1" unit found=false
+  sep
+  [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || {
+    err "Invalid name: $name"
+    return 1
+  }
+  # The timer first: stopping the service while its timer is live could
+  # start it again.
+  for unit in "$PREFIX$name.timer" "$PREFIX$name.service"; do
+    [[ -f "$UNIT_DIR/$unit" ]] || continue
+    found=true
+    # "enabled", not just is-enabled's exit code: a timer's .service is
+    # "static" (no [Install]) and has nothing to disable.
+    if [[ "$(systemctl --user is-enabled "$unit" 2>/dev/null)" == enabled ]] || systemctl --user is-active -q "$unit" 2>/dev/null; then
+      run systemctl --user --quiet disable --now "$unit"
+      $DRY_RUN || ok "$unit stopped and disabled"
+    fi
+    run rm -f "$UNIT_DIR/$unit"
+    $DRY_RUN || ok "Deleted $UNIT_DIR/$unit"
+  done
+  if [[ -d "$APP_ROOT/$name" ]]; then
+    found=true
+    run rm -rf "${APP_ROOT:?}/$name"
+    $DRY_RUN || ok "Deleted $APP_ROOT/$name"
+  fi
+  if ! $found; then
+    skip "$name isn't installed"
+    return 0
+  fi
+  run systemctl --user daemon-reload
+  run systemctl --user reset-failed "$PREFIX$name.service" &>/dev/null
+  return 0
+}
+
+# ─── new project ────────────────────────────────────────────────────────────
+new_project() {
+  local name="$1" kind="$2" dir
+  [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || {
+    err "Invalid name: $name (lowercase letters, digits and dashes)"
+    return 1
+  }
+  if project_kind "$name" >/dev/null; then
+    err "$name already exists in $SRC_DIR/$(project_kind "$name")"
+    return 1
+  fi
+  dir="$SRC_DIR/$kind/$name"
+  mkdir -p "$dir/app" || return 1
+
+  cat >"$dir/app/main" <<'EOF'
+#!/usr/bin/env bash
+# What this job does, and why.
+set -euo pipefail
+
+echo "hello from $(basename "$(dirname "$(readlink -f "$0")")")"
+EOF
+  chmod 755 "$dir/app/main"
+
+  if [[ "$kind" == timers ]]; then
+    cat >"$dir/$PREFIX$name.service" <<EOF
+[Unit]
+Description=$name (dotfiles, run by $PREFIX$name.timer)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/lib/dotfiles-services/$name/main
+EOF
+    # Persistent=true: without lingering a user timer only fires while you're
+    # logged in; this catches up a missed run at the next login.
+    cat >"$dir/$PREFIX$name.timer" <<EOF
+[Unit]
+Description=Run $PREFIX$name.service on a schedule
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
+EOF
+  else
+    cat >"$dir/$PREFIX$name.service" <<EOF
+[Unit]
+Description=$name (dotfiles)
+
+[Service]
+Type=simple
+ExecStart=%h/.local/lib/dotfiles-services/$name/main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+  fi
+  ok "Created $dir"
+  find "$dir" -type f | sed "s|^$SRC_DIR/|         |"
+  info "Edit app/main (and the schedule/target), then: dev-services --install=$name"
+}
+
+# ─── list / doctor ──────────────────────────────────────────────────────────
+print_list() {
+  local kind name any=false
+  printf '  %s %s %s\n' "$(pad PROJECT 24)" "$(pad KIND 8)" STATE
+  while read -r kind name; do
+    any=true
+    printf '  %s %s %s\n' "$(pad "$name" 24)" "$(pad "$(kind_label "$kind")" 8)" "$(state_label "$(project_state "$kind" "$name")")"
+  done < <(list_projects)
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    any=true
+    printf '  %s %s %s\n' "$(pad "$name" 24)" "$(pad "?" 8)" "orphan (not in the repo: dev-services --remove=$name)"
+  done < <(orphan_names)
+  $any || skip "No projects in $SRC_DIR/{services,timers}"
+}
+
+DOC_FAIL=0
+run_doctor() {
+  sep
+  info "Doctor: $SRC_DIR → $UNIT_DIR"
+  DOC_FAIL=0
+  local kind name problems state main
+  while read -r kind name; do
+    main="$(main_unit "$kind" "$name")"
+    if ! problems="$(validate_project "$kind" "$name")"; then
+      err "$name: invalid project"
+      printf '         %s\n' "${problems//$'\n'/$'\n'         }" >&2
+      DOC_FAIL=1
+      continue
+    fi
+    state="$(project_state "$kind" "$name")"
+    case "$state" in
+      active) ok "$name ($(kind_label "$kind")): $main active, matches the repo" ;;
+      inactive) warn "$name: $main is installed but not active (systemctl --user status $main)" ;;
+      failed)
+        err "$name: failed (journalctl --user -u $PREFIX$name.service)"
+        DOC_FAIL=1
+        ;;
+      outdated) warn "$name: the installed copy differs from the repo (dev-services --install=$name)" ;;
+      not-installed) skip "$name: not installed (dev-services --install=$name)" ;;
+    esac
+  done < <(list_projects)
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] && warn "$name: installed but no longer in the repo (dev-services --remove=$name)"
+  done < <(orphan_names)
+
+  if [[ "$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null)" == yes ]]; then
+    warn "Lingering is ON for $USER: user units start at boot, before the session. dev-services never enables it (it raced the audio-volume restore here once)."
+  fi
+
+  sep
+  if [[ $DOC_FAIL -eq 0 ]]; then
+    ok "Doctor: no broken projects"
+  else
+    err "Doctor: some projects are broken"
+  fi
+  return "$DOC_FAIL"
+}
+
+# ─── menu ───────────────────────────────────────────────────────────────────
+pause() { read -rp "  Press ENTER to return to menu..." _; }
+
+# Checklist of projects. $1 = install|remove; result names in the array $2.
+pick_projects() {
+  local mode="$1"
+  local -n _picked="$2"
+  _picked=()
+  local items=() kind name state on
+  while read -r kind name; do
+    state="$(project_state "$kind" "$name")"
+    if [[ "$mode" == remove ]]; then
+      [[ "$state" == not-installed ]] && continue
+      on=off
+    else
+      # Preselected: what's installed but behind the repo.
+      on=off
+      [[ "$state" == outdated ]] && on=on
+    fi
+    items+=("$name" "$(pad "$(kind_label "$kind")" 8) $(state_label "$state")" "$on")
+  done < <(list_projects)
+  if [[ "$mode" == remove ]]; then
+    while IFS= read -r name; do
+      [[ -n "$name" ]] && items+=("$name" "orphan (not in the repo)" off)
+    done < <(orphan_names)
+  fi
+  if [[ ${#items[@]} -eq 0 ]]; then
+    dialog --clear --backtitle "$BACKTITLE" --title " dev-services " \
+      --msgbox "Nothing to $mode." 7 40
+    return 1
+  fi
+
+  local title="Install / update" text="Select the projects to install or update"
+  [[ "$mode" == remove ]] && title="Remove" text="Select the projects to stop, disable and delete"
+  local raw line
+  raw=$(dialog --clear --backtitle "$BACKTITLE" --title " $title " \
+    --separate-output --checklist "$text  [SPACE=toggle  ENTER=confirm]" \
+    18 72 10 "${items[@]}" 3>&1 1>&2 2>&3) || return 1
+  while IFS= read -r line; do [[ -n "$line" ]] && _picked+=("$line"); done <<<"$raw"
+  [[ ${#_picked[@]} -gt 0 ]]
+}
+
+menu_loop() {
+  local choice names=() name
+  while true; do
+    choice=$(dialog --clear --backtitle "$BACKTITLE" --title " dev-services " \
+      --cancel-label "Quit" --menu \
+      "systemd --user jobs from the dotfiles (dotfiles-*).\n\n$(print_list 2>&1 | sed 's/\x1b\[[0-9;]*m//g')" \
+      22 78 3 \
+      1 "Install / update  ▸" \
+      2 "Remove  ▸" \
+      3 "Check (doctor)" \
+      3>&1 1>&2 2>&3) || break
+    case "$choice" in
+      1 | 2)
+        local mode=install fn=install_project
+        [[ "$choice" == 2 ]] && mode=remove fn=remove_project
+        pick_projects "$mode" names || continue
+        clear
+        for name in "${names[@]}"; do "$fn" "$name"; done
+        pause
+        ;;
+      3)
+        clear
+        run_doctor
+        pause
+        ;;
+    esac
+  done
+  clear
+}
+
+# ─── help ───────────────────────────────────────────────────────────────────
+usage() {
+  sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p}' "$0"
+}
+
+# ─── arg parsing ────────────────────────────────────────────────────────────
+ACTION=""
+NAMES=()
+NEW_KIND=services
+set_action() {
+  [[ -z "$ACTION" || "$ACTION" == "$1" ]] || {
+    err "Use only one of --list, --install, --all, --remove, --new, --doctor"
+    exit 1
+  }
+  ACTION="$1"
+}
+for arg in "$@"; do
+  case "$arg" in
+    --list) set_action list ;;
+    --install=*)
+      set_action install
+      IFS=',' read -ra NAMES <<<"${arg#--install=}"
+      ;;
+    --all) set_action all ;;
+    --remove=*)
+      set_action remove
+      IFS=',' read -ra NAMES <<<"${arg#--remove=}"
+      ;;
+    --new=*)
+      set_action new
+      NAMES=("${arg#--new=}")
+      ;;
+    --timer) NEW_KIND=timers ;;
+    --dry-run) DRY_RUN=true ;;
+    --doctor) set_action doctor ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      err "Unknown argument: $arg"
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "$NEW_KIND" == timers && "$ACTION" != new ]]; then
+  err "--timer only goes with --new=NAME"
+  exit 1
+fi
+
+# --new only writes into the repo: no systemd needed.
+if [[ "$ACTION" == new ]]; then
+  new_project "${NAMES[0]}" "$NEW_KIND"
+  exit $?
+fi
+
+[[ -d "$SRC_DIR" ]] || {
+  err "Can't find $SRC_DIR (set DEV_SERVICES_SRC=<repo>/system)"
+  exit 1
+}
+if ! systemd_available; then
+  skip "systemd --user isn't available here — nothing to do"
+  exit 0
+fi
+
+case "$ACTION" in
+  list)
+    print_list
+    exit 0
+    ;;
+  doctor)
+    run_doctor
+    exit $?
+    ;;
+  install | all | remove)
+    if [[ "$ACTION" == all ]]; then
+      NAMES=()
+      while read -r _ name; do NAMES+=("$name"); done < <(list_projects)
+    fi
+    [[ ${#NAMES[@]} -gt 0 ]] || {
+      skip "Nothing to do."
+      exit 0
+    }
+    $DRY_RUN && info "--dry-run: nothing will be changed"
+    fn=install_project
+    [[ "$ACTION" == remove ]] && fn=remove_project
+    failed=()
+    for name in "${NAMES[@]}"; do
+      "$fn" "$name" || failed+=("$name")
+    done
+    sep
+    if [[ ${#failed[@]} -gt 0 ]]; then
+      warn "Failed: ${failed[*]}"
+      exit 1
+    fi
+    ok "Done"
+    exit 0
+    ;;
+esac
+
+if $DRY_RUN; then
+  err "--dry-run goes with --install, --all or --remove"
+  exit 1
+fi
+
+# No action: the menu, or the list when there's no terminal to show it on.
+if ! [ -t 0 ] || ! [ -t 1 ]; then
+  print_list
+  exit 0
+fi
+command -v dialog &>/dev/null || {
+  err "dialog not found — use the flags (dev-services --help)"
+  exit 1
+}
+menu_loop

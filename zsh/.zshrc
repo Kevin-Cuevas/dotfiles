@@ -5,8 +5,8 @@
 # Only hard deps: zsh + git (zinit self-installs on first run).
 # ===============================================================================
 
-# `ZPROF=1 zsh` (o `just profile`) => perfil de funciones del arranque al final
-# del archivo. Sin la variable no carga nada.
+# `ZPROF=1 zsh` => startup function profile at the end of the file. Without
+# the variable nothing is loaded.
 if [[ -n $ZPROF ]]; then zmodload zsh/zprof; fi
 
 export LC_TIME="en_US.UTF-8"
@@ -230,28 +230,28 @@ txl() {
   local -a sessions
   local session
 
-  # Obtener sesiones usando glob nativo de zsh (sin ls)
+  # Get the sessions with a native zsh glob (no ls)
   sessions=(${dir}/*.{yaml,yml,json}(N:t:r))
 
-  # Si no hay configs
+  # If there are no configs
   (( ${#sessions[@]} == 0 )) && {
-    echo "No hay sesiones en $dir"
+    echo "No sessions in $dir"
     return 1
   }
 
-  # Selector con fzf si existe, fallback simple si no
+  # fzf picker if available, simple fallback otherwise
   if command -v fzf >/dev/null 2>&1; then
     session=$(printf "%s\n" "${sessions[@]}" | fzf)
   else
-    echo "Sesiones disponibles:"
+    echo "Available sessions:"
     printf "%s\n" "${sessions[@]}"
     return 0
   fi
 
-  # Si cancelas fzf
+  # If fzf is cancelled
   [[ -z "$session" ]] && return 0
 
-  # Si ya existe la sesión → attach
+  # If the session already exists → attach
   if tmux has-session -t "$session" 2>/dev/null; then
     tmux attach -t "$session"
   else

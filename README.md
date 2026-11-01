@@ -15,7 +15,8 @@ curl -fsSL https://raw.githubusercontent.com/Kevin-Cuevas/dotfiles/main/install 
 ```
 
 Or non-interactively (installs everything without prompts, except the
-Plasma and boot themes: run `dev-plasma` / `dev-boot` for those):
+Plasma and boot themes and the background services: run `dev-plasma` /
+`dev-boot` / `dev-services` for those):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Kevin-Cuevas/dotfiles/main/install | bash -s -- --all
@@ -42,15 +43,15 @@ dotfiles/
 ├── cava/         -> ~/.config/cava
 ├── icons/        -> ~/.icons              cursor and icon themes
 ├── kitty/        -> ~/.config/kitty
-├── konsole/      -> ~/.local/share/konsole  Konsole/Yakuake profiles + Nordic colorschemes  [per-file]
+├── konsole/      -> ~/.local/share/konsole  Konsole/Yakuake profiles + NivekDark/LightNordKonsoleColors  [per-file]
 ├── nvim/         -> ~/.config/nvim        LazyVim config
 ├── peaclock/     -> ~/.peaclock
-├── plasma/                                KDE Plasma Global Themes + color schemes + Nord Flare wallpaper (not stowed: dev-plasma)
+├── plasma/                                KDE Plasma Global Themes + color schemes + Nord Flare wallpaper + Yakuake settings (not stowed: dev-plasma)
 ├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local [per-file]
-├── system/                                MOTD + systemd --user units (not stowed)
-│   ├── motd/                              root-run MOTD scripts
-│   ├── services/     -> ~/.config/systemd/user  persistent infra-*.service units
-│   └── timers/       -> ~/.config/systemd/user  infra-*.service + .timer oneshot pairs
+├── system/                                MOTD + background jobs (not stowed)
+│   ├── motd/                              root-run MOTD scripts (dev-motd)
+│   ├── services/                          always-running jobs: dotfiles-*.service (dev-services)
+│   └── timers/                            scheduled jobs: dotfiles-*.service + .timer (dev-services)
 ├── task/         -> ~/.config/task
 ├── templates/    -> ~/.templates
 ├── tmux/         -> ~/.tmux.conf, ~/.tmux-theme.conf
@@ -109,10 +110,9 @@ name). It needs two different non-stow mechanisms instead:
 - MOTD (`system/motd/`) is installed with a root `cp` into
   `/etc/update-motd.d` via `dev-motd` (bootstrap menu option 6) — it can't be
   a user symlink since that directory is root-owned.
-- systemd `--user` units (`system/services/`, persistent daemons, and
-  `system/timers/`, oneshot `.service` + `.timer` pairs), always named
-  `infra-*`, are linked individually with `ln -sf` by `link_systemd_units()`
-  (called automatically at the end of `stow_packages()`), then enabled.
+- Background jobs (`system/services/`, `system/timers/`) are installed as
+  systemd `--user` units by `dev-services` (bootstrap menu option 15) — see
+  [Background services](#background-services-systemd---user).
 
 ---
 
@@ -137,7 +137,7 @@ runs on its own:
 | `10-packages.sh` | apt packages only (menu option 2) — non-apt tools live in `dev-packages`, see below |
 | `20-runtimes.sh` | language runtimes: rust, node, deno, bun, java via SDKMAN (menu option 12) |
 | `30-stow.sh` | stow strategy (menu option 4) + systemd `--user` unit linking |
-| `40-misc.sh` | default shell, `dev-*` permissions, `dev-packages`/`dev-motd`/`dev-ssh`/`dev-plasma`/`dev-boot` launchers, fonts, TPM, Timewarrior hook |
+| `40-misc.sh` | default shell, `dev-*` permissions, `dev-packages`/`dev-motd`/`dev-ssh`/`dev-plasma`/`dev-boot`/`dev-services` launchers, fonts, TPM, Timewarrior hook |
 
 Modules are sourced in lexical order (`NN-` prefixes, stepped by 10 so a new
 one can slot in without renumbering) purely to guarantee `00-core.sh` loads
@@ -152,7 +152,7 @@ there. For a new non-apt tool, add it to `dev-packages` instead (see below).
 
 | #   | Action                                       |
 | --- | -------------------------------------------- |
-| 1   | Run everything (2 through 14)                |
+| 1   | Run everything (2 through 15)                |
 | 2   | Install apt packages                         |
 | 3   | Set permissions on `dev-*` scripts           |
 | 4   | Stow packages into `$HOME`                   |
@@ -166,6 +166,7 @@ there. For a new non-apt tool, add it to `dev-packages` instead (see below).
 | 12  | Install language runtimes (rust, node, ...)  |
 | 13  | KDE Plasma themes via `dev-plasma`           |
 | 14  | Boot themes (GRUB + Plymouth) via `dev-boot` |
+| 15  | Background services via `dev-services`       |
 
 **Test mode** — stow into a throwaway directory instead of `$HOME`:
 
@@ -269,7 +270,7 @@ manual ones.
 ```
 git stow zsh wget kitty-terminfo curl fzf ripgrep fd-find bat zoxide
 taskwarrior timewarrior build-essential cmake libicu-dev golang figlet toilet
-wl-clipboard direnv eza pipx zip unzip default-jdk
+wl-clipboard direnv eza pipx zip unzip default-jdk yakuake
 ```
 
 ---
@@ -370,11 +371,20 @@ dev-plasma --help           # usage + the list of keys
 | `apply`       | applies the theme matching the current mode (light/dark is read from the active window background) and records the light/dark pair in `kdeglobals`. Leaves the "Switch to Dark Mode at Night" toggle exactly as it was (applying a theme clears it, so it's saved and restored), and never touches your panel |
 | `wallpaper`   | sets Nord Flare only if the current wallpaper is a stock KDE one; a hand-picked wallpaper is kept on `--all` and replaced only when this key is picked explicitly |
 | `launcher-icon` | sets the `nivek-debian` icon on the launcher (Kickoff/Kicker) of your existing panels through plasmashell's scripting (DBus), changing only that key — pinned apps, widgets and layout stay as they are. Same rule as the wallpaper: a hand-picked icon is kept on `--all` |
+| `yakuake`     | writes the keys listed in `plasma/yakuake/yakuakerc` (no skin borders, no title or tab bar, no tray icon, `KeepOpen=false`, no session-switch shortcuts) one by one with `kwriteconfig6`, so size, position and anything else you set stay yours. Yakuake writes its whole config back when it quits, so if it's running it offers to quit and restart it (on `--all` it only warns). Also removes links to Konsole profiles renamed in the repo and points `DefaultProfile` at an existing one |
 
 The doctor also applies KPackage's own rule (every file must resolve inside its package folder), so a theme Plasma would silently ignore shows up as an error, and warns when an installed theme, color scheme or wallpaper differs from the repo.
 
 Outside KDE Plasma `dev-plasma` does nothing and exits 0, so `--all` is safe
 on servers. `bootstrap --all` skips it (and `dev-boot`): themes are opt-in. A run always ends with the doctor.
+
+**Konsole / Yakuake** use the profiles `NivekDarkNordKonsole` /
+`NivekLightNordKonsole` with the color schemes `NivekDarkNordKonsoleColors` /
+`NivekLightNordKonsoleColors` (the `konsole/` stow package; the terminal
+palettes match kitty's). Switching them with Plasma's light/dark mode is the
+job of the `konsole-theme-sync` background service (`dev-services`): it sets
+the default profile of Yakuake and Konsole and recolors the open sessions
+live. Autostart and the toggle shortcut are left to you.
 
 ---
 
@@ -439,6 +449,55 @@ Plymouth (VMs, Termux, servers) a key is skipped, and when there's nothing to
 change `dev-boot` doesn't even ask for sudo. The doctor checks the effective
 `GRUB_THEME`, the three Plymouth layers and whether the theme is actually
 inside the initramfs — what the next boot will really show.
+
+---
+
+## Background services (systemd --user)
+
+Jobs that run in the background live in `system/`, one folder per project,
+and are installed as systemd `--user` units named `dotfiles-*` by
+**`dev-services`** (bootstrap menu option **15**):
+
+```
+system/services/<name>/          always running
+├── dotfiles-<name>.service
+└── app/main                     what runs (any language, with a shebang)
+
+system/timers/<name>/            run on a schedule
+├── dotfiles-<name>.service      Type=oneshot: does the work and exits
+├── dotfiles-<name>.timer        when (it triggers the .service)
+└── app/main
+```
+
+```bash
+dev-services                     # interactive menu (dialog)
+dev-services --list              # every project: kind and state
+dev-services --install=NAME      # install/update (comma-separated list)
+dev-services --all               # install/update every project
+dev-services --remove=NAME       # stop, disable and delete its units and app
+dev-services --new=NAME [--timer]  # scaffold a project in the repo
+dev-services --dry-run           # with --install/--all/--remove: print what it would do
+dev-services --doctor            # repo vs installed; changes nothing
+```
+
+- A project brings its own units: nothing is generated at install time.
+  `ExecStart` runs `%h/.local/lib/dotfiles-services/<name>/main`, so the units
+  don't depend on where the repo is cloned. Projects are validated before
+  installing (layout, names, `Type=oneshot` for timers, allowed `WantedBy=`).
+- Installing **copies** `app/` to `~/.local/lib/dotfiles-services/<name>/`
+  and the units to `~/.config/systemd/user/`; editing the repo never changes
+  a running job until it's reinstalled (the doctor reports the drift). A
+  service is enabled and started; for a timer only the `.timer` is enabled.
+- It only touches `dotfiles-*` units and its own folder. It never enables
+  lingering, edits `default.target` or writes drop-ins, so user units run
+  while you're logged in; timers use `Persistent=true` to catch up a run
+  missed while logged out.
+- Projects with dependencies to install (`app/package.json`) aren't supported
+  yet.
+
+| Project              | Kind    | What it does |
+| -------------------- | ------- | ------------ |
+| `konsole-theme-sync` | service | follows Plasma's light/dark mode (freedesktop portal): sets the default profile of Yakuake and Konsole and recolors the open sessions live with OSC 50, without typing anything into them. Starts with the graphical session |
 
 ---
 

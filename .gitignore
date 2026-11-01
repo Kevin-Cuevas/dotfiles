@@ -2,22 +2,22 @@
 # Dotfiles gitignore
 # ====================================
 
-# Archivos temporales
+# Temporary files
 .DS_Store
 Thumbs.db
 
 # ====================================
-# SSH (por-máquina, nunca trackeado)
+# SSH (per-machine, never tracked)
 # ====================================
-# Historial de usernames por (tailnet, nodo). Se comparte a mano vía scp, no por git.
+# Username history per (tailnet, node). Shared by hand via scp, not through git.
 .ssh_user_history
 
-# Todo dentro de ssh/.ssh es material por-máquina (claves, known_hosts,
-# config.local, control masters, etc.); solo "config" (base compartida) se trackea.
+# Everything inside ssh/.ssh is per-machine material (keys, known_hosts,
+# config.local, control masters, etc.); only "config" (the shared base) is tracked.
 ssh/.ssh/*
 !ssh/.ssh/config
 
-# Sesiones y cache
+# Sessions and cache
 *.swp
 *.swo
 *.bak
@@ -27,7 +27,7 @@ ssh/.ssh/*
 # ====================================
 # zsh
 # ====================================
-# El paquete zsh/ solo trackea .zshrc y .p10k.zsh; las completions van en zsh-completions/.
+# The zsh/ package only tracks .zshrc and .p10k.zsh; completions go in zsh-completions/.
 zsh/.zsh/
 
 # ====================================
@@ -44,5 +44,5 @@ nvim/.config/nvim/*.log
 nvim/.config/nvim/data
 nvim/.config/nvim/.stfolder/
 nvim/.config/nvim/.stignore
-# lazy-lock.json: estado por máquina (nvim lo reescribe) — no se trackea
+# lazy-lock.json: per-machine state (nvim rewrites it) — not tracked
 nvim/.config/nvim/lazy-lock.json

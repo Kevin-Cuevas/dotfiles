@@ -1,0 +1,28 @@
+# Yakuake settings the dotfiles manage. NOT a full yakuakerc: dev-plasma
+# (key yakuake) writes these keys one by one with kwriteconfig6, so size,
+# position and anything else you set stay yours. DefaultProfile isn't here:
+# dotfiles-konsole-theme-sync owns it (it follows the light/dark mode).
+
+[Appearance]
+HideSkinBorders=true
+
+[Dialogs]
+FirstRun=false
+
+[Shortcuts]
+switch-to-session-1=none
+switch-to-session-2=none
+switch-to-session-3=none
+switch-to-session-4=none
+switch-to-session-5=none
+switch-to-session-6=none
+switch-to-session-7=none
+switch-to-session-8=none
+switch-to-session-9=none
+switch-to-session-10=none
+
+[Window]
+KeepOpen=false
+ShowSystrayIcon=false
+ShowTabBar=false
+ShowTitleBar=false

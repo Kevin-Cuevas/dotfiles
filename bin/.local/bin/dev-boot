@@ -10,7 +10,9 @@
 # step is conservative:
 #   - grub     -> assembles the theme (nord + the chosen icon set) in a temp
 #                 dir, copies it to /boot/grub/themes/nord and writes ONLY
-#                 /etc/default/grub.d/dev-boot.cfg (GRUB_THEME + GRUB_GFXMODE).
+#                 /etc/default/grub.d/dev-boot.cfg (GRUB_THEME + GRUB_GFXMODE,
+#                 plus "quiet splash" appended to the kernel command line
+#                 when Plymouth is installed).
 #                 /etc/default/grub is never touched: it holds per-machine
 #                 settings (e.g. hid_apple.fnmode=2 on the kernel command
 #                 line). grub-mkconfig reads grub.d/*.cfg AFTER
@@ -45,8 +47,13 @@
 # folder, and it never overwrites a theme owned by a Debian package. It's
 # marked with .dev-boot-source (repo, commit, path) to recognize it later.
 #
-# Neither key edits the kernel command line: if "splash" is missing (Plymouth
-# doesn't show without it) they only warn. Without GRUB or Plymouth (VMs,
+# Plymouth only shows with "splash" on the kernel command line, and Debian
+# only puts it there when installed with a desktop. So when Plymouth is
+# installed, the grub drop-in APPENDS "quiet" and "splash" (each only if
+# missing) to GRUB_CMDLINE_LINUX_DEFAULT: the machine's own options in
+# /etc/default/grub (e.g. hid_apple.fnmode=2) stay as they are, and removing
+# the drop-in undoes it. "quiet" keeps kernel messages from printing over the
+# animation. Without GRUB or Plymouth (VMs,
 # Termux, servers) the key is skipped. Idempotent: when there's nothing to
 # change it doesn't ask for sudo. Without --plymouth/--grub-icons whatever is
 # already set is kept (if it's a theme dev-boot knows; otherwise cuts_alt and
@@ -538,6 +545,21 @@ install_grub() {
 GRUB_THEME="$theme_txt"
 GRUB_GFXMODE="$GRUB_GFXMODE_WANT"
 EOF
+  # Only with Plymouth: without it, "splash" does nothing. Appended, never
+  # replacing what /etc/default/grub already has.
+  if have_plymouth; then
+    cat >>"$tmp" <<'EOF'
+# Plymouth only shows with "splash"; "quiet" keeps kernel messages off it.
+# Appended (only if missing) to the machine's own options.
+for opt in quiet splash; do
+  case " $GRUB_CMDLINE_LINUX_DEFAULT " in
+    *" $opt "*) ;;
+    *) GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }$opt" ;;
+  esac
+done
+unset opt
+EOF
+  fi
   bash -n "$tmp" || {
     err "The generated drop-in isn't valid shell — not installing it"
     return 1
@@ -561,9 +583,21 @@ EOF
 
   local cmdline
   cmdline="$(grub_effective | sed -n 3p)"
-  [[ " $cmdline " == *" splash "* ]] \
-    || warn "Your kernel command line has no 'splash': Plymouth won't show (add it in /etc/default/grub)"
+  if have_plymouth && [[ " $cmdline " != *" splash "* ]]; then
+    warn "The kernel command line still has no 'splash' (another grub.d file overrides it?)"
+  fi
   return 0
+}
+
+# Plymouth needs 'splash' on the command line of the kernel that boots. The
+# grub key adds it; this tells apart "added, reboot" from "not there yet".
+splash_notice() {
+  grep -qw splash /proc/cmdline 2>/dev/null && return 0
+  if [[ " $(grub_effective | sed -n 3p) " == *" splash "* ]]; then
+    info "'splash' is set in GRUB: Plymouth shows from the next boot"
+  else
+    warn "No 'splash' on the kernel command line: Plymouth won't show (dev-boot --only=grub adds it)"
+  fi
 }
 
 # ─── plymouth ───────────────────────────────────────────────────────────────
@@ -657,8 +691,7 @@ install_plymouth() {
     ok "initramfs rebuilt with $PLY_THEME"
   fi
 
-  grep -qw splash /proc/cmdline 2>/dev/null \
-    || warn "The kernel booted without 'splash': Plymouth won't show (add it in /etc/default/grub and run update-grub)"
+  have_grub && ! $DRY_RUN && splash_notice
   return 0
 }
 
@@ -708,7 +741,7 @@ doctor_grub() {
   if [[ " $cmdline " == *" splash "* ]]; then
     doc_ok "      kernel command line has 'splash'"
   else
-    doc_warn "      kernel command line has no 'splash' (Plymouth won't show)"
+    doc_warn "      kernel command line has no 'splash' (Plymouth won't show; dev-boot --only=grub adds it)"
   fi
 
   if [[ -r /boot/grub/grub.cfg ]]; then
@@ -778,7 +811,11 @@ doctor_plymouth() {
   if grep -qw splash /proc/cmdline 2>/dev/null; then
     doc_ok "      the kernel booted with 'splash'"
   else
-    doc_warn "      the kernel booted without 'splash' (Plymouth isn't shown)"
+    if [[ " $(grub_effective | sed -n 3p) " == *" splash "* ]]; then
+      doc_warn "      the kernel booted without 'splash' — GRUB has it now: reboot to see Plymouth"
+    else
+      doc_warn "      the kernel booted without 'splash' (Plymouth isn't shown; dev-boot --only=grub adds it)"
+    fi
   fi
 }
 
@@ -1025,7 +1062,7 @@ menu_loop() {
     menu_status
     choice=$(dialog --clear --colors --backtitle "$BACKTITLE" --title " dev-boot " \
       --cancel-label "Quit" --menu \
-      "$MENU_STATUS\n\nNeeds sudo. Never touches /etc/default/grub or the kernel command line.$dry" \
+      "$MENU_STATUS\n\nNeeds sudo. Never touches /etc/default/grub (its drop-in only adds quiet splash).$dry" \
       16 78 4 \
       1 "Apply / update everything" \
       2 "Plymouth animation  ▸" \

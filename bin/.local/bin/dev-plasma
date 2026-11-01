@@ -11,8 +11,8 @@
 # ("kf.package: Path traversal attempt detected"). With symlinks into
 # ~/dotfiles it ignored contents/defaults and silently applied Breeze. So
 # COPIES are installed, like any theme from "Get New…": the repo is the source
-# and is edited there (the nivek-plasma-global-theme skill does it); then
-# `dev-plasma --only=themes` reinstalls whatever changed.
+# and is edited there; then `dev-plasma --only=themes` reinstalls whatever
+# changed.
 #
 # A Global Theme only NAMES its pieces (ColorScheme=, Icons Theme=,
 # cursorTheme=, KSplash Theme=...) and Plasma doesn't complain if one is

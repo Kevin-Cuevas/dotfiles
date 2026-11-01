@@ -36,6 +36,7 @@ APT_PKGS=(
   zip
   unzip
   default-jdk
+  yakuake
 )
 
 install_packages() {

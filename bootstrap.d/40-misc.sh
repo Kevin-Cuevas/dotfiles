@@ -130,6 +130,21 @@ run_dev_boot() {
   DEV_BOOT_BACKTITLE="$BACKTITLE" "$boot_script"
 }
 
+# dev-services installs the dotfiles' systemd --user jobs (system/services,
+# system/timers). Opt-in like the themes: it opens its own menu, and
+# bootstrap --all doesn't call it.
+run_dev_services() {
+  sep
+  local services_script="$DOTFILES_DIR/bin/.local/bin/dev-services"
+  [[ -f "$services_script" ]] || {
+    err "dev-services not found at $services_script"
+    return 1
+  }
+  [[ -x "$services_script" ]] || chmod +x "$services_script"
+  info "Launching dev-services..."
+  DEV_SERVICES_BACKTITLE="$BACKTITLE" "$services_script"
+}
+
 run_dev_ssh() {
   sep
   local ssh_script="$DOTFILES_DIR/bin/.local/bin/dev-ssh"

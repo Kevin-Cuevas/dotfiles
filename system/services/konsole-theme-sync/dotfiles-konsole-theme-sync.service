@@ -1,0 +1,13 @@
+[Unit]
+Description=Sync Konsole/Yakuake colors with Plasma's light/dark mode (dotfiles)
+After=graphical-session.target plasma-xdg-desktop-portal-kde.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/lib/dotfiles-services/konsole-theme-sync/main
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

@@ -5,9 +5,18 @@ DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 NONINTERACTIVE=false
 TARGET="$HOME"
+# Machine profile for the apt groups (bootstrap.d/10-packages.sh): empty means
+# auto-detect (KDE Plasma installed -> desktop, otherwise server).
+MACHINE_PROFILE=""
+# shellcheck disable=SC2034 # MACHINE_PROFILE is read by bootstrap.d/10-packages.sh
 for arg in "$@"; do
   case "$arg" in
     --all) NONINTERACTIVE=true ;;
+    --profile=desktop | --profile=server) MACHINE_PROFILE="${arg#--profile=}" ;;
+    --profile=*)
+      echo "Unknown profile: ${arg#--profile=} (desktop or server)" >&2
+      exit 1
+      ;;
     --*) ;;
     *) TARGET="$arg" ;;
   esac

@@ -1,9 +1,8 @@
 # shellcheck shell=bash
 # bootstrap.d/00-core.sh — shared UI/logging primitives
 # ==============================================================================
-# Colors, log helpers (info/ok/err/warn/skip/die/sep), the generic
-# checklist_select_or_all dialog helper, preflight checks, and the header
-# banner. Sourced by ../bootstrap — every other module in this directory
+# Colors, log helpers (info/ok/err/warn/skip/die/sep), preflight checks,
+# and the header banner. Sourced by ../bootstrap — every other module in this directory
 # depends on this one loading first (hence the 00- prefix).
 # ==============================================================================
 
@@ -26,59 +25,6 @@ die() {
   exit 1
 }
 sep() { printf "${DIM}%s${RST}\n" "  ──────────────────────────────────────────────────"; }
-
-# checklist_select_or_all <title> <prompt> <win_h> <win_w> <list_h> \
-#                          <out_array_name> <keys_array_name> [labels_assoc_name]
-#
-# Shared checklist with "install some / all / none" semantics:
-#   - Every item starts unchecked, plus an extra "__skip__" row.
-#   - If __skip__ is checked        -> the output array is empty.
-#   - If nothing is checked (ENTER) -> the output array = the full list.
-#   - If specific items are checked -> the output array = just those.
-#   - Returns 1 if the dialog is cancelled (ESC/Cancel).
-checklist_select_or_all() {
-  local _title="$1" _prompt="$2" _wh="$3" _ww="$4" _lh="$5"
-  local -n _out_ref="$6"
-  local -n _keys_ref="$7"
-  local _has_labels=0
-  if [[ -n "${8:-}" ]]; then
-    local -n _labels_ref="$8"
-    _has_labels=1
-  fi
-
-  _out_ref=()
-
-  local _items=("__skip__" "Skip -- install none of the above" "off")
-  local _key _label
-  for _key in "${_keys_ref[@]}"; do
-    [[ $_has_labels -eq 1 ]] && _label="${_labels_ref[$_key]}" || _label="$_key"
-    _items+=("$_key" "$_label" "off")
-  done
-
-  local _raw
-  _raw=$(dialog --clear --colors --backtitle "$BACKTITLE" \
-    --title " $_title " --separate-output --checklist \
-    "$_prompt" "$_wh" "$_ww" "$_lh" "${_items[@]}" \
-    3>&1 1>&2 2>&3) || return 1
-
-  clear
-
-  local _raw_chosen=() _line
-  while IFS= read -r _line; do [[ -n "$_line" ]] && _raw_chosen+=("$_line"); done <<<"$_raw"
-
-  for _line in "${_raw_chosen[@]}"; do
-    [[ "$_line" == "__skip__" ]] && {
-      _out_ref=()
-      return 0
-    }
-  done
-
-  if [[ ${#_raw_chosen[@]} -eq 0 ]]; then
-    _out_ref=("${_keys_ref[@]}")
-  else
-    _out_ref=("${_raw_chosen[@]}")
-  fi
-}
 
 preflight() {
   if [[ "$NONINTERACTIVE" == "false" ]] && ! command -v dialog &>/dev/null; then

@@ -14,7 +14,8 @@ From a fresh machine (only `git` and `curl` required):
 curl -fsSL https://raw.githubusercontent.com/Kevin-Cuevas/dotfiles/main/install | bash
 ```
 
-Or non-interactively (installs everything without prompts):
+Or non-interactively (installs everything without prompts, except the
+Plasma and boot themes: run `dev-plasma` / `dev-boot` for those):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Kevin-Cuevas/dotfiles/main/install | bash -s -- --all
@@ -374,7 +375,7 @@ dev-plasma --help           # usage + the list of keys
 The doctor also applies KPackage's own rule (every file must resolve inside its package folder), so a theme Plasma would silently ignore shows up as an error, and warns when an installed theme, color scheme or wallpaper differs from the repo.
 
 Outside KDE Plasma `dev-plasma` does nothing and exits 0, so `--all` is safe
-on servers. A run always ends with the doctor.
+on servers. `bootstrap --all` skips it (and `dev-boot`): themes are opt-in. A run always ends with the doctor.
 
 ---
 

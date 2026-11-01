@@ -129,38 +129,38 @@ set auto-ratio on
 # Nord3 (Aurora): #bf616a, #d08770, #ebcb8b, #a3be8c, #b48ead
 # -----------------------------------------------------------------------------
 
-# Texto activo (números del reloj) - Nord Frost (verde-agua principal)
+# Active text (clock digits) - Nord Frost (main teal)
 style active-fg #8fbcbb
 
-# Texto inactivo (bloques apagados) - Nord Frost (verde-agua atenuado)
+# Inactive text (unlit blocks) - Nord Frost (dimmed teal)
 style inactive-fg #88c0d0
 
-# Texto de los dos puntos (:) - Nord Frost (verde-agua brillante)
+# Colon (:) text - Nord Frost (bright teal)
 style colon-fg #8fbcbb
 
-# Fondo activo (bloques encendidos) - Nord Frost (azul-verde para contraste)
+# Active background (lit blocks) - Nord Frost (blue-green for contrast)
 style active-bg #88c0d0
 
-# Fondo inactivo - transparente/claro
+# Inactive background - transparent/clear
 style inactive-bg clear
 
-# Fondo de los dos puntos - transparente/claro
+# Colon background - transparent/clear
 style colon-bg clear
 
-# Fecha - Nord Frost (verde-agua suave)
+# Date - Nord Frost (soft teal)
 style date #8fbcbb
 
-# Fondo general - no establecer (usar el de kitty)
+# General background - unset (use kitty's)
 style background clear
 
-# Texto general - Nord Frost (verde-agua)
+# General text - Nord Frost (teal)
 style text #8fbcbb
 
-# Símbolo del prompt - Nord Frost (verde-agua brillante)
+# Prompt symbol - Nord Frost (bright teal)
 style prompt #8fbcbb
 
-# Estado de éxito - Nord Frost (verde-agua)
+# Success state - Nord Frost (teal)
 style success #8fbcbb
 
-# Estado de error - Nord Frost (azul para contraste)
+# Error state - Nord Frost (blue for contrast)
 style error #88c0d0

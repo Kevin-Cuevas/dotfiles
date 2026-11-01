@@ -550,7 +550,9 @@ install_sddm_cursor() {
     return 0
   fi
   info "Setting CursorTheme=$cursor in $SDDM_DROPIN (sudo)..."
-  printf '[Theme]\nCursorTheme=%s\n' "$cursor" | sudo tee "$SDDM_DROPIN" >/dev/null || {
+  # A fresh install has no /etc/sddm.conf.d until System Settings writes to it.
+  { sudo mkdir -p -- "$(dirname "$SDDM_DROPIN")" \
+    && printf '[Theme]\nCursorTheme=%s\n' "$cursor" | sudo tee "$SDDM_DROPIN" >/dev/null; } || {
     err "Couldn't write $SDDM_DROPIN"
     return 1
   }

@@ -180,7 +180,10 @@ install_tree() {
   fi
   local new="${dst:?}.dev-boot-new" old="${dst:?}.dev-boot-old"
   info "Installing $name to $dst..."
-  if ! { run_root rm -rf -- "$new" "$old" \
+  # The parent may not exist yet: a fresh Debian has /boot/grub but no
+  # /boot/grub/themes until some theme gets installed.
+  if ! { run_root mkdir -p -- "$(dirname "$dst")" \
+    && run_root rm -rf -- "$new" "$old" \
     && run_root cp -r -- "$src" "$new" \
     && run_root chown -R root:root "$new" \
     && run_root chmod -R u=rwX,go=rX "$new"; }; then

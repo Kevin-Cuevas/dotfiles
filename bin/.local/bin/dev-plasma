@@ -20,7 +20,7 @@
 # piece and --doctor checks that all of them exist:
 #   - themes      -> the Global Themes with kpackagetool6 (Plasma's official
 #                    package installer: -i or -u as needed), and the .colors
-#                    and the wallpaper as copies (kpackagetool6 can't install
+#                    and the wallpapers as copies (kpackagetool6 can't install
 #                    image wallpapers: Wallpaper/Images has no root folder and
 #                    its -u/-r fail). Only touches what differs. Also the
 #                    launcher icon (nivek-debian, into hicolor). The themes
@@ -46,10 +46,13 @@
 #                    scripting, and touches nothing else: no pinned apps, no
 #                    widgets. Like the wallpaper: a hand-picked icon is kept
 #                    in --all.
-#   - wallpaper   -> sets Nord Flare (it has light and dark variants) only if
-#                    the current wallpaper is KDE's stock one. A hand-picked
-#                    one is kept in --all; it's only replaced when you choose
-#                    this key.
+#   - wallpaper   -> sets one of plasma/wallpapers (each has light and dark
+#                    variants, so it follows the mode on its own). From the
+#                    checklist it shows a list to choose from, with a live
+#                    Preview on the desktop (Cancel puts back what you had).
+#                    No state file: the applied wallpaper IS the choice, so
+#                    --all keeps it if it's one of the repo's, sets Nord Flare
+#                    over KDE's stock one and keeps a hand-picked one.
 #   - yakuake     -> writes the Yakuake settings listed in plasma/yakuake/
 #                    yakuakerc (no borders, no title/tab bar, no tray icon...)
 #                    key by key, so everything else in your yakuakerc stays.
@@ -66,6 +69,9 @@
 #   dev-plasma --doctor        check only (installs/changes nothing)
 #   dev-plasma --dark=ID       dark Global Theme  (default: NivekDarkNord)
 #   dev-plasma --light=ID      light Global Theme (default: NivekLightNord)
+#   dev-plasma --wallpaper=ID  set that wallpaper (alone, it implies
+#                              --only=wallpaper)
+#   dev-plasma --list-wallpapers  the repo's wallpapers (* = applied)
 #   dev-plasma -h | --help     this help
 set -uo pipefail
 
@@ -97,7 +103,12 @@ STATE_DIR="$HOME/.local/share/dev-plasma"
 THEME_DARK="${DEV_PLASMA_DARK:-NivekDarkNord}"
 THEME_LIGHT="${DEV_PLASMA_LIGHT:-NivekLightNord}"
 FOLDER_COLOR="${DEV_PLASMA_FOLDER_COLOR:-nordic}"
-WALLPAPER="Nord-flare"
+WALLPAPER_DEFAULT="Nord-flare"
+WALLPAPER="" # --wallpaper=ID; empty = keep the applied one (or the default)
+WALLPAPER_DIR="$HOME/.local/share/wallpapers"
+# true when the keys came from the checklist: only then does the wallpaper
+# key show its list (--only and --all never open dialogs).
+PICK_WALLPAPER=false
 LAUNCHER_ICON="nivek-debian"
 # true if the keys were picked by hand (checklist or --only), false in --all:
 # decides whether the wallpaper may replace a hand-picked one.
@@ -121,16 +132,17 @@ KONSOLE_LIGHT="NivekLightNordKonsole"
 TERM_SYNC_UNIT="dotfiles-konsole-theme-sync.service"
 
 # ─── registry ───────────────────────────────────────────────────────────────
+WALLPAPER_COUNT="$(find "$SRC_DIR/wallpapers" -mindepth 2 -maxdepth 2 -name metadata.json 2>/dev/null | wc -l)"
 # PKG_KEYS order is the run order (regardless of --only's order): external
 # pieces first, then applying the theme that uses them.
 PKG_KEYS=(themes icons splash sddm-cursor apply wallpaper launcher-icon yakuake)
 declare -A PKG_LABEL=(
-  [themes]="Global Themes + colors + Nord Flare from the repo (kpackagetool6)"
+  [themes]="Global Themes + colors + wallpapers from the repo (kpackagetool6)"
   [icons]="Papirus from apt + $FOLDER_COLOR folders (papirus-folders)"
   [splash]="Kuro splash (git, sha-checked)"
   ["sddm-cursor"]="Theme cursor on the login screen too (SDDM, sudo)"
   [apply]="Apply $THEME_DARK / $THEME_LIGHT for the current mode"
-  [wallpaper]="Nord Flare wallpaper (if you have the stock one)"
+  [wallpaper]="Wallpaper (choose one of $WALLPAPER_COUNT, follows light/dark)"
   ["launcher-icon"]="$LAUNCHER_ICON icon on the launcher (icon only)"
   [yakuake]="Yakuake settings: no borders, no title/tab bar, no tray icon"
 )
@@ -638,42 +650,253 @@ apply_theme() {
 }
 
 # ─── wallpaper ──────────────────────────────────────────────────────────────
+# Pads $1 with spaces up to $2 characters. printf "%-Ns" counts bytes, which
+# misaligns names with multibyte characters; ${#} counts characters.
+pad() {
+  local s="$1"
+  while ((${#s} < $2)); do s+=" "; done
+  printf '%s' "$s"
+}
+
+# A string field ("Id", "Name") of a metadata.json; KPlugin's comes first.
+json_field() {
+  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" 2>/dev/null | head -1
+}
+
+# The repo's wallpapers (folders with a metadata.json), the default first.
+repo_wallpapers() {
+  local d id
+  is_repo_wallpaper "$WALLPAPER_DEFAULT" && echo "$WALLPAPER_DEFAULT"
+  for d in "$SRC_DIR"/wallpapers/*/; do
+    id="$(basename "$d")"
+    [[ "$id" != "$WALLPAPER_DEFAULT" ]] && is_repo_wallpaper "$id" && echo "$id"
+  done
+}
+
+is_repo_wallpaper() { [[ -n "$1" && -f "$SRC_DIR/wallpapers/$1/metadata.json" ]]; }
+
+wallpaper_name() {
+  local n
+  n="$(json_field "$SRC_DIR/wallpapers/$1/metadata.json" Name)"
+  echo "${n:-$1}"
+}
+
+# Without images_dark/ Plasma shows the same picture in both modes.
+wallpaper_variants() {
+  if [[ -n "$(find "$SRC_DIR/wallpapers/$1/contents/images_dark" -type f -print -quit 2>/dev/null)" ]]; then
+    echo "light + dark"
+  else
+    echo "single image"
+  fi
+}
+
+# Image= of every desktop (one per screen/activity). Read from the config
+# file, not plasmashell, so it also works without a session (doctor, list).
+applied_images() {
+  local rc="$HOME/.config/plasma-org.kde.plasma.desktop-appletsrc"
+  [[ -f "$rc" ]] && sed -n 's/^Image=//p' "$rc"
+}
+
+# The repo wallpaper an Image= value points to (its installed copy), if any.
+image_wallpaper_id() {
+  local img="${1#file://}" id
+  img="${img%/}"
+  [[ "$img" == "$WALLPAPER_DIR/"* ]] || return 1
+  id="${img#"$WALLPAPER_DIR"/}"
+  id="${id%%/*}"
+  is_repo_wallpaper "$id" && echo "$id"
+}
+
+# The repo wallpaper on the desktops (the first one found), if any.
+applied_wallpaper() {
+  local img id
+  while IFS= read -r img; do
+    id="$(image_wallpaper_id "$img")" && {
+      echo "$id"
+      return 0
+    }
+  done < <(applied_images)
+  return 1
+}
+
+# Pixel size as WxH (empty if it can't tell). identify when ImageMagick is
+# there; otherwise file(1), which knows PNG and JPEG.
+image_size() {
+  if command -v identify &>/dev/null; then
+    identify -format '%wx%h' "$1[0]" 2>/dev/null
+    return
+  fi
+  file -b "$1" 2>/dev/null \
+    | grep -oE '(PNG image data, [0-9]+ x [0-9]+|precision [0-9]+, [0-9]+x[0-9]+)' \
+    | grep -oE '[0-9]+ ?x ?[0-9]+$' | tr -d ' '
+}
+
+# Every desktop's wallpaper as "id<TAB>plugin<TAB>image", from plasmashell
+# itself: what's on screen right now, plugin included (a slideshow or a plain
+# color isn't an Image=).
+desktop_wallpapers() {
+  qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "desktops().forEach(function (d) {
+  d.currentConfigGroup = ['Wallpaper', d.wallpaperPlugin, 'General'];
+  print(d.id + '\t' + d.wallpaperPlugin + '\t' + d.readConfig('Image', '') + '\n');
+});" 2>/dev/null | sed '/^$/d'
+}
+
+# Puts back what desktop_wallpapers saved, desktop by desktop: the same
+# plugin, and the same image for the image plugin (another plugin's own
+# settings were never touched, so setting it back is enough).
+restore_wallpapers() {
+  local id plugin img list=""
+  while IFS=$'\t' read -r id plugin img; do
+    [[ "$id" =~ ^[0-9]+$ ]] || continue
+    img="${img//\\/\\\\}"
+    plugin="${plugin//\\/\\\\}"
+    list+="[$id, '${plugin//\'/\\\'}', '${img//\'/\\\'}'],"
+  done <<<"$1"
+  [[ -n "$list" ]] || return 1
+  qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "[$list].forEach(function (w) {
+  var d = desktopById(w[0]);
+  if (!d) return;
+  d.wallpaperPlugin = w[1];
+  if (w[1] !== 'org.kde.image') return;
+  d.currentConfigGroup = ['Wallpaper', 'org.kde.image', 'General'];
+  d.writeConfig('Image', w[2]);
+});" &>/dev/null
+}
+
+set_wallpaper() {
+  plasma-apply-wallpaperimage "$WALLPAPER_DIR/$1" &>/dev/null
+}
+
+# Opens the light and the dark variant in the image viewer: Preview only
+# shows the current mode's.
+open_variants() {
+  local f
+  for f in "$SRC_DIR/wallpapers/$1"/contents/images{,_dark}/*; do
+    [[ -f "$f" ]] && setsid -f xdg-open "$f" &>/dev/null
+  done
+}
+
+# The list. A menu, not a radiolist: every button acts on the highlighted
+# entry (a radiolist's extra button reports the SPACE-selected one while its
+# help button reports the highlighted one). Preview puts it on the desktop
+# and comes back; Light/dark opens both variants; Cancel (or Esc) puts back
+# what every desktop had. Sets PICKED.
+PICKED=""
+pick_wallpaper() {
+  local sel="$1" current="$1" snapshot previewed=false
+  snapshot="$(desktop_wallpapers)"
+  local id items rc out mark
+  while true; do
+    items=()
+    while IFS= read -r id; do
+      mark=""
+      [[ "$id" == "$current" ]] && mark="  ← current"
+      items+=("$id" "$(pad "$(wallpaper_variants "$id")" 13)$mark")
+    done < <(repo_wallpapers)
+    rc=0
+    out=$(dialog --clear --backtitle "$BACKTITLE" --title " Wallpaper ($WALLPAPER_COUNT) " \
+      --ok-label "Apply" --extra-button --extra-label "Preview" \
+      --help-button --help-label "Light/dark" --cancel-label "Cancel" \
+      --default-item "$sel" --menu \
+      "Each one follows Plasma's light/dark mode on its own.\nPreview shows it on your desktop · Cancel puts yours back" \
+      20 76 12 "${items[@]}" 3>&1 1>&2 2>&3) || rc=$?
+    case $rc in
+      0)
+        clear
+        [[ -n "$out" ]] || out="$sel"
+        PICKED="$out"
+        return 0
+        ;;
+      3)
+        [[ -n "$out" ]] && sel="$out"
+        if [[ -f "$WALLPAPER_DIR/$sel/metadata.json" ]] && set_wallpaper "$sel"; then
+          previewed=true
+        else
+          dialog --backtitle "$BACKTITLE" --title " Preview " \
+            --msgbox "$sel isn't installed yet (dev-plasma --only=themes)." 6 60
+        fi
+        ;;
+      2)
+        out="${out#HELP }"
+        [[ -n "$out" ]] && sel="$out"
+        open_variants "$sel"
+        ;;
+      *)
+        clear
+        if $previewed; then
+          restore_wallpapers "$snapshot" && info "Wallpaper put back as it was"
+        fi
+        return 1
+        ;;
+    esac
+  done
+}
+
 apply_wallpaper() {
   sep
-  local pkg="$HOME/.local/share/wallpapers/$WALLPAPER"
-  [[ -f "$pkg/metadata.json" ]] || {
-    err "$WALLPAPER isn't in $pkg (dev-plasma --only=themes)"
-    return 1
-  }
   if ! has_session; then
     skip "No graphical session — can't change the wallpaper"
     return 0
   fi
   need_cmd plasma-apply-wallpaperimage plasma-workspace || return 1
 
-  # Current wallpapers of every desktop (one per screen/activity).
-  local appletsrc="$HOME/.config/plasma-org.kde.plasma.desktop-appletsrc"
-  local images=() img custom=false
-  [[ -f "$appletsrc" ]] && mapfile -t images < <(sed -n 's/^Image=//p' "$appletsrc")
-  for img in "${images[@]}"; do
-    [[ "$img" == *"/wallpapers/$WALLPAPER"* ]] && continue
+  local current img custom=false
+  current="$(applied_wallpaper)"
+  while IFS= read -r img; do
     [[ -z "$img" || "$img" == *"/usr/share/wallpapers/"* ]] && continue
-    custom=true
-  done
-  if [[ ${#images[@]} -gt 0 ]] && ! $custom && [[ "${images[*]}" == *"/wallpapers/$WALLPAPER"* ]]; then
-    skip "$WALLPAPER is already your wallpaper"
-    return 0
-  fi
-  if $custom && [[ "$EXPLICIT" == false ]]; then
-    skip "You have a hand-picked wallpaper — keeping it (dev-plasma --only=wallpaper to change it)"
-    return 0
+    image_wallpaper_id "$img" >/dev/null || custom=true
+  done < <(applied_images)
+
+  local target="$WALLPAPER" picked=false
+  if [[ -n "$target" ]]; then
+    is_repo_wallpaper "$target" || {
+      err "Unknown wallpaper: $target (dev-plasma --list-wallpapers)"
+      return 1
+    }
+  elif $PICK_WALLPAPER && [[ "$WALLPAPER_COUNT" -gt 1 ]]; then
+    need_cmd qdbus6 qdbus-qt6 || return 1
+    if ! pick_wallpaper "${current:-$WALLPAPER_DEFAULT}"; then
+      skip "Wallpaper unchanged"
+      return 0
+    fi
+    target="$PICKED"
+    picked=true
+  else
+    if $custom && [[ "$EXPLICIT" == false ]]; then
+      skip "You have a hand-picked wallpaper — keeping it (dev-plasma --only=wallpaper to change it)"
+      return 0
+    fi
+    target="${current:-$WALLPAPER_DEFAULT}"
   fi
 
-  plasma-apply-wallpaperimage "$pkg" &>/dev/null || {
+  [[ -f "$WALLPAPER_DIR/$target/metadata.json" ]] || {
+    err "$target isn't in $WALLPAPER_DIR (dev-plasma --only=themes)"
+    return 1
+  }
+  # After the list it's applied even if it looks the same: Preview may have
+  # left another one on screen.
+  if ! $picked && [[ "$target" == "$current" ]] && ! $custom; then
+    skip "$target is already your wallpaper"
+    return 0
+  fi
+  set_wallpaper "$target" || {
     err "plasma-apply-wallpaperimage failed"
     return 1
   }
-  ok "Wallpaper: $WALLPAPER (switches between light/dark on its own)"
+  ok "Wallpaper: $target ($(wallpaper_variants "$target"), follows light/dark on its own)"
+}
+
+# --list-wallpapers
+list_wallpapers() {
+  local id cur mark def
+  cur="$(applied_wallpaper)"
+  while IFS= read -r id; do
+    mark=" " def=""
+    [[ "$id" == "$cur" ]] && mark="*"
+    [[ "$id" == "$WALLPAPER_DEFAULT" ]] && def="  (default)"
+    printf ' %s %s %s %s%s\n' "$mark" "$(pad "$id" 18)" "$(pad "$(wallpaper_name "$id")" 20)" \
+      "$(wallpaper_variants "$id")" "$def"
+  done < <(repo_wallpapers)
 }
 
 # ─── launcher-icon ──────────────────────────────────────────────────────────
@@ -972,6 +1195,59 @@ doctor_terminal() {
   fi
 }
 
+# Every wallpaper in the repo: what Plasma needs to list it under its name
+# and pick the right file, and that the installed copy matches.
+doctor_wallpapers() {
+  local id dir inst f base size names_l names_d n=0 issues=0 v
+  while IFS= read -r id; do
+    ((n++)) || true
+    dir="$SRC_DIR/wallpapers/$id"
+    inst="$WALLPAPER_DIR/$id"
+    if [[ "$(json_field "$dir/metadata.json" Id)" != "$id" ]]; then
+      doc_fail "wallpaper $id: metadata.json's Id isn't \"$id\" (Plasma would list it under another id)"
+      ((issues++)) || true
+    fi
+    if [[ -z "$(find "$dir/contents/images" -type f -print -quit 2>/dev/null)" ]]; then
+      doc_fail "wallpaper $id: contents/images/ is empty"
+      ((issues++)) || true
+    fi
+    # Plasma picks the file whose WxH name best fits the screen.
+    for f in "$dir"/contents/images{,_dark}/*; do
+      [[ -f "$f" ]] || continue
+      base="$(basename "$f")"
+      size="$(image_size "$f")"
+      if [[ -n "$size" && "$size" != "${base%.*}" ]]; then
+        doc_warn "wallpaper $id: ${f#"$dir/contents/"} is $size (Plasma picks files by their WxH name)"
+        ((issues++)) || true
+      fi
+    done
+    if [[ -d "$dir/contents/images_dark" ]]; then
+      names_l="$(find "$dir/contents/images" -type f -printf '%f\n' 2>/dev/null | sed 's/\.[^.]*$//' | sort)"
+      names_d="$(find "$dir/contents/images_dark" -type f -printf '%f\n' 2>/dev/null | sed 's/\.[^.]*$//' | sort)"
+      if [[ "$names_l" != "$names_d" ]]; then
+        doc_warn "wallpaper $id: light and dark come in different sizes (the image jumps when the mode changes)"
+        ((issues++)) || true
+      fi
+    fi
+    if [[ ! -f "$inst/metadata.json" ]]; then
+      doc_warn "wallpaper $id isn't installed (dev-plasma --only=themes)"
+      ((issues++)) || true
+    elif v="$(kpackage_escape "$inst")"; then
+      doc_fail "wallpaper $id: $v is outside the package (dev-plasma --only=themes)"
+      ((issues++)) || true
+    elif ! same_tree "$dir" "$inst"; then
+      doc_warn "wallpaper $id differs from the repo (dev-plasma --only=themes)"
+      ((issues++)) || true
+    fi
+  done < <(repo_wallpapers)
+  [[ $issues -eq 0 ]] && doc_ok "wallpapers: $n in the repo, all valid and installed"
+  if v="$(applied_wallpaper)"; then
+    doc_ok "wallpaper $v applied"
+  else
+    skip "the wallpaper isn't one of the repo's (stock or hand-picked)"
+  fi
+}
+
 run_doctor() {
   sep
   info "Doctor: $THEME_DARK / $THEME_LIGHT"
@@ -985,17 +1261,7 @@ run_doctor() {
   else
     doc_warn "icon $LAUNCHER_ICON not installed (dev-plasma --only=themes)"
   fi
-  if [[ -f "$HOME/.local/share/wallpapers/$WALLPAPER/metadata.json" ]]; then
-    if v="$(kpackage_escape "$HOME/.local/share/wallpapers/$WALLPAPER")"; then
-      doc_fail "wallpaper $WALLPAPER: $v is outside the package (dev-plasma --only=themes)"
-    elif ! same_tree "$SRC_DIR/wallpapers/$WALLPAPER" "$HOME/.local/share/wallpapers/$WALLPAPER"; then
-      doc_warn "wallpaper $WALLPAPER differs from the repo (dev-plasma --only=themes)"
-    else
-      doc_ok "wallpaper $WALLPAPER"
-    fi
-  else
-    doc_fail "wallpaper $WALLPAPER is missing (dev-plasma --only=themes)"
-  fi
+  doctor_wallpapers
 
   v="$(sddm_value CursorTheme)"
   if [[ -z "$v" ]]; then
@@ -1055,6 +1321,7 @@ usage() {
 # ─── arg parsing ────────────────────────────────────────────────────────────
 ONLY_KEYS=()
 DOCTOR_ONLY=false
+LIST_WALLPAPERS=false
 for arg in "$@"; do
   case "$arg" in
     --all) NONINTERACTIVE=true ;;
@@ -1062,6 +1329,8 @@ for arg in "$@"; do
     --doctor) DOCTOR_ONLY=true ;;
     --dark=*) THEME_DARK="${arg#--dark=}" ;;
     --light=*) THEME_LIGHT="${arg#--light=}" ;;
+    --wallpaper=*) WALLPAPER="${arg#--wallpaper=}" ;;
+    --list-wallpapers) LIST_WALLPAPERS=true ;;
     -h | --help)
       usage
       exit 0
@@ -1074,9 +1343,24 @@ for arg in "$@"; do
   esac
 done
 
+if $LIST_WALLPAPERS; then
+  list_wallpapers
+  exit 0
+fi
+# --wallpaper=ID alone means "just that".
+if [[ -n "$WALLPAPER" && ${#ONLY_KEYS[@]} -eq 0 && "$NONINTERACTIVE" != "true" ]]; then
+  ONLY_KEYS=(wallpaper)
+fi
+
 if ! command -v plasmashell &>/dev/null; then
   skip "KDE Plasma isn't installed — nothing to do"
   exit 0
+fi
+
+if [[ -n "$WALLPAPER" ]] && ! is_repo_wallpaper "$WALLPAPER"; then
+  err "Unknown wallpaper: $WALLPAPER"
+  list_wallpapers >&2
+  exit 1
 fi
 
 if $DOCTOR_ONLY; then
@@ -1108,6 +1392,7 @@ else
     warn "dev-plasma cancelled."
     exit 0
   fi
+  PICK_WALLPAPER=true
 fi
 
 if [[ ${#CHOSEN[@]} -eq 0 ]]; then

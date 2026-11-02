@@ -51,7 +51,7 @@ dotfiles/
 ├── konsole/      -> ~/.local/share/konsole  Konsole/Yakuake profiles + NivekDark/LightNordKonsoleColors  [per-file]
 ├── nvim/         -> ~/.config/nvim        LazyVim config
 ├── peaclock/     -> ~/.peaclock
-├── plasma/                                KDE Plasma Global Themes + color schemes + Nord Flare wallpaper + Yakuake settings (not stowed: dev-plasma)
+├── plasma/                                KDE Plasma Global Themes + color schemes + light/dark wallpapers + Yakuake settings (not stowed: dev-plasma)
 ├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local [per-file]
 ├── system/                                MOTD + background jobs (not stowed)
 │   ├── motd/                              root-run MOTD scripts (dev-motd)
@@ -356,9 +356,13 @@ and `Name=` are the same id: Plasma resolves `ColorScheme=` against that id,
 and when they disagree it marks the Global Theme as applied while silently
 keeping the old colors.
 
-The themes, their color schemes and the **Nord Flare** wallpaper (a package
-with `images/` + `images_dark/`, so it follows light/dark on its own) live in
-`plasma/`, which is **not** stowed. Plasma reads Global Themes (and wallpaper
+The themes, their color schemes and the wallpapers live in `plasma/`, which
+is **not** stowed. Each wallpaper is a package with `images/` + `images_dark/`,
+so it follows light/dark on its own: Nord Flare (the default) plus Nord
+Astronaut, Bedroom, Data Breach, Deer, Great Wave, Lighthouse, Sakura,
+Samurai, Study Room and Watchtower (Nord-recolored art, 1920x1080, both
+variants cropped the same way). Adding one is adding its folder under
+`plasma/wallpapers/`. Plasma reads Global Themes (and wallpaper
 packages) through KPackage, which rejects any file whose real path falls
 outside the package folder (`kf.package: Path traversal attempt detected` in
 the journal): a theme symlinked into `~/dotfiles` gets its `contents/defaults`
@@ -384,7 +388,7 @@ dev-plasma --help           # usage + the list of keys
 
 | Key           | What it does |
 | ------------- | ------------ |
-| `themes`      | installs the Global Themes from `plasma/look-and-feel` with `kpackagetool6` (Plasma's official package installer: `--install`, or `--upgrade` when it's already there), and copies the `.colors` files, the wallpaper and the launcher icon (`kpackagetool6` can't install image wallpapers: `Wallpaper/Images` has no package root and its `--upgrade`/`--remove` fail). Only touches what differs from the repo; leftover symlinks from an older stow setup are replaced |
+| `themes`      | installs the Global Themes from `plasma/look-and-feel` with `kpackagetool6` (Plasma's official package installer: `--install`, or `--upgrade` when it's already there), and copies the `.colors` files, the wallpapers and the launcher icon (`kpackagetool6` can't install image wallpapers: `Wallpaper/Images` has no package root and its `--upgrade`/`--remove` fail). Only touches what differs from the repo; leftover symlinks from an older stow setup are replaced |
 | `icons`       | `papirus-icon-theme` from apt + [`papirus-folders`](https://github.com/PapirusDevelopmentTeam/papirus-folders) (not in apt) set to `nordic`. Offers to remove a Papirus copy in `~/.local/share/icons` (from "Get New…"), which would shadow the apt one. The folder color is re-checked every run, since an apt upgrade resets it to blue. When something actually changed it rebuilds KDE's cache (`kbuildsycoca6`) and restarts plasmashell once, so the panel doesn't keep showing broken icons; apps that were already open need a restart (or a re-login) |
 | `splash`      | Kuro from [its git repo](https://github.com/bouteillerAlan/kuro) (GPLv3), remote HEAD sha compared like peaclock — not from the KDE store, whose download URLs expire |
 | `sddm-cursor` | copies the theme's cursor to `/usr/share/icons`: SDDM runs as the `sddm` user, which can't read a `0710` home, so the login screen never showed it. Writes `CursorTheme=` to `/etc/sddm.conf.d/dev-plasma.conf` only if nothing sets it yet (System Settings' `kde_settings.conf` sorts after it and still wins) |

@@ -382,6 +382,8 @@ from its own real path, so it works from `~/.local/bin` too:
 dev-plasma                  # interactive checklist (dialog)
 dev-plasma --all            # every key, no prompts
 dev-plasma --only=themes    # just one key
+dev-plasma --list-wallpapers           # the repo's wallpapers (* = applied)
+dev-plasma --wallpaper=Nord-lighthouse # set one (alone, implies --only=wallpaper)
 dev-plasma --doctor         # check that every referenced piece exists; changes nothing
 dev-plasma --help           # usage + the list of keys
 ```
@@ -393,11 +395,15 @@ dev-plasma --help           # usage + the list of keys
 | `splash`      | Kuro from [its git repo](https://github.com/bouteillerAlan/kuro) (GPLv3), remote HEAD sha compared like peaclock — not from the KDE store, whose download URLs expire |
 | `sddm-cursor` | copies the theme's cursor to `/usr/share/icons`: SDDM runs as the `sddm` user, which can't read a `0710` home, so the login screen never showed it. Writes `CursorTheme=` to `/etc/sddm.conf.d/dev-plasma.conf` only if nothing sets it yet (System Settings' `kde_settings.conf` sorts after it and still wins) |
 | `apply`       | applies the theme matching the current mode (light/dark is read from the active window background) and records the light/dark pair in `kdeglobals`. Leaves the "Switch to Dark Mode at Night" toggle exactly as it was (applying a theme clears it, so it's saved and restored), and never touches your panel |
-| `wallpaper`   | sets Nord Flare only if the current wallpaper is a stock KDE one; a hand-picked wallpaper is kept on `--all` and replaced only when this key is picked explicitly |
+| `wallpaper`   | sets one of the wallpapers in `plasma/wallpapers` (each follows light/dark on its own). From the checklist it opens a list: **Preview** puts the highlighted one on your desktop right away and comes back to the list, **Light/dark** opens both of its variants in the image viewer (Preview only shows the current mode's), **Apply** keeps it and **Cancel** puts back exactly what every desktop had. There's no state file: the applied wallpaper is the choice, so `--all` keeps it when it's one of the repo's, sets Nord Flare over a stock KDE one, and keeps a hand-picked one (replaced only when this key is picked explicitly) |
 | `launcher-icon` | sets the `nivek-debian` icon on the launcher (Kickoff/Kicker) of your existing panels through plasmashell's scripting (DBus), changing only that key — pinned apps, widgets and layout stay as they are. Same rule as the wallpaper: a hand-picked icon is kept on `--all` |
 | `yakuake`     | writes the keys listed in `plasma/yakuake/yakuakerc` (no skin borders, no title or tab bar, no tray icon, `KeepOpen=false`, no session-switch shortcuts) one by one with `kwriteconfig6`, so size, position and anything else you set stay yours. Yakuake writes its whole config back when it quits, so if it's running it offers to quit and restart it (on `--all` it only warns). Also removes links to Konsole profiles renamed in the repo and points `DefaultProfile` at an existing one |
 
 The doctor also applies KPackage's own rule (every file must resolve inside its package folder), so a theme Plasma would silently ignore shows up as an error, and warns when an installed theme, color scheme or wallpaper differs from the repo.
+For every wallpaper it also checks that `metadata.json`'s `Id` matches the
+folder, that `contents/images/` isn't empty, that each file's `WxH` name
+matches its real size (Plasma picks the file by its name) and that the light
+and dark variants come in the same sizes.
 
 Outside KDE Plasma `dev-plasma` does nothing and exits 0, so `--all` is safe
 on servers. `bootstrap --all` skips it (and `dev-boot`): themes are opt-in. A run always ends with the doctor.

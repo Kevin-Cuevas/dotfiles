@@ -33,10 +33,21 @@
 #   - splash      -> Kuro (bouteillerAlan/kuro, GPLv3) from git, not from the
 #                    KDE store: "Get New…" URLs are signed and expire. No
 #                    useful versions: the HEAD SHA is compared.
-#   - sddm-cursor -> copies the theme's cursor to /usr/share/icons. SDDM runs
-#                    as the `sddm` user, which can't enter a home with 0710
-#                    permissions, so the login screen didn't show Bibata even
-#                    when it was configured.
+#   - login-cursor -> the theme's cursor on the login screen, for both login
+#                    managers. It's copied to /usr/share/icons first: the
+#                    login screen runs as its own user (sddm/plasmalogin),
+#                    which can't enter a home with 0710 permissions.
+#                    - SDDM reads CursorTheme= from /etc/sddm.conf.d/.
+#                    - Plasma Login (KDE's SDDM fork) ignores that: its
+#                      greeter is a small Plasma session of the plasmalogin
+#                      user and reads [Mouse] cursorTheme from that user's
+#                      kcminputrc. Only that key is written there.
+#                    - It's also pinned in YOUR kcminputrc. The Global
+#                      Theme's cursor lives in ~/.config/kdedefaults/, which
+#                      Plasma (and kreadconfig6) merge in, but System
+#                      Settings' "Apply Plasma Settings…" copies only
+#                      ~/.config/kcminputrc: the login screen got no cursor
+#                      at all and fell back to Breeze.
 #   - apply       -> applies the theme matching the current mode and registers
 #                    the light/dark pair in kdeglobals. It does NOT touch the
 #                    "Switch to Dark Mode at Night" toggle (left as it was) or
@@ -125,6 +136,12 @@ KURO_ID="a2n.kuro"
 PAPIRUS_FOLDERS_URL="https://raw.githubusercontent.com/PapirusDevelopmentTeam/papirus-folders/master/papirus-folders"
 PAPIRUS_FOLDERS_BIN="$HOME/.local/bin/papirus-folders"
 SDDM_DROPIN=/etc/sddm.conf.d/dev-plasma.conf
+PLM_HOME=/var/lib/plasmalogin
+PLM_INPUTRC="$PLM_HOME/.config/kcminputrc"
+# Read by absolute path on purpose: by name, kreadconfig6 also merges
+# ~/.config/kdedefaults/kcminputrc (the Global Theme's values), which
+# "Apply Plasma Settings…" doesn't copy.
+USER_INPUTRC="${XDG_CONFIG_HOME:-$HOME/.config}/kcminputrc"
 YAKUAKE_RC_SRC="$SRC_DIR/yakuake/yakuakerc"
 KONSOLE_DIR="$HOME/.local/share/konsole"
 KONSOLE_DARK="NivekDarkNordKonsole"
@@ -135,12 +152,12 @@ TERM_SYNC_UNIT="dotfiles-konsole-theme-sync.service"
 WALLPAPER_COUNT="$(find "$SRC_DIR/wallpapers" -mindepth 2 -maxdepth 2 -name metadata.json 2>/dev/null | wc -l)"
 # PKG_KEYS order is the run order (regardless of --only's order): external
 # pieces first, then applying the theme that uses them.
-PKG_KEYS=(themes icons splash sddm-cursor apply wallpaper launcher-icon yakuake)
+PKG_KEYS=(themes icons splash login-cursor apply wallpaper launcher-icon yakuake)
 declare -A PKG_LABEL=(
   [themes]="Global Themes + colors + wallpapers from the repo (kpackagetool6)"
   [icons]="Papirus from apt + $FOLDER_COLOR folders (papirus-folders)"
   [splash]="Kuro splash (git, sha-checked)"
-  ["sddm-cursor"]="Theme cursor on the login screen too (SDDM, sudo)"
+  ["login-cursor"]="Theme cursor on the login screen too (Plasma Login/SDDM, sudo)"
   [apply]="Apply $THEME_DARK / $THEME_LIGHT for the current mode"
   [wallpaper]="Wallpaper (choose one of $WALLPAPER_COUNT, follows light/dark)"
   ["launcher-icon"]="$LAUNCHER_ICON icon on the launcher (icon only)"
@@ -150,7 +167,7 @@ declare -A PKG_FN=(
   [themes]="install_themes"
   [icons]="install_icons"
   [splash]="install_splash"
-  ["sddm-cursor"]="install_sddm_cursor"
+  ["login-cursor"]="install_login_cursor"
   [apply]="apply_theme"
   [wallpaper]="apply_wallpaper"
   ["launcher-icon"]="set_launcher_icon"
@@ -519,11 +536,33 @@ install_splash() {
   ok "Kuro installed/updated -> $dst"
 }
 
-# ─── sddm-cursor ────────────────────────────────────────────────────────────
-install_sddm_cursor() {
+# ─── login-cursor ───────────────────────────────────────────────────────────
+have_sddm() { command -v sddm &>/dev/null; }
+have_plasmalogin() { command -v plasmalogin &>/dev/null && getent passwd plasmalogin &>/dev/null; }
+
+# The login manager that starts at boot (sddm, plasmalogin...).
+active_dm() {
+  local dm
+  dm="$(cat /etc/X11/default-display-manager 2>/dev/null)"
+  [[ -n "$dm" ]] && basename "$dm"
+}
+
+# As the plasmalogin user, like System Settings does it: files in its home
+# keep their owner. From / because our own home (0710) is off limits to it.
+as_plasmalogin() {
+  (cd / && sudo -H -u plasmalogin "$@")
+}
+
+# The cursor of the theme, read from the Global Theme (Plasma doesn't write
+# it to kcminputrc while it comes from there).
+theme_cursor() {
+  lnf_default "$THEME_DARK" kcminputrc Mouse cursorTheme
+}
+
+install_login_cursor() {
   sep
   local cursor src dst
-  cursor="$(lnf_default "$THEME_DARK" kcminputrc Mouse cursorTheme)"
+  cursor="$(theme_cursor)"
   [[ -n "$cursor" ]] || {
     err "$THEME_DARK doesn't define cursorTheme (dev-plasma --only=themes)"
     return 1
@@ -548,17 +587,75 @@ install_sddm_cursor() {
     ok "$cursor copied to $dst"
   fi
 
+  pin_user_cursor "$cursor"
+  local rc=0 any=false dm
+  dm="$(active_dm)"
+  if have_plasmalogin; then
+    any=true
+    plasmalogin_cursor "$cursor" "$([[ "$dm" == plasmalogin ]] && echo " (active)")" || rc=1
+  fi
+  if have_sddm; then
+    any=true
+    sddm_cursor "$cursor" "$([[ "$dm" == sddm ]] && echo " (active)")" || rc=1
+  fi
+  $any || skip "Neither Plasma Login nor SDDM is installed — nothing else to set"
+  return "$rc"
+}
+
+# Writes the cursor into your kcminputrc only if the file itself has none
+# (the theme's one in kdedefaults doesn't count): one you picked in System
+# Settings stays yours.
+pin_user_cursor() {
+  local current
+  current="$(kreadconfig6 --file "$USER_INPUTRC" --group Mouse --key cursorTheme 2>/dev/null)"
+  if [[ "$current" == "$1" ]]; then
+    skip "cursorTheme=$1 is already in your kcminputrc"
+  elif [[ -n "$current" ]]; then
+    skip "Your kcminputrc has cursorTheme=$current (picked by hand) — keeping it"
+  else
+    kwriteconfig6 --file "$USER_INPUTRC" --group Mouse --key cursorTheme "$1"
+    ok "cursorTheme=$1 pinned in your kcminputrc (\"Apply Plasma Settings…\" now carries it to the login screen)"
+  fi
+}
+
+# Plasma Login: only [Mouse] cursorTheme in the plasmalogin user's
+# kcminputrc. Everything else "Apply Plasma Settings…" copied stays. Needs
+# sudo even to read: its home is 0750.
+plasmalogin_cursor() {
+  local cursor="$1" tag="$2" current
+  info "Checking the Plasma Login$tag cursor (sudo)..."
+  current="$(as_plasmalogin kreadconfig6 --file "$PLM_INPUTRC" --group Mouse --key cursorTheme 2>/dev/null)"
+  if [[ "$current" == "$cursor" ]]; then
+    skip "Plasma Login$tag already uses $cursor"
+    return 0
+  fi
+  if [[ -n "$current" ]]; then
+    warn "Plasma Login$tag uses $current (set by hand) — not changing it."
+    return 0
+  fi
+  # The folder only exists once "Apply Plasma Settings…" has run.
+  { as_plasmalogin mkdir -p -- "$PLM_HOME/.config" \
+    && as_plasmalogin kwriteconfig6 --file "$PLM_INPUTRC" --group Mouse --key cursorTheme "$cursor"; } || {
+    err "Couldn't write $PLM_INPUTRC"
+    return 1
+  }
+  ok "Plasma Login$tag will use $cursor from the next time it shows"
+}
+
+# SDDM: CursorTheme= in a drop-in.
+sddm_cursor() {
+  local cursor="$1" tag="$2"
   # SDDM's KCM writes kde_settings.conf; our own drop-in is named
   # dev-plasma.conf so it sorts BEFORE it ("d" < "k") and a change made from
   # System Settings still wins. It's only written if nobody set it.
   local current
   current="$(sddm_value CursorTheme)"
   if [[ "$current" == "$cursor" ]]; then
-    skip "SDDM already uses CursorTheme=$cursor"
+    skip "SDDM$tag already uses CursorTheme=$cursor"
     return 0
   fi
   if [[ -n "$current" ]]; then
-    warn "SDDM uses CursorTheme=$current (set by hand) — not changing it."
+    warn "SDDM$tag uses CursorTheme=$current (set by hand) — not changing it."
     return 0
   fi
   info "Setting CursorTheme=$cursor in $SDDM_DROPIN (sudo)..."
@@ -568,7 +665,7 @@ install_sddm_cursor() {
     err "Couldn't write $SDDM_DROPIN"
     return 1
   }
-  ok "SDDM will use $cursor from the next login"
+  ok "SDDM$tag will use $cursor from the next login"
 }
 
 # Effective value of a [Theme] key in SDDM's config: drop-ins are read in
@@ -1195,6 +1292,48 @@ doctor_terminal() {
   fi
 }
 
+# The login screen's cursor, for whichever login managers are installed.
+doctor_login_cursor() {
+  local cursor dm tag v
+  cursor="$(theme_cursor)"
+  dm="$(active_dm)"
+  if have_plasmalogin; then
+    tag=""
+    [[ "$dm" == plasmalogin ]] && tag=" (active)"
+    v="$(kreadconfig6 --file "$USER_INPUTRC" --group Mouse --key cursorTheme 2>/dev/null)"
+    if [[ -n "$v" ]]; then
+      doc_ok "cursorTheme=$v pinned in your kcminputrc (\"Apply Plasma Settings…\" carries it)"
+    else
+      doc_warn "no cursorTheme in your kcminputrc: \"Apply Plasma Settings…\" gives the login screen Breeze's cursor (dev-plasma --only=login-cursor)"
+    fi
+    if [[ -r "$PLM_INPUTRC" ]]; then
+      v="$(kreadconfig6 --file "$PLM_INPUTRC" --group Mouse --key cursorTheme 2>/dev/null)"
+      if [[ -n "$v" && -f "$SYSTEM_ICONS/$v/index.theme" ]]; then
+        doc_ok "Plasma Login$tag cursor $v ($SYSTEM_ICONS/$v)"
+      else
+        doc_warn "Plasma Login$tag cursor: ${v:-<unset>} (dev-plasma --only=login-cursor)"
+      fi
+    else
+      skip "Plasma Login$tag cursor: $PLM_INPUTRC is only readable by its user (not checked)"
+    fi
+  fi
+  if have_sddm; then
+    tag=""
+    [[ "$dm" == sddm ]] && tag=" (active)"
+    v="$(sddm_value CursorTheme)"
+    if [[ -z "$v" ]]; then
+      doc_warn "SDDM$tag has no CursorTheme (dev-plasma --only=login-cursor)"
+    elif [[ -f "$SYSTEM_ICONS/$v/index.theme" ]]; then
+      doc_ok "SDDM$tag cursor $v ($SYSTEM_ICONS/$v)"
+    else
+      doc_warn "SDDM$tag asks for CursorTheme=$v but it isn't in $SYSTEM_ICONS: the login uses the stock one (dev-plasma --only=login-cursor)"
+    fi
+  fi
+  [[ -n "$cursor" && ! -f "$SYSTEM_ICONS/$cursor/index.theme" ]] \
+    && doc_warn "$cursor isn't in $SYSTEM_ICONS: no login screen can show it (dev-plasma --only=login-cursor)"
+  return 0
+}
+
 # Every wallpaper in the repo: what Plasma needs to list it under its name
 # and pick the right file, and that the installed copy matches.
 doctor_wallpapers() {
@@ -1263,14 +1402,7 @@ run_doctor() {
   fi
   doctor_wallpapers
 
-  v="$(sddm_value CursorTheme)"
-  if [[ -z "$v" ]]; then
-    doc_warn "SDDM has no CursorTheme (dev-plasma --only=sddm-cursor)"
-  elif [[ -f "$SYSTEM_ICONS/$v/index.theme" ]]; then
-    doc_ok "SDDM cursor $v ($SYSTEM_ICONS/$v)"
-  else
-    doc_warn "SDDM asks for CursorTheme=$v but it isn't in $SYSTEM_ICONS: the login uses the stock one (dev-plasma --only=sddm-cursor)"
-  fi
+  doctor_login_cursor
 
   local dark light auto
   dark="$(kreadconfig6 --file kdeglobals --group KDE --key DefaultDarkLookAndFeel 2>/dev/null)"
@@ -1325,7 +1457,11 @@ LIST_WALLPAPERS=false
 for arg in "$@"; do
   case "$arg" in
     --all) NONINTERACTIVE=true ;;
-    --only=*) IFS=',' read -ra ONLY_KEYS <<<"${arg#--only=}" ;;
+    --only=*)
+      IFS=',' read -ra ONLY_KEYS <<<"${arg#--only=}"
+      # sddm-cursor was renamed when Plasma Login arrived.
+      ONLY_KEYS=("${ONLY_KEYS[@]/#sddm-cursor/login-cursor}")
+      ;;
     --doctor) DOCTOR_ONLY=true ;;
     --dark=*) THEME_DARK="${arg#--dark=}" ;;
     --light=*) THEME_LIGHT="${arg#--light=}" ;;

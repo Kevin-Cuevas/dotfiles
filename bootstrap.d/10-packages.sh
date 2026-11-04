@@ -240,13 +240,17 @@ install_packages() {
   # fails, each package is retried alone to tell which one broke.
   info "Installing ${#missing[@]} package(s): ${missing[*]}"
   local failed=()
-  # noninteractive: some packages ask debconf questions that -y doesn't answer
-  # (plasma-login-manager asks which display manager to use); this keeps the
-  # current choice instead of hanging.
-  if ! sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"; then
+  # --all never opens dialogs: some packages ask debconf questions that -y
+  # doesn't answer (plasma-login-manager asks which display manager to use),
+  # so noninteractive keeps the current choice instead of hanging. The menu
+  # lets debconf ask.
+  local apt_env=()
+  [[ "$NONINTERACTIVE" == "true" ]] && apt_env=(env DEBIAN_FRONTEND=noninteractive)
+  if ! sudo "${apt_env[@]}" apt-get install -y "${missing[@]}"; then
     warn "apt-get failed as a whole — retrying package by package..."
     for pkg in "${missing[@]}"; do
       apt_installed "$pkg" && continue
+      # Output is hidden here, so a question would hang unseen: never ask.
       sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" &>/dev/null || failed+=("$pkg")
     done
   fi

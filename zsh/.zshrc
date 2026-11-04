@@ -203,6 +203,19 @@ zstyle ':fzf-tab:complete:z:*' fzf-preview \
 
 zstyle ':fzf-tab:complete:systemctl:*' disabled-on any
 
+# fzf colors (also what fzf-tab shows). Without this fzf falls back to its
+# default ANSI palette: red pointer and a black selected row, which looked
+# fine on Nord dark but heavy on the light theme. Only palette indexes here,
+# so it follows the kitty theme (and SSH/tmux) with no watcher:
+# - pointer/marker: color12 (Nord blue #5e81ac in both themes)
+# - bg+: color237, the p10k "surface" that flips with the mode (#3b4252 dark,
+#   #e5e9f0 light); fg+ -1 keeps the terminal's own foreground on it
+# - gutter -1: no extra dark bar on the left in light mode
+export FZF_DEFAULT_OPTS="${FZF_DEFAULT_OPTS:+$FZF_DEFAULT_OPTS }--color=pointer:12,marker:12,bg+:237,fg+:-1,gutter:-1"
+
+# fzf-tab ignores FZF_DEFAULT_OPTS unless told otherwise, so the colors above
+# never reached it
+zstyle ':fzf-tab:*' use-fzf-default-opts yes
 zstyle ':fzf-tab:*' fzf-min-height 15
 zstyle ':fzf-tab:*' switch-group '<' '>'
 

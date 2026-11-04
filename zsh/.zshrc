@@ -295,7 +295,22 @@ alias lavat="lavat -c cyan -k magenta -R 3"
 # INTEGRATIONS
 # ===============================================================================
 
-[[ -f ~/.fzf.zsh ]] && source ~/.fzf.zsh
+# fzf shell integration: only Ctrl-R (history). Ctrl-T and Alt-C stay off on
+# purpose: an empty (but set) FZF_*_COMMAND is fzf's switch for not binding
+# them, so zsh keeps its own transpose-chars / capitalize-word.
+# `fzf --zsh` needs fzf >= 0.48; older git-clone installs only have ~/.fzf.zsh.
+if command -v fzf &>/dev/null; then
+  export FZF_CTRL_T_COMMAND="" FZF_ALT_C_COMMAND=""
+  # --exact: plain substring match. Fuzzy matched "lovelace" against entries
+  # that merely contain l,o,v,e,l,a,c,e scattered across a long command.
+  # Ctrl-/ shows the full command when a history entry is too long for the row
+  export FZF_CTRL_R_OPTS="--exact --preview 'echo {2..}' --preview-window up:3:hidden:wrap --bind 'ctrl-/:toggle-preview'"
+  if fzf --zsh &>/dev/null; then
+    source <(fzf --zsh)
+  elif [[ -f ~/.fzf.zsh ]]; then
+    source ~/.fzf.zsh
+  fi
+fi
 command -v zoxide &>/dev/null && eval "$(zoxide init zsh)"
 command -v direnv &>/dev/null && eval "$(direnv hook zsh)"
 

@@ -282,3 +282,10 @@ hl(0, "SnacksPickerGitStatusIgnored", { fg = c.comment, italic = true })
 -- Same "NonText" default problem for the dir-prefix shown before filenames
 -- in pickers (e.g. "scripts/" before "script.js").
 hl(0, "SnacksPickerDir", { fg = c.comment })
+-- Same again for hidden/ignored entries in the explorer (".local-logs",
+-- dotfiles, node_modules): PathHidden/PathIgnored link to NonText, so their
+-- names took the background color and vanished.
+-- Dimmer than c.comment (3.85:1) so they stand apart from regular entries and
+-- the dir prefix; #939eb3 is 2.3:1 on bg, faint but still readable.
+hl(0, "SnacksPickerPathHidden", { fg = "#939eb3" })
+hl(0, "SnacksPickerPathIgnored", { fg = "#939eb3", italic = true })

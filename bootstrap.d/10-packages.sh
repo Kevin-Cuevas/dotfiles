@@ -7,7 +7,12 @@
 #
 # To add an apt package: add it to APT_PKGS (listing order), APT_PKG_GROUP
 # and APT_PKG_DESC. To add a group: APT_GROUP_ORDER + APT_GROUP_TITLE, and
-# PROFILE_GROUPS for the profiles that should get it.
+# PROFILE_GROUPS for the profiles that should get it. A group left out of
+# every profile is opt-in: only the menu checklist offers it.
+#
+# A package may not exist in every Debian release (plasma-login-manager is
+# forky/sid only). Packages with no apt candidate are shown as "not in this
+# release" and skipped, so they never break the single apt-get run.
 #
 # Profiles say which groups a kind of machine gets:
 #   server  -> everything that makes sense over SSH (servers, the Termux VM)
@@ -18,12 +23,13 @@
 # groups; the menu preselects them.
 # ==============================================================================
 
-APT_GROUP_ORDER=(core dev productivity desktop)
+APT_GROUP_ORDER=(core dev productivity desktop login)
 declare -A APT_GROUP_TITLE=(
   [core]="Core: shell, stow and the CLI tools the dotfiles use"
   [dev]="Dev: compilers and build tools (dev-packages needs them)"
   [productivity]="Productivity: Taskwarrior + Timewarrior"
   [desktop]="Desktop: KDE/Wayland only"
+  [login]="Login: Plasma Login Manager (opt-in, forky/sid only)"
 )
 
 declare -A PROFILE_GROUPS=(
@@ -38,6 +44,7 @@ APT_PKGS=(
   build-essential cmake libicu-dev golang pipx
   taskwarrior timewarrior
   yakuake wl-clipboard
+  plasma-login-manager
 )
 declare -A APT_PKG_GROUP=(
   [git]=core [stow]=core [zsh]=core [curl]=core [wget]=core
@@ -48,6 +55,7 @@ declare -A APT_PKG_GROUP=(
   [pipx]=dev
   [taskwarrior]=productivity [timewarrior]=productivity
   [yakuake]=desktop ["wl-clipboard"]=desktop
+  ["plasma-login-manager"]=login
 )
 declare -A APT_PKG_DESC=(
   [git]="version control"
@@ -76,6 +84,7 @@ declare -A APT_PKG_DESC=(
   [timewarrior]="time tracking (Taskwarrior hook)"
   [yakuake]="drop-down terminal (dev-plasma configures it)"
   ["wl-clipboard"]="Wayland clipboard (tmux copy)"
+  ["plasma-login-manager"]="KDE's login screen (dev-plasma sets its cursor)"
 )
 
 # desktop when KDE Plasma is installed, server otherwise.
@@ -91,6 +100,13 @@ apt_profile() {
 # dpkg -s also succeeds for removed-but-not-purged packages (config-files).
 apt_installed() {
   [[ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" == "install ok installed" ]]
+}
+
+# True when apt knows a version of the package in the current sources.
+apt_available() {
+  local cand
+  cand="$(apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ {print $2}')"
+  [[ -n "$cand" && "$cand" != "(none)" ]]
 }
 
 # Packages of a group, in listing order.
@@ -119,7 +135,7 @@ select_apt_groups() {
     n=0 missing=0
     while IFS= read -r pkg; do
       ((n++)) || true
-      apt_installed "$pkg" || ((missing++)) || true
+      apt_installed "$pkg" || ! apt_available "$pkg" || ((missing++)) || true
     done < <(apt_group_pkgs "$group")
     on=off
     [[ " ${PROFILE_GROUPS[$profile]} " == *" $group "* ]] && on=on
@@ -145,6 +161,7 @@ select_apt_pkgs() {
   while IFS= read -r pkg; do
     mark=""
     apt_installed "$pkg" && mark="  ✔ installed"
+    apt_installed "$pkg" || apt_available "$pkg" || mark="  — not in this release"
     items+=("$pkg" "${APT_PKG_DESC[$pkg]}$mark" on)
   done < <(apt_group_pkgs "$group")
   local raw line h=$((${#items[@]} / 3))
@@ -204,15 +221,33 @@ install_packages() {
   info "Updating package index..."
   sudo apt-get update -qq 2>/dev/null || warn "apt-get update failed — continuing anyway"
 
+  # Drop what this release doesn't have: one unknown name fails the whole run.
+  local installable=()
+  for pkg in "${missing[@]}"; do
+    if apt_available "$pkg"; then
+      installable+=("$pkg")
+    else
+      skip "$pkg is not available in this Debian release"
+    fi
+  done
+  missing=("${installable[@]}")
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    ok "Nothing installable is missing"
+    return
+  fi
+
   # One apt run for everything (much faster than one per package). If it
   # fails, each package is retried alone to tell which one broke.
   info "Installing ${#missing[@]} package(s): ${missing[*]}"
   local failed=()
-  if ! sudo apt-get install -y "${missing[@]}"; then
+  # noninteractive: some packages ask debconf questions that -y doesn't answer
+  # (plasma-login-manager asks which display manager to use); this keeps the
+  # current choice instead of hanging.
+  if ! sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"; then
     warn "apt-get failed as a whole — retrying package by package..."
     for pkg in "${missing[@]}"; do
       apt_installed "$pkg" && continue
-      sudo apt-get install -y "$pkg" &>/dev/null || failed+=("$pkg")
+      sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" &>/dev/null || failed+=("$pkg")
     done
   fi
 

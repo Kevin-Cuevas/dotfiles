@@ -281,6 +281,7 @@ it gets:
 | `dev`          | build-essential cmake libicu-dev golang pipx (`dev-packages` builds with them) | ✔ | ✔ |
 | `productivity` | taskwarrior timewarrior | ✔ | ✔ |
 | `desktop`      | yakuake wl-clipboard | | ✔ |
+| `login`        | plasma-login-manager (opt-in: in no profile, `--all` skips it) | | |
 
 The profile is detected on its own (KDE Plasma installed → `desktop`,
 otherwise `server`: servers, the Termux VM) and can be forced with
@@ -289,7 +290,11 @@ The menu (option 2) preselects them, shows how many packages of each group
 are missing, and optionally lets you pick packages inside each group (with
 a description and `✔ installed`). Everything missing goes to apt in a single
 `apt-get install`; if that fails, each package is retried alone to tell which
-one broke. Java comes from SDKMAN (language runtimes, option 12), not apt.
+one broke. Packages the Debian release doesn't have (`plasma-login-manager`
+exists only in forky/sid, not in 13) show as `— not in this release` and are
+skipped, so they never break the run. Installing `plasma-login-manager` keeps
+the current login manager: switching is up to you, and `dev-plasma` sets the
+cursor on whichever one is installed. Java comes from SDKMAN (language runtimes, option 12), not apt.
 
 To add a package: `APT_PKGS` (listing order), `APT_PKG_GROUP` and
 `APT_PKG_DESC` in `bootstrap.d/10-packages.sh`.

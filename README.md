@@ -292,9 +292,10 @@ a description and `✔ installed`). Everything missing goes to apt in a single
 `apt-get install`; if that fails, each package is retried alone to tell which
 one broke. Packages the Debian release doesn't have (`plasma-login-manager`
 exists only in forky/sid, not in 13) show as `— not in this release` and are
-skipped, so they never break the run. Installing `plasma-login-manager` keeps
-the current login manager: switching is up to you, and `dev-plasma` sets the
-cursor on whichever one is installed. Java comes from SDKMAN (language runtimes, option 12), not apt.
+skipped, so they never break the run. With `--all`, apt runs without
+questions, so installing `plasma-login-manager` keeps the current login
+manager; from the menu, debconf asks which one to use. Switching is up to
+you, and `dev-plasma` sets the cursor on whichever one is installed. Java comes from SDKMAN (language runtimes, option 12), not apt.
 
 To add a package: `APT_PKGS` (listing order), `APT_PKG_GROUP` and
 `APT_PKG_DESC` in `bootstrap.d/10-packages.sh`.

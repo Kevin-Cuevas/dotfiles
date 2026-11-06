@@ -422,6 +422,12 @@ job of the `konsole-theme-sync` background service (`dev-services`): it sets
 the default profile of Yakuake and Konsole and recolors the open sessions
 live. Autostart and the toggle shortcut are left to you.
 
+Yakuake starts with `QT_SCALE_FACTOR_ROUNDING_POLICY=Ceil` so block characters
+(lavat, cava) show no grid on a fractional-scale monitor. The `yakuake` wrapper
+in `bin/` and the D-Bus service in `konsole/` set it; if you autostart Yakuake,
+use `Exec=/usr/bin/env QT_SCALE_FACTOR_ROUNDING_POLICY=Ceil /usr/bin/yakuake`.
+After stowing the D-Bus service for the first time, log out or reload the bus.
+
 ---
 
 ## Boot themes (GRUB + Plymouth)

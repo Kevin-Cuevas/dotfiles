@@ -1,0 +1,5 @@
+# Overrides /usr/share/dbus-1/services/org.kde.yakuake.service.
+# Why the variable: see bin/.local/bin/yakuake.
+[D-BUS Service]
+Name=org.kde.yakuake
+Exec=/usr/bin/env QT_SCALE_FACTOR_ROUNDING_POLICY=Ceil /usr/bin/yakuake

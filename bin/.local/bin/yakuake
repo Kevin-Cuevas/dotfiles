@@ -1,0 +1,7 @@
+#!/bin/sh
+# Rounds Yakuake's scale up: drawn at an integer scale and downscaled by KWin,
+# block characters (lavat, cava) show no grid on a fractional-scale monitor.
+# Only Yakuake gets it: .zshrc drops it for whatever runs inside the terminal.
+# The other two ways in have the same variable: D-Bus activation in
+# konsole/.local/share/dbus-1/services and ~/.config/autostart (set by hand).
+QT_SCALE_FACTOR_ROUNDING_POLICY=Ceil exec /usr/bin/yakuake "$@"

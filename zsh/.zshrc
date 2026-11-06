@@ -11,6 +11,10 @@ if [[ -n $ZPROF ]]; then zmodload zsh/zprof; fi
 
 export LC_TIME="en_US.UTF-8"
 
+# Set for Yakuake alone (bin/.local/bin/yakuake): Qt apps opened from its shells
+# keep the normal fractional scale.
+unset QT_SCALE_FACTOR_ROUNDING_POLICY
+
 # MOTD Tailscale
 if [[ -d /etc/update-motd.d ]] && [[ -z "$MOTD_SHOWN" ]] && [[ -n "$SSH_CONNECTION" ]]; then
   local _src_ip="${SSH_CONNECTION%% *}"

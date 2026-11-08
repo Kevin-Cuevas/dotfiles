@@ -266,6 +266,38 @@ remove_apt_if_present() {
   fi
 }
 
+# Puts a finished install (STAGED, built as the user in WORK_DIR and already
+# smoke-tested) at PREFIX, keeping the old one until the very end:
+#   swap_prefix STAGED PREFIX
+# nvim/tmux used to do it the other way around: rm -rf PREFIX and purge apt
+# first, then `make install` — when the install step failed there was no
+# nvim/tmux left at all. Now it's copied as root to PREFIX.new (same
+# filesystem as PREFIX, so the swap is two renames), the old one goes to
+# PREFIX.old, the new one takes its place and .old is dropped. If the second
+# rename fails the old install is put back. Leftovers from an interrupted run
+# are cleared first.
+swap_prefix() {
+  local staged="$1" prefix="${2:?}"
+  sudo rm -rf -- "$prefix.new" "$prefix.old" || return 1
+  if ! { sudo cp -a -- "$staged" "$prefix.new" && sudo chown -R root:root -- "$prefix.new"; }; then
+    err "Couldn't copy the new install to $prefix.new"
+    sudo rm -rf -- "$prefix.new"
+    return 1
+  fi
+  if [[ -e "$prefix" ]] && ! sudo mv -- "$prefix" "$prefix.old"; then
+    err "Couldn't move the current $prefix aside"
+    sudo rm -rf -- "$prefix.new"
+    return 1
+  fi
+  if ! sudo mv -- "$prefix.new" "$prefix"; then
+    err "Couldn't put the new install in place — restoring the previous one"
+    if [[ -e "$prefix.old" ]]; then sudo mv -- "$prefix.old" "$prefix"; fi
+    sudo rm -rf -- "$prefix.new"
+    return 1
+  fi
+  sudo rm -rf -- "$prefix.old"
+}
+
 # A binary's version: the first `--version` line that has a number, without
 # indentation. Blindly taking the first line doesn't work: yazi 26+ prints
 # just "Yazi" on the first one and "Version: 26.9.1 (...)" further down, so
@@ -456,15 +488,25 @@ install_nvim() {
       echo "NVIM v${maj}.${min}.${pat}${pre}"
     }
 
-    remove_previous_install() {
-      info "Removing the previous installation..."
-      sudo rm -f "$NVIM_SYMLINK"
-      sudo rm -rf "$NVIM_PREFIX"
-      remove_apt_if_present neovim
+    # The staged nvim (STAGED_DIR) runs and finds its OWN runtime: nvim
+    # resolves $VIMRUNTIME relative to its binary, so this also proves it
+    # will once it's at /opt/nvim — and that it didn't pick up the installed
+    # one. --clean: the user config (LazyVim) isn't loaded.
+    nvim_works() {
+      # shellcheck disable=SC2016 # $VIMRUNTIME/$NVIM_STAGE are expanded by nvim, not bash
+      NVIM_STAGE="$(readlink -f "$1")" "$1/bin/nvim" --clean --headless \
+        -c 'if stridx($VIMRUNTIME, $NVIM_STAGE) != 0 || !filereadable($VIMRUNTIME .. "/filetype.lua") | cquit | endif' \
+        -c 'qa!' </dev/null &>/dev/null
     }
 
+    # apt's neovim is purged only after the swap: see swap_prefix.
     finalize() {
+      nvim_works "$STAGED_DIR" \
+        || die "The new nvim doesn't run or can't find its runtime — the installed one is untouched"
+      info "Installing to $NVIM_PREFIX..."
+      swap_prefix "$STAGED_DIR" "$NVIM_PREFIX" || die "Install to $NVIM_PREFIX failed"
       sudo ln -sf "$NVIM_PREFIX/bin/nvim" "$NVIM_SYMLINK"
+      remove_apt_if_present neovim
       echo ""
       ok "Install complete: $("$NVIM_PREFIX/bin/nvim" --version | head -1)"
     }
@@ -489,9 +531,7 @@ install_nvim() {
 
       confirm_version nvim "$CURRENT_VERSION" "$new_version" || return 1
 
-      remove_previous_install
-      info "Installing to $NVIM_PREFIX..."
-      sudo mv "$extract_dir" "$NVIM_PREFIX"
+      STAGED_DIR="$extract_dir"
     }
 
     install_build_deps() {
@@ -577,16 +617,18 @@ EOF
       info "Building with $nproc cores..."
       cmake --build "$build_dir" --parallel "$nproc"
 
-      remove_previous_install
-      info "Installing to $NVIM_PREFIX..."
-      sudo cmake --install "$build_dir"
+      # DESTDIR: still built for /opt/nvim, but the files land in WORK_DIR
+      # (no sudo); finalize swaps them in.
+      info "Staging the install..."
+      DESTDIR="$TMP_DIR/stage" cmake --install "$build_dir"
+      STAGED_DIR="$TMP_DIR/stage$NVIM_PREFIX"
 
-      info "Checking the installed binary's flags..."
+      info "Checking the new binary's flags..."
       local producer detected_march ymm
-      producer=$(readelf -wi "$NVIM_PREFIX/bin/nvim" 2>/dev/null \
+      producer=$(readelf -wi "$STAGED_DIR/bin/nvim" 2>/dev/null \
         | grep -am1 "DW_AT_producer" | sed -E 's/.*\): //')
       detected_march=$(grep -oE -- '-march=[^ ]+' <<<"$producer" | head -1)
-      ymm=$(objdump -d "$NVIM_PREFIX/bin/nvim" 2>/dev/null | grep -c "ymm")
+      ymm=$(objdump -d "$STAGED_DIR/bin/nvim" 2>/dev/null | grep -c "ymm")
       case "$detected_march" in
         "" | "-march=x86-64")
           warn "The binary isn't optimized (${detected_march:-no -march}): ${producer:-<no DWARF>}"
@@ -695,15 +737,19 @@ install_tmux() {
     info "Building with $nproc_count cores..."
     (cd "$TMP_DIR/tmux" && make -j"$nproc_count")
 
-    info "Removing the previous installation..."
-    sudo rm -f "$TMUX_SYMLINK"
-    sudo rm -rf "$TMUX_PREFIX"
-    remove_apt_if_present tmux
+    # DESTDIR: still built for /opt/tmux, but staged in WORK_DIR (no sudo)
+    # and smoke-tested before swap_prefix touches the installed one; apt's
+    # tmux is purged only after the swap.
+    info "Staging the install..."
+    (cd "$TMP_DIR/tmux" && make install DESTDIR="$TMP_DIR/stage")
+    STAGED_DIR="$TMP_DIR/stage$TMUX_PREFIX"
+    "$STAGED_DIR/bin/tmux" -V &>/dev/null \
+      || die "The new tmux doesn't run — the installed one is untouched"
 
     info "Installing to $TMUX_PREFIX..."
-    (cd "$TMP_DIR/tmux" && sudo make install)
-
+    swap_prefix "$STAGED_DIR" "$TMUX_PREFIX" || die "Install to $TMUX_PREFIX failed"
     sudo ln -sf "$TMUX_PREFIX/bin/tmux" "$TMUX_SYMLINK"
+    remove_apt_if_present tmux
     echo ""
     ok "Install complete: $("$TMUX_PREFIX/bin/tmux" -V)"
   )

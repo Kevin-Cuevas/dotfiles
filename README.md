@@ -140,7 +140,7 @@ runs on its own:
 | --- | --- |
 | `00-core.sh` | logging, preflight, header — loads first, everything else depends on it |
 | `10-packages.sh` | apt packages only (menu option 2), in groups and machine profiles — non-apt tools live in `dev-packages`, see below |
-| `20-runtimes.sh` | language runtimes: rust, node, deno, bun, java via SDKMAN (menu option 12) |
+| `20-runtimes.sh` | language runtimes: rust, node, deno, java via SDKMAN (menu option 12) |
 | `30-stow.sh` | stow strategy (menu option 4) + systemd `--user` unit linking |
 | `40-misc.sh` | default shell, `dev-*` permissions, `dev-packages`/`dev-motd`/`dev-ssh`/`dev-plasma`/`dev-boot`/`dev-services` launchers, fonts, TPM, Timewarrior hook |
 

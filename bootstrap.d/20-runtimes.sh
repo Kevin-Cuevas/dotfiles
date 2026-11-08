@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# bootstrap.d/20-runtimes.sh — language runtimes (rust, node, deno, bun, java)
+# bootstrap.d/20-runtimes.sh — language runtimes (rust, node, deno, java)
 # ==============================================================================
 # RUNTIME_KEYS/LABEL/FN + install_runtimes() drive menu option 12's
 # checklist; NPM_GLOBAL_KEYS/LABEL/PKG feed install_node_globals(), offered
@@ -11,19 +11,17 @@
 
 # Languages/runtimes that do NOT come from apt. To add one: add its key to
 # RUNTIME_KEYS and its label + function to the maps, and define install_<name>().
-RUNTIME_KEYS=(rust node deno bun java)
+RUNTIME_KEYS=(rust node deno java)
 declare -A RUNTIME_LABEL=(
   [rust]="Rust (rustup)"
   [node]="Node LTS (fnm)"
   [deno]="Deno"
-  [bun]="Bun"
   [java]="Java JDKs (SDKMAN)"
 )
 declare -A RUNTIME_FN=(
   [rust]="install_rust"
   [node]="install_node"
   [deno]="install_deno"
-  [bun]="install_bun"
   [java]="install_java"
 )
 
@@ -40,6 +38,28 @@ declare -A NPM_GLOBAL_PKG=(
   [commitizen]="commitizen cz-conventional-changelog"
   [angular]="@angular/cli"
 )
+
+# run_installer NAME URL INTERP [ARGS...]: downloads an upstream installer to
+# a file and only then runs it — never `curl | sh`: a download cut off midway
+# ran half a script. Its output goes to a log shown (last 20 lines) only when
+# it fails, instead of the old blind "check network/curl".
+run_installer() {
+  local name="$1" url="$2" interp="$3" dir rc=0
+  shift 3
+  dir="$(mktemp -d)" || return 1
+  if ! curl -fsSL --proto '=https' --tlsv1.2 -o "$dir/install.sh" "$url"; then
+    err "Downloading the $name installer failed ($url)"
+    rm -rf "$dir"
+    return 1
+  fi
+  "$interp" "$dir/install.sh" "$@" >"$dir/log" 2>&1 || rc=$?
+  if ((rc != 0)); then
+    err "The $name installer failed (exit $rc) — last lines of its output:"
+    tail -n 20 "$dir/log" >&2
+  fi
+  rm -rf "$dir"
+  return "$rc"
+}
 
 install_node() {
   sep
@@ -60,10 +80,10 @@ install_node() {
     skip "fnm already installed"
   else
     info "Installing fnm..."
-    if curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell --install-dir "$fnm_dir" &>/dev/null; then
+    if run_installer fnm https://fnm.vercel.app/install bash --skip-shell --install-dir "$fnm_dir"; then
       ok "fnm installed at $fnm_dir"
     else
-      warn "Failed to install fnm — check network/curl"
+      warn "Failed to install fnm — see the error above"
       return 1
     fi
   fi
@@ -253,10 +273,10 @@ install_java() {
 
     info "Installing SDKMAN..."
     # rcupdate=false: leaves ~/.zshrc alone (a symlink into the repo); .zshrc already loads it
-    if curl -fsSL "https://get.sdkman.io?rcupdate=false" | bash &>/dev/null; then
+    if run_installer SDKMAN "https://get.sdkman.io?rcupdate=false" bash; then
       ok "SDKMAN installed at $SDKMAN_DIR"
     else
-      warn "Failed to install SDKMAN — check network/curl"
+      warn "Failed to install SDKMAN — see the error above"
       return 1
     fi
   fi
@@ -510,10 +530,10 @@ install_rust() {
 
   info "Installing Rust (rustup)..."
   # --no-modify-path: .zshrc already adds ~/.cargo/bin; -y: non-interactive
-  if curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path; then
+  if run_installer rustup https://sh.rustup.rs sh -y --no-modify-path; then
     ok "Rust installed ($("$HOME/.cargo/bin/rustc" --version 2>/dev/null))"
   else
-    warn "Failed to install Rust — check network/curl"
+    warn "Failed to install Rust — see the error above"
     return 1
   fi
 }
@@ -527,41 +547,10 @@ install_deno() {
 
   info "Installing Deno..."
   # -y: non-interactive; --no-modify-path: .zshrc already sources ~/.deno/env
-  if curl -fsSL https://deno.land/install.sh | sh -s -- -y --no-modify-path &>/dev/null; then
+  if run_installer Deno https://deno.land/install.sh sh -y --no-modify-path; then
     ok "Deno installed ($("$HOME/.deno/bin/deno" --version 2>/dev/null | head -1))"
   else
-    warn "Failed to install Deno — check network/curl"
-    return 1
-  fi
-}
-
-install_bun() {
-  sep
-  if command -v bun &>/dev/null || [[ -x "$HOME/.bun/bin/bun" ]]; then
-    skip "Bun already installed"
-    return
-  fi
-
-  info "Installing Bun..."
-  # bun's installer has no flag to leave the rc alone, and ~/.zshrc is a
-  # symlink into the repo (stow). We protect it by removing write permission:
-  # bun sees it isn't writable and prints instructions instead of modifying the
-  # file (.zshrc handles bun anyway). Permissions are restored at the end.
-  local rc="$HOME/.zshrc" rc_mode=""
-  if [[ -e "$rc" ]]; then
-    rc_mode="$(stat -c '%a' "$rc" 2>/dev/null)"
-    chmod a-w "$rc" 2>/dev/null || true
-  fi
-
-  local rc_result=0
-  curl -fsSL https://bun.sh/install | bash &>/dev/null || rc_result=$?
-
-  [[ -n "$rc_mode" ]] && chmod "$rc_mode" "$rc" 2>/dev/null || true
-
-  if [[ $rc_result -eq 0 ]]; then
-    ok "Bun installed ($("$HOME/.bun/bin/bun" --version 2>/dev/null))"
-  else
-    warn "Failed to install Bun — check network/curl"
+    warn "Failed to install Deno — see the error above"
     return 1
   fi
 }

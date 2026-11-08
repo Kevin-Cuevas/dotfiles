@@ -157,41 +157,137 @@ run_dev_ssh() {
   DEV_SSH_BACKTITLE="$BACKTITLE" "$ssh_script" --target="$TARGET" "$@"
 }
 
-install_fonts() {
+# Nerd Fonts self-update. The installed version is read from the font file
+# itself (the name table carries "Nerd Fonts X.Y.Z"), not from a state file:
+# fonts installed by hand or by an older run are picked up as-is and nothing
+# can drift. The latest tag comes from the releases/latest redirect, which
+# isn't rate-limited like the API. Offline, installed fonts are left alone and
+# a missing one falls back to NERD_FONTS_FALLBACK.
+NERD_FONTS=(FiraCode FiraMono)
+NERD_FONTS_FALLBACK="3.5.1"
+NERD_FONTS_URL="https://github.com/ryanoasis/nerd-fonts/releases"
+
+# Prints the installed version of one family, or nothing if it's missing.
+# FiraCode ships .ttf and FiraMono .otf, so both extensions are checked.
+nerd_font_version() {
+  local font_dir="$1" font="$2" f
+  for f in "$font_dir/${font}NerdFont-Regular".{ttf,otf}; do
+    [[ -f "$f" ]] || continue
+    grep -a -o -m1 'Nerd Fonts [0-9][0-9.]*' "$f" | head -1 | awk '{print $3}'
+    return
+  done
+}
+
+nerd_fonts_latest() {
+  curl -fsSI --max-time 10 "$NERD_FONTS_URL/latest" 2>/dev/null \
+    | tr -d '\r' | sed -n 's|^[Ll]ocation: .*/tag/v\([0-9][0-9.]*\)$|\1|p'
+}
+
+# True if $1 is strictly newer than $2 (never downgrades).
+version_gt() {
+  [[ "$1" != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" == "$1" ]]
+}
+
+# Runs in a subshell so the EXIT trap cleans the download dir without
+# clobbering a trap of the caller (run_all calls this directly).
+install_fonts() (
   sep
   local font_dir="$HOME/.local/share/fonts"
   mkdir -p "$font_dir"
   local refreshed=false
 
-  for font in FiraCode FiraMono; do
-    if find "$font_dir" -maxdepth 1 -name "${font}*" | grep -q .; then
-      skip "$font Nerd Font already installed"
+  for cmd in curl unzip sha256sum; do
+    command -v "$cmd" &>/dev/null || {
+      warn "$cmd not found — skipping Nerd Fonts"
+      return 1
+    }
+  done
+
+  local latest
+  latest="$(nerd_fonts_latest)"
+  [[ -z "$latest" ]] && warn "Couldn't reach GitHub for the latest Nerd Fonts release"
+
+  local work
+  work="$(mktemp -d)" || return 1
+  trap 'rm -rf "$work"' EXIT
+
+  local sums_version="" font installed version
+  for font in "${NERD_FONTS[@]}"; do
+    installed="$(nerd_font_version "$font_dir" "$font")"
+    if [[ -n "$installed" ]]; then
+      if [[ -z "$latest" ]]; then
+        skip "$font Nerd Font $installed (kept: latest version unknown)"
+        continue
+      fi
+      if ! version_gt "$latest" "$installed"; then
+        skip "$font Nerd Font $installed is up to date"
+        continue
+      fi
+      version="$latest"
+      info "Updating $font Nerd Font $installed -> $version..."
+    else
+      version="${latest:-$NERD_FONTS_FALLBACK}"
+      info "Installing $font Nerd Font $version..."
+    fi
+
+    # One checksum file per release; fetched once, only when something is due.
+    if [[ "$sums_version" != "$version" ]]; then
+      if ! curl -fsSL "$NERD_FONTS_URL/download/v$version/SHA-256.txt" -o "$work/sums" 2>/dev/null; then
+        warn "Failed to download the Nerd Fonts $version checksums — skipping $font"
+        continue
+      fi
+      sums_version="$version"
+    fi
+
+    local zip="$work/$font.zip" stage="$work/$font"
+    if ! curl -fsSL "$NERD_FONTS_URL/download/v$version/$font.zip" -o "$zip" 2>/dev/null; then
+      warn "Failed to download $font Nerd Font $version"
       continue
     fi
-    info "Downloading $font Nerd Font..."
-    local tmp
-    tmp="$(mktemp /tmp/${font}XXXXXX.zip)"
-    if curl -fL "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.0.2/${font}.zip" \
-      -o "$tmp" 2>/dev/null; then
-      unzip -o "$tmp" -d "$font_dir" &>/dev/null
-      rm -f "$tmp"
-      ok "$font Nerd Font installed"
-      refreshed=true
-    else
-      rm -f "$tmp"
-      warn "Failed to download $font Nerd Font"
+    local want got
+    want="$(awk -v f="$font.zip" '$2 == f {print $1}' "$work/sums")"
+    got="$(sha256sum "$zip" | awk '{print $1}')"
+    if [[ -z "$want" || "$want" != "$got" ]]; then
+      warn "$font.zip checksum mismatch — nothing changed"
+      continue
     fi
+    # Unpacked whole (filtering by '*.ttf' '*.otf' makes unzip fail when one
+    # extension is absent); only the font files are moved below. The zip also
+    # carries LICENSE and README.md, which older runs dumped loose into the
+    # fonts dir.
+    mkdir -p "$stage"
+    if ! unzip -oq "$zip" -d "$stage" 2>/dev/null \
+      || ! compgen -G "$stage/${font}NerdFont*" >/dev/null; then
+      warn "$font.zip has no ${font}NerdFont files — nothing changed"
+      continue
+    fi
+    # Old files are removed only once the new set is verified and unpacked, so
+    # a failure anywhere above leaves the previous version intact. The glob is
+    # per family: other Nerd Fonts in the dir are never touched.
+    rm -f "$font_dir/${font}NerdFont"*.{ttf,otf}
+    mv "$stage/${font}NerdFont"* "$font_dir/"
+    ok "$font Nerd Font $version installed"
+    refreshed=true
   done
+
+  # Leftovers of the old full-zip unzip; removed only if they're the Nerd
+  # Fonts readme / the Fira OFL text, never a file someone else put there.
+  local f
+  for f in "$font_dir"/readme.md "$font_dir"/README.md; do
+    [[ -f "$f" ]] && head -3 "$f" | grep -qx '# Nerd Fonts' && rm -f "$f"
+  done
+  f="$font_dir/LICENSE"
+  [[ -f "$f" ]] && grep -q "The Mozilla Foundation and Telefonica" "$f" && rm -f "$f"
 
   if $refreshed; then
     info "Refreshing font cache..."
-    if fc-cache -fv "$font_dir" &>/dev/null; then
-      ok "Font cache updated"
+    if fc-cache -f "$font_dir" &>/dev/null; then
+      ok "Font cache updated — restart open terminals (kitty, Konsole, Yakuake) to pick it up"
     else
       warn "fc-cache failed"
     fi
   fi
-}
+)
 
 setup_tw_hook() {
   sep

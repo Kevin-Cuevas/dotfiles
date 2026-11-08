@@ -73,7 +73,13 @@ run_all() {
     run_dev_boot || warn "dev-boot encountered errors — check output above"
     run_dev_services || warn "dev-services encountered errors — check output above"
   fi
-  install_fonts
+  # Glyphs are drawn by the client's terminal, so fonts on a server or the
+  # Termux VM are dead weight. Menu option 7 still installs them anywhere.
+  if [[ "$(apt_profile)" == desktop ]]; then
+    install_fonts
+  else
+    skip "Nerd Fonts (server profile) — the client terminal draws the glyphs"
+  fi
   setup_tw_hook || warn "Timewarrior hook setup failed — check output above"
   install_tpm
   run_dev_ssh --setup || warn "dev-ssh setup encountered errors — check output above"
@@ -104,7 +110,7 @@ main_menu() {
       "4" "$stow_label" \
       "5" "Install/update extra packages (dev-packages)" \
       "6" "Install MOTD        (dev-motd)" \
-      "7" "Install Nerd Fonts  (FiraCode + FiraMono)" \
+      "7" "Install/update Nerd Fonts (FiraCode + FiraMono)" \
       "8" "Setup Timewarrior hook" \
       "9" "Install TPM         (Tmux Plugin Manager)" \
       "10" "Configure SSH    (control dir + servers)" \

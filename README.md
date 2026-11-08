@@ -163,7 +163,7 @@ there. For a new non-apt tool, add it to `dev-packages` instead (see below).
 | 4   | Stow packages into `$HOME`                   |
 | 5   | Install/update extra packages via `dev-packages` |
 | 6   | Install MOTD via `dev-motd`                  |
-| 7   | Install Nerd Fonts (FiraCode + FiraMono)     |
+| 7   | Install/update Nerd Fonts (FiraCode + FiraMono); option 1 runs it on `desktop` only |
 | 8   | Set up Timewarrior hook for Taskwarrior      |
 | 9   | Install TPM (Tmux Plugin Manager)            |
 | 10  | Configure SSH (control dir + servers)        |

@@ -190,6 +190,10 @@ return {
         highlights.Comment = { fg = "#6C7680", italic = true }
         -- dashboard banner in Nord frost, like dev-motd
         highlights.SnacksDashboardHeader = { fg = "#88C0D0", bold = true }
+        -- blink preview on the menu's surface (Pmenu) with a visible outline;
+        -- the default border colour equals that surface, so it vanished
+        highlights.BlinkCmpDoc = { fg = highlights.Pmenu.fg, bg = highlights.Pmenu.bg }
+        highlights.BlinkCmpDocBorder = { fg = "#616e88", bg = highlights.Pmenu.bg }
       end,
     },
   },

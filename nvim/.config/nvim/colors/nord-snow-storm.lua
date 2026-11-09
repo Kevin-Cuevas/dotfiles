@@ -264,8 +264,10 @@ hl(0, "LspInlayHint", { fg = c.comment, bg = c.bg_alt, italic = true })
 hl(0, "BlinkCmpMenu", { link = "Pmenu" })
 hl(0, "BlinkCmpMenuBorder", { link = "FloatBorder" })
 hl(0, "BlinkCmpMenuSelection", { link = "PmenuSel" })
-hl(0, "BlinkCmpDoc", { link = "NormalFloat" })
-hl(0, "BlinkCmpDocBorder", { link = "FloatBorder" })
+-- same surface as the menu (Pmenu) so menu and preview read as one box; the
+-- outline uses c.guide because float_border (#d8dee9) is nearly invisible on bg_alt
+hl(0, "BlinkCmpDoc", { fg = c.fg, bg = c.bg_alt })
+hl(0, "BlinkCmpDocBorder", { fg = c.guide, bg = c.bg_alt })
 
 -- snacks.nvim
 -- hidden files: faint but visible (with c.border they took the background

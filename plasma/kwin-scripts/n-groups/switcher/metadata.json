@@ -1,0 +1,18 @@
+{
+    "KPackageStructure": "KWin/WindowSwitcher",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Kevin Cuevas"
+            }
+        ],
+        "Description": "Thumbnail grid that shows n-groups groups as a live mosaic and previews the whole group",
+        "Icon": "object-group",
+        "Id": "n-switcher",
+        "License": "GPL-2.0-only",
+        "Name": "n-switcher",
+        "Version": "1.0.0",
+        "Website": "https://github.com/Kevin-Cuevas/dotfiles"
+    },
+    "X-Plasma-API": "declarativeappletscript"
+}

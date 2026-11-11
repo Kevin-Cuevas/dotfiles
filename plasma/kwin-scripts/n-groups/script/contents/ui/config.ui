@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>NGroupsConfigForm</class>
+ <widget class="QWidget" name="NGroupsConfigForm">
+  <layout class="QVBoxLayout" name="mainLayout">
+   <item>
+    <widget class="QCheckBox" name="kcfg_autoGroup">
+     <property name="text">
+      <string>Group windows tiled together with Meta+T</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="kcfg_includeQuickTile">
+     <property name="text">
+      <string>Also group quick-tiled windows (Meta+Arrow, drag to edge)</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="kcfg_minimizeTogether">
+     <property name="text">
+      <string>Minimize and restore the whole group</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="kcfg_showOsd">
+     <property name="text">
+      <string>Show on-screen messages</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="help">
+     <property name="text">
+      <string>Shortcuts (System Settings → Shortcuts → KWin): Meta+Space on two windows to link them · Meta+Alt+Space unlink · Meta+Shift+Space ungroup · Meta+Ctrl+Space next in group.
+
+Group previews in Alt+Tab: Window Management → Task Switcher → Visualization → n-switcher.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <spacer name="bottomSpacer">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+    </spacer>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

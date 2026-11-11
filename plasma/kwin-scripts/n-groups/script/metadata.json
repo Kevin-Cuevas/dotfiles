@@ -1,0 +1,24 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Kevin Cuevas"
+            }
+        ],
+        "Category": "Window Management",
+        "Description": "Snap groups: windows tiled together (or linked with Meta+Space) share one Alt+Tab entry and raise, minimize and restore together",
+        "EnabledByDefault": false,
+        "Icon": "object-group",
+        "Id": "n-groups",
+        "License": "GPL-2.0-only",
+        "Name": "n-groups",
+        "Version": "1.0.0",
+        "Website": "https://github.com/Kevin-Cuevas/dotfiles"
+    },
+    "X-KDE-ConfigModule": "kwin/effects/configs/kcm_kwin4_genericscripted",
+    "X-KDE-PluginKeyword": "n-groups",
+    "X-Plasma-API": "declarativescript",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml"
+}

@@ -70,6 +70,14 @@
 #                    The Konsole profiles/colors come from the stowed konsole/
 #                    package, and switching them with the light/dark mode is
 #                    the job of dotfiles-konsole-theme-sync (dev-services).
+#   - kwin-scripts -> the repo's own KWin scripts, one folder each under
+#                    plasma/kwin-scripts/ (n-groups: snap groups + its
+#                    n-switcher Alt+Tab layout). Each folder is standalone
+#                    and brings its own install.sh (install, uninstall,
+#                    status, doctor): this key only runs it, so adding a
+#                    script is just adding a folder. From the checklist it
+#                    shows a list to pick from. Turning them on/off later is
+#                    up to System Settings → KWin Scripts.
 #
 # Outside KDE Plasma (servers, Termux) it does nothing and exits with 0.
 #
@@ -83,6 +91,9 @@
 #   dev-plasma --wallpaper=ID  set that wallpaper (alone, it implies
 #                              --only=wallpaper)
 #   dev-plasma --list-wallpapers  the repo's wallpapers (* = applied)
+#   dev-plasma --kwin-script=ID   install that KWin script (alone, it
+#                              implies --only=kwin-scripts)
+#   dev-plasma --list-kwin-scripts  the repo's KWin scripts (* = installed)
 #   dev-plasma -h | --help     this help
 set -uo pipefail
 
@@ -121,6 +132,11 @@ WALLPAPER_DIR="$HOME/.local/share/wallpapers"
 # key show its list (--only and --all never open dialogs).
 PICK_WALLPAPER=false
 LAUNCHER_ICON="nivek-debian"
+KWIN_SCRIPTS_DIR="$SRC_DIR/kwin-scripts"
+KWIN_SCRIPT="" # --kwin-script=ID; empty = every one (or the checklist's)
+# true when the keys came from the checklist: only then does the kwin-scripts
+# key show its list.
+PICK_KWIN_SCRIPTS=false
 # true if the keys were picked by hand (checklist or --only), false in --all:
 # decides whether the wallpaper may replace a hand-picked one.
 EXPLICIT=true
@@ -152,7 +168,8 @@ TERM_SYNC_UNIT="dotfiles-konsole-theme-sync.service"
 WALLPAPER_COUNT="$(find "$SRC_DIR/wallpapers" -mindepth 2 -maxdepth 2 -name metadata.json 2>/dev/null | wc -l)"
 # PKG_KEYS order is the run order (regardless of --only's order): external
 # pieces first, then applying the theme that uses them.
-PKG_KEYS=(themes icons splash login-cursor apply wallpaper launcher-icon yakuake)
+KWIN_SCRIPT_COUNT="$(find "$KWIN_SCRIPTS_DIR" -mindepth 2 -maxdepth 2 -name install.sh 2>/dev/null | wc -l)"
+PKG_KEYS=(themes icons splash login-cursor apply wallpaper launcher-icon yakuake kwin-scripts)
 declare -A PKG_LABEL=(
   [themes]="Global Themes + colors + wallpapers from the repo (kpackagetool6)"
   [icons]="Papirus from apt + $FOLDER_COLOR folders (papirus-folders)"
@@ -162,6 +179,7 @@ declare -A PKG_LABEL=(
   [wallpaper]="Wallpaper (choose one of $WALLPAPER_COUNT, follows light/dark)"
   ["launcher-icon"]="$LAUNCHER_ICON icon on the launcher (icon only)"
   [yakuake]="Yakuake settings: no borders, no title/tab bar, no tray icon"
+  ["kwin-scripts"]="Own KWin scripts (choose from $KWIN_SCRIPT_COUNT: n-groups snap groups...)"
 )
 declare -A PKG_FN=(
   [themes]="install_themes"
@@ -172,6 +190,7 @@ declare -A PKG_FN=(
   [wallpaper]="apply_wallpaper"
   ["launcher-icon"]="set_launcher_icon"
   [yakuake]="configure_yakuake"
+  ["kwin-scripts"]="install_kwin_scripts"
 )
 
 # ─── utilities ──────────────────────────────────────────────────────────────
@@ -1180,6 +1199,81 @@ configure_yakuake() {
   return 0
 }
 
+# ─── kwin-scripts ───────────────────────────────────────────────────────────
+# Every plasma/kwin-scripts/<id>/ is a standalone KWin script with its own
+# install.sh; its second line ("# <id> — <summary>") is the description.
+
+repo_kwin_scripts() {
+  local f
+  for f in "$KWIN_SCRIPTS_DIR"/*/install.sh; do
+    [[ -f "$f" ]] && basename "$(dirname "$f")"
+  done
+}
+
+kwin_script_summary() {
+  sed -n '2s/^# [^ ]* — //p' "$KWIN_SCRIPTS_DIR/$1/install.sh"
+}
+
+kwin_script_installed() {
+  [[ -d "${XDG_DATA_HOME:-$HOME/.local/share}/kwin/scripts/$1" ]]
+}
+
+# --list-kwin-scripts
+list_kwin_scripts() {
+  local id mark
+  while IFS= read -r id; do
+    mark=" "
+    kwin_script_installed "$id" && mark="*"
+    printf ' %s %s %s\n' "$mark" "$(pad "$id" 14)" "$(kwin_script_summary "$id")"
+  done < <(repo_kwin_scripts)
+}
+
+# The list (checklist mode only). Sets PICKED_SCRIPTS.
+PICKED_SCRIPTS=()
+pick_kwin_scripts() {
+  local items=() id raw line
+  while IFS= read -r id; do
+    items+=("$id" "$(kwin_script_summary "$id")" "on")
+  done < <(repo_kwin_scripts)
+  raw=$(dialog --clear --colors --backtitle "$BACKTITLE" \
+    --title " KWin scripts ($KWIN_SCRIPT_COUNT) " --separate-output --checklist \
+    "Install/update  [SPACE=toggle  ENTER=confirm]\n\nTurn them on/off later in System Settings → KWin Scripts." \
+    16 76 6 "${items[@]}" \
+    3>&1 1>&2 2>&3) || return 1
+  clear
+  PICKED_SCRIPTS=()
+  while IFS= read -r line; do [[ -n "$line" ]] && PICKED_SCRIPTS+=("$line"); done <<<"$raw"
+}
+
+install_kwin_scripts() {
+  sep
+  local ids=() id rc=0
+  if [[ -n "$KWIN_SCRIPT" ]]; then
+    ids=("$KWIN_SCRIPT")
+  elif $PICK_KWIN_SCRIPTS && [[ "$KWIN_SCRIPT_COUNT" -gt 0 ]]; then
+    need_cmd dialog || return 1
+    if ! pick_kwin_scripts; then
+      skip "KWin scripts unchanged"
+      return 0
+    fi
+    ids=("${PICKED_SCRIPTS[@]}")
+  else
+    mapfile -t ids < <(repo_kwin_scripts)
+  fi
+  if [[ ${#ids[@]} -eq 0 ]]; then
+    skip "No KWin scripts selected"
+    return 0
+  fi
+  for id in "${ids[@]}"; do
+    info "KWin script $id: $(kwin_script_summary "$id")"
+    bash "$KWIN_SCRIPTS_DIR/$id/install.sh" install || {
+      err "$id: install.sh failed"
+      rc=1
+    }
+  done
+  return "$rc"
+}
+
 # ─── doctor ─────────────────────────────────────────────────────────────────
 # Checks that every piece the Global Themes name really exists. Changes
 # nothing. Returns 1 if something is broken (not for warnings).
@@ -1387,6 +1481,19 @@ doctor_wallpapers() {
   fi
 }
 
+# Installed ones only: each install.sh checks its own pieces.
+doctor_kwin_scripts() {
+  local id
+  while IFS= read -r id; do
+    if ! kwin_script_installed "$id"; then
+      skip "KWin script $id isn't installed (dev-plasma --kwin-script=$id)"
+      continue
+    fi
+    bash "$KWIN_SCRIPTS_DIR/$id/install.sh" doctor || DOC_FAIL=1
+  done < <(repo_kwin_scripts)
+  return 0
+}
+
 run_doctor() {
   sep
   info "Doctor: $THEME_DARK / $THEME_LIGHT"
@@ -1415,6 +1522,7 @@ run_doctor() {
   fi
 
   doctor_terminal
+  doctor_kwin_scripts
 
   sep
   if [[ $DOC_FAIL -eq 0 ]]; then
@@ -1437,7 +1545,7 @@ select_keys() {
   raw=$(dialog --clear --colors --backtitle "$BACKTITLE" \
     --title " dev-plasma " --separate-output --checklist \
     "Select what to install/apply  [SPACE=toggle  ENTER=confirm]\n\nThe doctor runs at the end and checks nothing is left broken." \
-    18 76 8 "${items[@]}" \
+    19 76 9 "${items[@]}" \
     3>&1 1>&2 2>&3) || return 1
   clear
   local line
@@ -1454,6 +1562,7 @@ usage() {
 ONLY_KEYS=()
 DOCTOR_ONLY=false
 LIST_WALLPAPERS=false
+LIST_KWIN_SCRIPTS=false
 for arg in "$@"; do
   case "$arg" in
     --all) NONINTERACTIVE=true ;;
@@ -1467,6 +1576,8 @@ for arg in "$@"; do
     --light=*) THEME_LIGHT="${arg#--light=}" ;;
     --wallpaper=*) WALLPAPER="${arg#--wallpaper=}" ;;
     --list-wallpapers) LIST_WALLPAPERS=true ;;
+    --kwin-script=*) KWIN_SCRIPT="${arg#--kwin-script=}" ;;
+    --list-kwin-scripts) LIST_KWIN_SCRIPTS=true ;;
     -h | --help)
       usage
       exit 0
@@ -1482,6 +1593,19 @@ done
 if $LIST_WALLPAPERS; then
   list_wallpapers
   exit 0
+fi
+if $LIST_KWIN_SCRIPTS; then
+  list_kwin_scripts
+  exit 0
+fi
+if [[ -n "$KWIN_SCRIPT" && ! -f "$KWIN_SCRIPTS_DIR/$KWIN_SCRIPT/install.sh" ]]; then
+  err "Unknown KWin script: $KWIN_SCRIPT"
+  list_kwin_scripts >&2
+  exit 1
+fi
+# --kwin-script=ID alone means "just that".
+if [[ -n "$KWIN_SCRIPT" && ${#ONLY_KEYS[@]} -eq 0 && "$NONINTERACTIVE" != "true" ]]; then
+  ONLY_KEYS=(kwin-scripts)
 fi
 # --wallpaper=ID alone means "just that".
 if [[ -n "$WALLPAPER" && ${#ONLY_KEYS[@]} -eq 0 && "$NONINTERACTIVE" != "true" ]]; then
@@ -1529,6 +1653,7 @@ else
     exit 0
   fi
   PICK_WALLPAPER=true
+  PICK_KWIN_SCRIPTS=true
 fi
 
 if [[ ${#CHOSEN[@]} -eq 0 ]]; then

@@ -12,6 +12,7 @@ folder here, bump the commit in this file and run `dev-boot`.
 | Theme | Installed to | Upstream | Commit | License |
 | ----- | ------------ | -------- | ------ | ------- |
 | GRUB `nord` | `/boot/grub/themes/nord` | [stevendejongnl/grub2-nord-theme](https://github.com/stevendejongnl/grub2-nord-theme) | `f2bf575` (2025-04-07) | GPLv3 |
+| GRUB boot background `grub/backgrounds/nord.jpg` | `/boot/grub/themes/nord/boot-background.jpg` | same repo, base layer of `backgrounds/background.xcf` | `f2bf575` | GPLv3 |
 | GRUB icon sets `color`, `whitesur` | `/boot/grub/themes/nord/icons` (when chosen) | same repo, `assets/assets-{color,whitesur}/icons-1080p` | `f2bf575` | GPLv3 |
 | Plymouth `cuts_alt` | `/usr/share/plymouth/themes/cuts_alt` | [adi1090x/plymouth-themes](https://github.com/adi1090x/plymouth-themes) `pack_1/cuts_alt` | `5d88174` (2023-08-22) | GPLv3 |
 
@@ -30,6 +31,27 @@ cp -r assets/assets-white/icons-1080p        nord/icons
 cp assets/assets-select/select-1080p/*.png   nord/
 cp assets/info-1080p.png                     nord/info.png
 cp LICENSE                                   nord/
+```
+
+## GRUB boot background
+
+`GRUB_THEME` only styles the menu. Once an entry is picked, GRUB prints
+`Loading Linux…` on its plain terminal, and that terminal's image (which stays
+on screen until Plymouth takes over) is `GRUB_BACKGROUND`. When it's unset,
+Debian's `/etc/grub.d/05_debian_theme` falls back to desktop-base's wallpaper
+(`ceratopsian` on trixie/forky), so that second looked like a different theme.
+
+`grub/backgrounds/nord.jpg` is the nord menu background **without** the menu
+panel. The panel is baked into `background-nord.jpg`, but upstream's GIMP source
+keeps the forest photo as its own layer. Outside the panel the two images match
+(RMSE ≈ 0.3 %, JPEG noise). It's kept outside `themes/nord/` so that folder stays
+byte-identical to upstream's build. `dev-boot` copies it into the theme as
+`boot-background.jpg` and sets `GRUB_BACKGROUND` in its drop-in. It's
+baseline JPEG, since GRUB's reader can't decode progressive files. To rebuild it:
+
+```bash
+magick 'backgrounds/background.xcf[0]' -strip -interlace none \
+  -sampling-factor 4:2:0 -quality 90 nord.jpg
 ```
 
 ## GRUB icon sets

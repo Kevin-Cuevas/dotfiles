@@ -3,7 +3,7 @@
     "KPlugin": {
         "Authors": [
             {
-                "Name": "Kevin Cuevas"
+                "Name": "nvkcx"
             }
         ],
         "Description": "Thumbnail grid that shows n-groups groups as a live mosaic and previews the whole group",
@@ -12,7 +12,7 @@
         "License": "GPL-2.0-only",
         "Name": "n-switcher",
         "Version": "1.0.0",
-        "Website": "https://github.com/Kevin-Cuevas/dotfiles"
+        "Website": "https://github.com/nvkcx/dotfiles"
     },
     "X-Plasma-API": "declarativeappletscript"
 }

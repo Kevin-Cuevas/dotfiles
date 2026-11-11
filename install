@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-REPO="https://github.com/Kevin-Cuevas/dotfiles.git"
+REPO="https://github.com/nvkcx/dotfiles.git"
 DEST="${DOTFILES_DIR:-$HOME/dotfiles}"
 
 RED='\e[38;2;191;97;106m'

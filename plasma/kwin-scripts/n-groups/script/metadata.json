@@ -3,7 +3,7 @@
     "KPlugin": {
         "Authors": [
             {
-                "Name": "Kevin Cuevas"
+                "Name": "nvkcx"
             }
         ],
         "Category": "Window Management",
@@ -14,7 +14,7 @@
         "License": "GPL-2.0-only",
         "Name": "n-groups",
         "Version": "2.0.0",
-        "Website": "https://github.com/Kevin-Cuevas/dotfiles"
+        "Website": "https://github.com/nvkcx/dotfiles"
     },
     "X-KDE-ConfigModule": "kwin/effects/configs/kcm_kwin4_genericscripted",
     "X-KDE-PluginKeyword": "n-groups",

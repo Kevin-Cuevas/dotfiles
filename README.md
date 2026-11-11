@@ -11,7 +11,7 @@ Each top-level directory is a Stow package that maps directly into `$HOME`.
 From a fresh machine (only `git` and `curl` required):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Kevin-Cuevas/dotfiles/main/install | bash
+curl -fsSL https://raw.githubusercontent.com/nvkcx/dotfiles/main/install | bash
 ```
 
 Or non-interactively (installs everything without prompts, except the
@@ -19,7 +19,7 @@ Plasma and boot themes and the background services: run `dev-plasma` /
 `dev-boot` / `dev-services` for those):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Kevin-Cuevas/dotfiles/main/install | bash -s -- --all
+curl -fsSL https://raw.githubusercontent.com/nvkcx/dotfiles/main/install | bash -s -- --all
 ```
 
 The apt packages follow a machine **profile**, detected on its own (KDE

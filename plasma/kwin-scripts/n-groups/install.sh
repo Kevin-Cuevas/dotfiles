@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# n-groups — snap groups for KWin (Plasma 6.7+, Wayland).
+# n-groups — link windows by hand into groups that share one Alt+Tab entry.
 #
 # Two KDE packages from this folder:
 #   script/    n-groups    KWin script: groups, Alt+Tab entries, shortcuts
@@ -56,6 +56,7 @@ need() {
 }
 
 kwin() { [[ -n "$QDBUS" ]] && "$QDBUS" org.kde.KWin "$@" 2>/dev/null; }
+kwin_running() { kwin /KWin >/dev/null; }
 reconfigure() { kwin /KWin reconfigure >/dev/null || true; }
 loaded() { [[ "$(kwin /Scripting org.kde.kwin.Scripting.isScriptLoaded "$SCRIPT_ID")" == true ]]; }
 enabled() { [[ "$(kreadconfig6 --file kwinrc --group Plugins --key "${SCRIPT_ID}Enabled")" == true ]]; }
@@ -146,8 +147,8 @@ cmd_install() {
     skip "Alt+Tab layout left as $(layout)"
   fi
   reconfigure
-  if [[ -z "$QDBUS" ]]; then
-    skip "qdbus6 not found: $SCRIPT_ID starts with your next session"
+  if [[ -z "$QDBUS" ]] || ! kwin_running; then
+    skip "KWin isn't reachable: $SCRIPT_ID starts with your next session"
   elif ensure_loaded; then
     ok "$SCRIPT_ID running"
   else

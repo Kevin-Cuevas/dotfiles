@@ -4,12 +4,11 @@
 //
 //   * A group is a set of >= 2 windows sharing one Alt+Tab entry: only the
 //     last used member stays in the switcher, the rest get skipSwitcher.
-//   * Auto groups: windows tiled in the same layout (Meta+T), or quick-tiled,
-//     on the same screen + desktop + activity.
-//   * Manual groups (Meta+Space twice) win over auto groups. Linking always
-//     merges both sides' whole groups. They live in memory only.
+//   * Groups are only made by hand: Meta+Space opens pick mode (main.qml),
+//     or links two windows with the keyboard when pick mode is off. Linking
+//     merges the whole groups of every picked window. Groups live in memory.
 //
-// Every change just calls schedule(); reconcile() recomputes all groups from
+// Every change just calls schedule(); reconcile() rebuilds all groups from
 // scratch and applies the skipSwitcher diff, so missed events can't leave
 // windows hidden.
 //
@@ -26,14 +25,12 @@ let cfg = {};
 const tracked = new Map();    // wid -> Window
 const connected = new Set();  // wid with signal handlers (survive reloads, see init)
 const origSkip = new Map();   // wid -> skipSwitcher before we touched it
-const manualOf = new Map();   // wid -> manual group id
-const excluded = new Set();   // wid taken out of its auto group while tiled
-const lastUsed = new Map();   // group key -> wid shown in Alt+Tab
-let groups = new Map();       // group key -> Window[]
-let groupOf = new Map();      // wid -> group key
-let nextManualId = 1;
-let activeGroupKey = null;
-let pending = null;           // window picked by the first Meta+Space
+const groupIdOf = new Map();  // wid -> group id
+const lastUsed = new Map();   // group id -> wid shown in Alt+Tab
+let groups = new Map();       // group id -> Window[]
+let nextGroupId = 1;
+let activeGroupId = null;
+let pending = null;           // keyboard linking: window of the first Meta+Space
 let busy = false;             // we are raising/minimizing ourselves
 let initialized = false;
 // KWin keeps this module cached for the whole session and, on reload,
@@ -64,7 +61,7 @@ function label(w) {
     return cls.charAt(0).toUpperCase() + cls.slice(1);
 }
 
-const joinLabels = (windows) => windows.map(label).join(" + ");
+export const joinLabels = (windows) => windows.map(label).join(" + ");
 
 function osd(icon, text) {
     if (cfg.showOsd) api.osd(icon, text);
@@ -74,16 +71,19 @@ function readConfig() {
     // kwinrc values may come back as bool or as the string "true"/"false".
     const bool = (key) => String(api.readConfig(key, true)) === "true";
     cfg = {
-        autoGroup: bool("autoGroup"),
-        includeQuickTile: bool("includeQuickTile"),
+        pickWithMouse: bool("pickWithMouse"),
         minimizeTogether: bool("minimizeTogether"),
         showOsd: bool("showOsd"),
     };
 }
 
+export function pickWithMouse() {
+    return cfg.pickWithMouse;
+}
+
 // --- grouping --------------------------------------------------------------
 
-function isCandidate(w) {
+export function isCandidate(w) {
     try {
         return alive(w) && w.managed && w.normalWindow && !w.transient && !w.specialWindow
             // Already hidden from Alt+Tab by someone else (rules, Yakuake…).
@@ -91,22 +91,6 @@ function isCandidate(w) {
     } catch (e) {
         return false;
     }
-}
-
-function autoKey(w) {
-    const tile = w.tile;
-    if (!cfg.autoGroup || !tile || excluded.has(wid(w))) return null;
-    let root = tile;
-    while (root.parent) root = root.parent;
-
-    // Meta+T layouts hang from Workspace.rootTile(); quick tiles don't.
-    const desktops = w.onAllDesktops ? [ws.currentDesktop] : list(w.desktops);
-    const custom = desktops.some((d) => ws.rootTile(w.output, d) === root);
-    if (!custom && !cfg.includeQuickTile) return null;
-
-    return [custom ? "tile" : "quick", w.output.name,
-        w.onAllDesktops ? "*" : desktops.map((d) => d.id).sort().join(","),
-        list(w.activities).sort().join(",")].join("|");
 }
 
 function setHidden(w, hidden) {
@@ -126,9 +110,9 @@ function restoreSkip(w) {
     } catch (e) {}
 }
 
-function representative(key, members) {
+function representative(gid, members) {
     if (members.includes(ws.activeWindow)) return ws.activeWindow;
-    const last = members.find((m) => wid(m) === lastUsed.get(key));
+    const last = members.find((m) => wid(m) === lastUsed.get(gid));
     if (last) return last;
     const stack = list(ws.stackingOrder);
     return members.reduce((top, m) => (stack.indexOf(m) > stack.indexOf(top) ? m : top));
@@ -136,55 +120,28 @@ function representative(key, members) {
 
 export function reconcile() {
     if (!initialized) return;
-    // A manual group left with one window (others closed or unlinked) is
-    // gone: release that window so it can join auto groups again.
-    const manualSize = new Map();
-    for (const [id, gid] of manualOf) {
-        if (isCandidate(tracked.get(id))) manualSize.set(gid, (manualSize.get(gid) || 0) + 1);
-    }
-    for (const [id, gid] of [...manualOf]) if ((manualSize.get(gid) || 0) < 2) manualOf.delete(id);
-
     const buckets = new Map();
-    for (const w of tracked.values()) {
+    for (const [id, gid] of groupIdOf) {
+        const w = tracked.get(id);
         if (!isCandidate(w)) continue;
-        let key = null;
-        if (manualOf.has(wid(w))) key = "manual|" + manualOf.get(wid(w));
-        else {
-            try {
-                key = autoKey(w);
-            } catch (e) {
-                api.warn("autoKey failed", e);
-            }
-            if (key) key = "auto|" + key;
-        }
-        if (!key) continue;
-        if (!buckets.has(key)) buckets.set(key, []);
-        buckets.get(key).push(w);
+        if (!buckets.has(gid)) buckets.set(gid, []);
+        buckets.get(gid).push(w);
     }
 
     const next = new Map();
-    const nextOf = new Map();
-    for (const [key, members] of buckets) {
+    for (const [gid, members] of buckets) {
         if (members.length < 2) continue;
-        next.set(key, members);
-        const rep = representative(key, members);
-        lastUsed.set(key, wid(rep));
-        for (const m of members) {
-            nextOf.set(wid(m), key);
-            setHidden(m, m !== rep);
-        }
-        // Announce auto groups that appeared or changed.
-        const before = groups.get(key);
-        const sig = (ms) => ms.map(wid).sort().join(",");
-        if (key.startsWith("auto|") && (!before || sig(before) !== sig(members))) {
-            osd(ICON_GROUP, "Grouped: " + joinLabels(members));
-        }
+        next.set(gid, members);
+        const rep = representative(gid, members);
+        lastUsed.set(gid, wid(rep));
+        for (const m of members) setHidden(m, m !== rep);
     }
-    for (const w of tracked.values()) if (!nextOf.has(wid(w))) restoreSkip(w);
-    for (const key of [...lastUsed.keys()]) if (!next.has(key)) lastUsed.delete(key);
-    if (!next.has(activeGroupKey)) activeGroupKey = null;
+    // A group left with one window (the rest closed or unlinked) is gone.
+    for (const [id, gid] of [...groupIdOf]) if (!next.has(gid)) groupIdOf.delete(id);
+    for (const w of tracked.values()) if (!groupIdOf.has(wid(w))) restoreSkip(w);
+    for (const gid of [...lastUsed.keys()]) if (!next.has(gid)) lastUsed.delete(gid);
+    if (!next.has(activeGroupId)) activeGroupId = null;
     groups = next;
-    groupOf = nextOf;
 }
 
 export function schedule() {
@@ -204,14 +161,8 @@ export function track(w) {
     tracked.set(id, w);
     if (!connected.has(id)) {
         connected.add(id);
-        w.tileChanged.connect(() => {
-            if (!w.tile) excluded.delete(id);
-            schedule();
-        });
         w.desktopsChanged.connect(schedule);
-        w.outputChanged.connect(schedule);
         w.activitiesChanged.connect(schedule);
-        w.quickTileModeChanged.connect(schedule);
         w.minimizedChanged.connect(() => onMinimizedChanged(w));
     }
     schedule();
@@ -225,7 +176,7 @@ export function untrack(w) {
         return;
     }
     if (pending === w) cancelPending(false);
-    for (const set of [tracked, connected, origSkip, manualOf, excluded]) set.delete(id);
+    for (const set of [tracked, connected, origSkip, groupIdOf]) set.delete(id);
     schedule();
 }
 
@@ -235,8 +186,9 @@ function groupFor(w) {
     try {
         while (target && target.transient && target.transientFor) target = target.transientFor;
     } catch (e) {}
-    const key = target && groupOf.get(wid(target));
-    return key ? { key, window: target, members: groups.get(key).filter(alive) } : null;
+    const gid = target && groupIdOf.get(wid(target));
+    const members = gid !== undefined && groups.has(gid) ? groups.get(gid).filter(alive) : [];
+    return members.length ? { gid, window: target, members } : null;
 }
 
 // Entering a group from outside (Alt+Tab, taskbar, click from another app)
@@ -245,12 +197,12 @@ export function onActivated(w) {
     if (busy || !w) return;
     const hit = groupFor(w);
     if (!hit) {
-        activeGroupKey = null;
+        activeGroupId = null;
         return;
     }
-    lastUsed.set(hit.key, wid(hit.window));
-    if (hit.key !== activeGroupKey) {
-        activeGroupKey = hit.key;
+    lastUsed.set(hit.gid, wid(hit.window));
+    if (hit.gid !== activeGroupId) {
+        activeGroupId = hit.gid;
         busy = true;
         try {
             const stack = list(ws.stackingOrder);
@@ -277,12 +229,67 @@ function onMinimizedChanged(w) {
     busy = true;
     try {
         for (const m of hit.members) if (m.minimized !== w.minimized) m.minimized = w.minimized;
-        if (w.minimized) activeGroupKey = null;
+        if (w.minimized) activeGroupId = null;
     } catch (e) {
         api.warn("minimize sync failed", e);
     } finally {
         busy = false;
     }
+}
+
+// --- linking ---------------------------------------------------------------
+
+// Every window that ends up in the group if `windows` are linked: each one
+// brings its whole current group along.
+export function linkPreview(windows) {
+    const out = [];
+    for (const w of windows) {
+        const hit = groupFor(w);
+        for (const m of hit ? hit.members : [w]) if (!out.includes(m)) out.push(m);
+    }
+    return out;
+}
+
+// Links `windows` (and their groups) into one group. Returns its members,
+// or null if there was nothing to link.
+export function linkWindows(windows) {
+    const picked = windows.filter(isCandidate);
+    const members = linkPreview(picked);
+    if (members.length < 2) {
+        osd(ICON_INFO, "Pick at least two windows");
+        return null;
+    }
+    const groupIds = new Set(members.map((m) => groupIdOf.get(wid(m))));
+    if (groupIds.size === 1 && !groupIds.has(undefined)) {
+        osd(ICON_INFO, "Already linked");
+        return null;
+    }
+    const gid = nextGroupId++;
+    for (const m of members) groupIdOf.set(wid(m), gid);
+    reconcile();
+    osd(ICON_GROUP, "Linked: " + joinLabels(members));
+    api.flash(members.map(wid));
+    return members;
+}
+
+// Pick mode: the top-most window under global point (x, y) that can be
+// linked, on the current desktop and activity. `ignore` is a caption to skip
+// (the pick overlay itself).
+export function windowAt(x, y, ignore) {
+    const stack = list(ws.stackingOrder);
+    for (let i = stack.length - 1; i >= 0; i--) {
+        const w = stack[i];
+        try {
+            if (w.caption === ignore || w.minimized || !isCandidate(w)) continue;
+            const desktops = list(w.desktops);
+            if (!w.onAllDesktops && !desktops.includes(ws.currentDesktop)) continue;
+            const acts = list(w.activities);
+            if (acts.length && !acts.includes(ws.currentActivity)) continue;
+            const g = w.frameGeometry;
+            if (x >= g.x && x < g.x + g.width && y >= g.y && y < g.y + g.height) return w;
+        } catch (e) {}
+    }
+    return null;
 }
 
 // --- shortcuts -------------------------------------------------------------
@@ -294,8 +301,7 @@ export function cancelPending(announce) {
     if (announce) osd(ICON_INFO, "Link cancelled");
 }
 
-// Meta+Space twice: link the window picked first with the focused one.
-// Both sides bring their whole group, so A+B then C→B gives A+B+C.
+// Keyboard linking (pick mode off): Meta+Space on one window, then on another.
 export function linkShortcut() {
     const w = ws.activeWindow;
     if (!isCandidate(w)) {
@@ -312,53 +318,31 @@ export function linkShortcut() {
         cancelPending(true);
         return;
     }
-    const sideA = groupFor(pending);
-    const sideB = groupFor(w);
-    const source = pending;
+    const first = pending;
     cancelPending(false);
-    if (sideA && sideB && sideA.key === sideB.key) {
-        osd(ICON_INFO, "Already linked");
-        return;
-    }
-    const members = new Set([source, w]);
-    for (const side of [sideA, sideB]) if (side) side.members.forEach((m) => members.add(m));
-
-    const gid = nextManualId++;
-    for (const m of members) {
-        manualOf.set(wid(m), gid);
-        excluded.delete(wid(m));
-    }
-    osd(ICON_GROUP, "Linked: " + joinLabels([...members]));
-    reconcile();
+    linkWindows([first, w]);
 }
 
-// Meta+Alt+Space: take the focused window out of its group.
+// Meta+Shift+Space: take the focused window out of its group.
 export function unlinkShortcut() {
-    const w = ws.activeWindow;
-    const hit = w && groupFor(w);
+    const hit = groupFor(ws.activeWindow);
     if (!hit) {
         osd(ICON_INFO, "Not linked");
         return;
     }
-    const id = wid(hit.window);
-    if (manualOf.has(id)) manualOf.delete(id);
-    else excluded.add(id); // auto group: until it leaves the tile
+    groupIdOf.delete(wid(hit.window));
     osd(ICON_UNGROUP, label(hit.window) + " unlinked");
     reconcile();
 }
 
-// Meta+Shift+Space: dissolve the focused window's whole group.
+// No default key: dissolve the focused window's whole group.
 export function dissolveShortcut() {
     const hit = groupFor(ws.activeWindow);
     if (!hit) {
         osd(ICON_INFO, "Not linked");
         return;
     }
-    for (const m of hit.members) {
-        const id = wid(m);
-        if (manualOf.has(id)) manualOf.delete(id);
-        else excluded.add(id);
-    }
+    for (const m of hit.members) groupIdOf.delete(wid(m));
     osd(ICON_UNGROUP, "Ungrouped: " + joinLabels(hit.members));
     reconcile();
 }
@@ -391,9 +375,8 @@ export function teardown(gen) {
     initialized = false;
     // Never leave windows hidden from Alt+Tab after we're gone.
     for (const w of tracked.values()) restoreSkip(w);
-    for (const c of [tracked, manualOf, excluded, lastUsed]) c.clear();
+    for (const c of [tracked, groupIdOf, lastUsed]) c.clear();
     groups = new Map();
-    groupOf = new Map();
     pending = null;
 }
 
@@ -404,7 +387,7 @@ export function teardown(gen) {
 
 export function switcherGroup(windowId) {
     if (!initialized || windowId === undefined || windowId === null) return null;
-    const key = groupOf.get(String(windowId));
-    const members = key ? groups.get(key).filter(alive) : [];
+    const gid = groupIdOf.get(String(windowId));
+    const members = gid !== undefined && groups.has(gid) ? groups.get(gid).filter(alive) : [];
     return members.length < 2 ? null : { members, label: joinLabels(members) };
 }

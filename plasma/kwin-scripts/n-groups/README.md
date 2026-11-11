@@ -1,8 +1,8 @@
 # n-groups
 
-Snap groups for KWin (Plasma 6.7+, Wayland). Windows tiled together, or linked
-by hand, become **one Alt+Tab entry** and **raise, minimize and restore
-together**. The bundled `n-switcher` Alt+Tab layout draws every group as a live
+Window groups for KWin (Plasma 6.7+, Wayland). Windows you link by hand become
+**one Alt+Tab entry** and **raise, minimize and restore together**. Nothing is
+grouped behind your back: Meta+Space, click the windows, done. The bundled `n-switcher` Alt+Tab layout draws every group as a live
 mosaic of its windows and previews the whole group on screen while it's
 selected.
 
@@ -30,26 +30,30 @@ changed from System Settings:
 | What | Where |
 |---|---|
 | Turn n-groups on/off | Window Management → KWin Scripts |
-| Options | KWin Scripts → n-groups → ⚙ |
+| Options (mouse picking, minimize together, on-screen messages) | KWin Scripts → n-groups → ⚙ |
 | Alt+Tab layout | Window Management → Task Switcher → Visualization |
 | Shortcuts | Shortcuts → KWin → search "n-groups" |
 
 ## Usage
 
-Groups form on their own:
+**Meta+Space** opens pick mode: the screen dims and the window under the
+pointer is lifted above it with a breathing frame.
 
-- **Meta+T tiling:** windows in the same custom tile layout (same screen,
-  desktop and activity).
-- **Quick tiling:** Meta+Arrow or dragging to a screen edge (optional).
+- **Click** windows to pick them (numbered 1, 2, 3…); click again to drop one.
+  The active window starts picked.
+- Picking a window that's already grouped brings its whole group along
+  (marked with the link icon), so A+B then picking B and C gives A+B+C.
+- **Enter** or **Meta+Space** links them; the new group is shown alone for a
+  moment. **Esc** or **right-click** cancels.
 
 | Shortcut | Action |
 |---|---|
-| `Meta+Space` ×2 | Link: press on one window, then on another. Both bring their whole group, so A+B then B→C is A+B+C. Pressing twice on the same window, or waiting 8 s, cancels. |
-| `Meta+Alt+Space` | Unlink the active window. In a tiling group, until it leaves the tile. |
-| `Meta+Shift+Space` | Ungroup the active window's whole group |
+| `Meta+Space` | Pick mode (or, with "Pick windows with the mouse" off: press on one window, then on another) |
+| `Meta+Shift+Space` | Unlink the active window from its group |
 | `Meta+Ctrl+Space` | Focus the next window in the group, left to right |
+| *(no key)* | Ungroup the active window's whole group |
 
-Links made by hand live in memory and are gone after logging out.
+Groups live in memory and are gone after logging out.
 
 ## How it works
 
@@ -57,8 +61,11 @@ Links made by hand live in memory and are gone after logging out.
   switcher; the rest get `skipSwitcher`. Every KWin signal just schedules a
   `reconcile()`, which rebuilds all groups from scratch and applies the
   difference, so a missed event can't leave windows hidden.
-- **Tiling groups.** A window's tile is walked up to its root. Meta+T layouts
-  hang from `Workspace.rootTile(output, desktop)`; quick tiles don't.
+- **Pick mode.** A borderless OSD-type `PlasmaCore.Dialog` spans every screen
+  and takes the clicks. The window under the pointer comes from
+  `Workspace.cursorPos` and the stacking order, and picked windows are drawn
+  above the dim with live `WindowThumbnail`s. Esc only works if the overlay
+  gets keyboard focus; right-click and Meta+Space always do.
 - **Raise together.** Entering a group from outside (Alt+Tab, taskbar, a click
   from another app) raises every member with `Workspace.raiseWindow`.
 - **Script ↔ switcher.** KWin builds Alt+Tab layouts in the same `QQmlEngine`

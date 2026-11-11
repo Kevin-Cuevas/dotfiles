@@ -51,7 +51,7 @@ dotfiles/
 ├── konsole/      -> ~/.local/share/konsole  Konsole/Yakuake profiles + NivekDark/LightNordKonsoleColors  [per-file]
 ├── nvim/         -> ~/.config/nvim        LazyVim config
 ├── peaclock/     -> ~/.peaclock
-├── plasma/                                KDE Plasma Global Themes + color schemes + light/dark wallpapers + Yakuake settings (not stowed: dev-plasma)
+├── plasma/                                KDE Plasma Global Themes + color schemes + light/dark wallpapers + Yakuake settings + own KWin scripts (not stowed: dev-plasma)
 ├── ssh/          -> ~/.ssh/config         shared defaults only; hosts & keys stay local [per-file]
 ├── system/                                MOTD + background jobs (not stowed)
 │   ├── motd/                              root-run MOTD scripts (dev-motd)
@@ -390,6 +390,8 @@ dev-plasma --all            # every key, no prompts
 dev-plasma --only=themes    # just one key
 dev-plasma --list-wallpapers           # the repo's wallpapers (* = applied)
 dev-plasma --wallpaper=Nord-lighthouse # set one (alone, implies --only=wallpaper)
+dev-plasma --list-kwin-scripts         # the repo's KWin scripts (* = installed)
+dev-plasma --kwin-script=n-groups      # install one (alone, implies --only=kwin-scripts)
 dev-plasma --doctor         # check that every referenced piece exists; changes nothing
 dev-plasma --help           # usage + the list of keys
 ```
@@ -404,12 +406,19 @@ dev-plasma --help           # usage + the list of keys
 | `wallpaper`   | sets one of the wallpapers in `plasma/wallpapers` (each follows light/dark on its own). From the checklist it opens a list: **Preview** puts the highlighted one on your desktop right away and comes back to the list, **Light/dark** opens both of its variants in the image viewer (Preview only shows the current mode's), **Apply** keeps it and **Cancel** puts back exactly what every desktop had. There's no state file: the applied wallpaper is the choice, so `--all` keeps it when it's one of the repo's, sets Nord Flare over a stock KDE one, and keeps a hand-picked one (replaced only when this key is picked explicitly) |
 | `launcher-icon` | sets the `nivek-debian` icon on the launcher (Kickoff/Kicker) of your existing panels through plasmashell's scripting (DBus), changing only that key — pinned apps, widgets and layout stay as they are. Same rule as the wallpaper: a hand-picked icon is kept on `--all` |
 | `yakuake`     | writes the keys listed in `plasma/yakuake/yakuakerc` (no skin borders, no title or tab bar, no tray icon, `KeepOpen=false`, no session-switch shortcuts) one by one with `kwriteconfig6`, so size, position and anything else you set stay yours. Yakuake writes its whole config back when it quits, so if it's running it offers to quit and restart it (on `--all` it only warns). Also removes links to Konsole profiles renamed in the repo and points `DefaultProfile` at an existing one |
+| `kwin-scripts` | the repo's own KWin scripts, one standalone folder each under `plasma/kwin-scripts/` with its own `install.sh` (`install`, `uninstall`, `status`, `doctor`): this key only runs it, so adding a script is adding a folder. From the checklist it opens a list to pick from; turning them on/off later is up to System Settings → KWin Scripts. The doctor runs each installed one's `install.sh doctor` |
 
 The doctor also applies KPackage's own rule (every file must resolve inside its package folder), so a theme Plasma would silently ignore shows up as an error, and warns when an installed theme, color scheme or wallpaper differs from the repo.
 For every wallpaper it also checks that `metadata.json`'s `Id` matches the
 folder, that `contents/images/` isn't empty, that each file's `WxH` name
 matches its real size (Plasma picks the file by its name) and that the light
 and dark variants come in the same sizes.
+
+### KWin scripts
+
+| Script | What it does |
+| ------ | ------------ |
+| [`n-groups`](plasma/kwin-scripts/n-groups/) | Snap groups: windows tiled together (Meta+T or quick tiling) or linked with `Meta+Space` ×2 share **one Alt+Tab entry** and raise, minimize and restore together. Brings the `n-switcher` Alt+Tab layout, which draws each group as a live mosaic and previews the whole group on screen. Code changes need a re-login: KWin caches scripts for the whole session |
 
 Outside KDE Plasma `dev-plasma` does nothing and exits 0, so `--all` is safe
 on servers. `bootstrap --all` skips it (and `dev-boot`): themes are opt-in. A run always ends with the doctor.

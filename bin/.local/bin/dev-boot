@@ -10,9 +10,16 @@
 # step is conservative:
 #   - grub     -> assembles the theme (nord + the chosen icon set) in a temp
 #                 dir, copies it to /boot/grub/themes/nord and writes ONLY
-#                 /etc/default/grub.d/dev-boot.cfg (GRUB_THEME + GRUB_GFXMODE,
-#                 plus "quiet splash" appended to the kernel command line
-#                 when Plymouth is installed).
+#                 /etc/default/grub.d/dev-boot.cfg (GRUB_THEME + GRUB_GFXMODE
+#                 + GRUB_BACKGROUND, plus "quiet splash" appended to the
+#                 kernel command line when Plymouth is installed).
+#                 GRUB_THEME only styles the menu: once an entry is picked,
+#                 GRUB prints "Loading Linux..." on its plain terminal, whose
+#                 image is GRUB_BACKGROUND. Unset, Debian's 05_debian_theme
+#                 falls back to desktop-base's wallpaper (ceratopsian...), so
+#                 the theme ships boot-background.jpg (the menu's background
+#                 without the panel, boot/grub/backgrounds/<theme>.jpg) and
+#                 the drop-in points GRUB_BACKGROUND at it.
 #                 /etc/default/grub is never touched: it holds per-machine
 #                 settings (e.g. hid_apple.fnmode=2 on the kernel command
 #                 line). grub-mkconfig reads grub.d/*.cfg AFTER
@@ -102,6 +109,10 @@ GRUB_THEME_NAME="nord"
 GRUB_THEMES_DIR="/boot/grub/themes"
 GRUB_GFXMODE_WANT="1920x1080,auto" # other resolutions fall back to "auto"
 GRUB_DROPIN="/etc/default/grub.d/dev-boot.cfg"
+# Image for the moment between the menu and Plymouth (see the header). Kept
+# outside the vendored theme folder (that one stays byte-identical to its
+# upstream build) and copied into it under this name by grub_stage.
+GRUB_BOOT_BG="boot-background.jpg"
 # white is the set shipped in boot/grub/themes/nord/icons; the others live in
 # boot/grub/icons/<set> and are laid on top when assembling the theme.
 GRUB_ICON_VARIANTS=(white color whitesur)
@@ -256,15 +267,15 @@ restore_root_file() {
 
 # Effective GRUB config values, read the same way grub-mkconfig does:
 # /etc/default/grub and then /etc/default/grub.d/*.cfg (last one wins), in a
-# clean bash so nothing leaks in from this script. Prints 3 lines: theme,
-# gfxmode and the kernel command line.
+# clean bash so nothing leaks in from this script. Prints 4 lines: theme,
+# gfxmode, the kernel command line and the background.
 grub_effective() {
   # shellcheck disable=SC2016 # expanded by the clean bash, not here
   env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin bash -c '
     [ -f /etc/default/grub ] && . /etc/default/grub
     for f in /etc/default/grub.d/*.cfg; do [ -e "$f" ] && . "$f"; done
-    printf "%s\n%s\n%s\n" "${GRUB_THEME:-}" "${GRUB_GFXMODE:-}" \
-      "${GRUB_CMDLINE_LINUX_DEFAULT:-} ${GRUB_CMDLINE_LINUX:-}"
+    printf "%s\n%s\n%s\n%s\n" "${GRUB_THEME:-}" "${GRUB_GFXMODE:-}" \
+      "${GRUB_CMDLINE_LINUX_DEFAULT:-} ${GRUB_CMDLINE_LINUX:-}" "${GRUB_BACKGROUND:-}"
   ' 2>/dev/null
 }
 
@@ -289,23 +300,30 @@ grub_resolve_icons() {
   [[ -n "$GRUB_ICONS" ]] || GRUB_ICONS="$(grub_installed_icons)"
 }
 
-# Assembles the theme to install in $WORK_DIR: the repo's nord and, if the set
-# isn't white, its icons/ folder replaced by boot/grub/icons/<set> + the mark.
-# Leaves the path in GRUB_STAGE, so everything else (install_tree, doctor)
-# compares against what should really be installed.
+# Assembles the theme to install in $WORK_DIR: the repo's nord, plus the boot
+# background (boot/grub/backgrounds/<theme>.jpg as $GRUB_BOOT_BG) and, if the
+# set isn't white, its icons/ folder replaced by boot/grub/icons/<set> + the
+# mark. Leaves the path in GRUB_STAGE, so everything else (install_tree,
+# doctor) compares against what should really be installed.
 GRUB_STAGE=""
 grub_stage() {
   local v="$1" src="$SRC_DIR/grub/themes/$GRUB_THEME_NAME"
+  local bg="$SRC_DIR/grub/backgrounds/$GRUB_THEME_NAME.jpg"
   local root="$WORK_DIR/grub-stage" stage="$WORK_DIR/grub-stage/$GRUB_THEME_NAME"
   [[ -f "$src/theme.txt" ]] || {
     err "Can't find $src/theme.txt (set DEV_BOOT_SRC=<repo>/boot)"
+    return 1
+  }
+  [[ -f "$bg" ]] || {
+    err "Can't find $bg (set DEV_BOOT_SRC=<repo>/boot)"
     return 1
   }
   [[ " ${GRUB_ICON_VARIANTS[*]} " == *" $v "* ]] || {
     err "Unknown GRUB icon set: $v (options: ${GRUB_ICON_VARIANTS[*]})"
     return 1
   }
-  if ! { rm -rf -- "$root" && mkdir -p -- "$root" && cp -r -- "$src" "$stage"; }; then
+  if ! { rm -rf -- "$root" && mkdir -p -- "$root" && cp -r -- "$src" "$stage" \
+    && cp -- "$bg" "$stage/$GRUB_BOOT_BG"; }; then
     err "Couldn't assemble the theme in $root"
     return 1
   fi
@@ -525,6 +543,7 @@ install_grub() {
   fi
   grub_resolve_icons
   local theme_txt="$GRUB_THEMES_DIR/$GRUB_THEME_NAME/theme.txt"
+  local boot_bg="$GRUB_THEMES_DIR/$GRUB_THEME_NAME/$GRUB_BOOT_BG"
   info "Theme $GRUB_THEME_NAME with $GRUB_ICONS icons"
   grub_stage "$GRUB_ICONS" || return 1
 
@@ -544,6 +563,9 @@ install_grub() {
 # Theme only; per-machine settings stay in /etc/default/grub.
 GRUB_THEME="$theme_txt"
 GRUB_GFXMODE="$GRUB_GFXMODE_WANT"
+# Behind "Loading Linux..." after picking an entry (the theme only styles the
+# menu); without it Debian falls back to desktop-base's wallpaper.
+GRUB_BACKGROUND="$boot_bg"
 EOF
   # Only with Plymouth: without it, "splash" does nothing. Appended, never
   # replacing what /etc/default/grub already has.
@@ -709,7 +731,7 @@ doctor_grub() {
     skip "GRUB: not installed here"
     return
   fi
-  local dir="$GRUB_THEMES_DIR/$GRUB_THEME_NAME" eff theme gfx cmdline icons
+  local dir="$GRUB_THEMES_DIR/$GRUB_THEME_NAME" eff theme gfx cmdline bg icons
   icons="$(grub_installed_icons)"
   if [[ ! -f "$dir/theme.txt" ]]; then
     doc_fail "GRUB: theme $GRUB_THEME_NAME not installed (dev-boot --only=grub)"
@@ -723,6 +745,7 @@ doctor_grub() {
   theme="$(sed -n 1p <<<"$eff")"
   gfx="$(sed -n 2p <<<"$eff")"
   cmdline="$(sed -n 3p <<<"$eff")"
+  bg="$(sed -n 4p <<<"$eff")"
   if [[ "$theme" == "$dir/theme.txt" ]]; then
     doc_ok "      effective GRUB_THEME = $theme"
   else
@@ -732,6 +755,11 @@ doctor_grub() {
     doc_ok "      effective GRUB_GFXMODE = $gfx"
   else
     doc_warn "      effective GRUB_GFXMODE = ${gfx:-<empty>} (expected $GRUB_GFXMODE_WANT)"
+  fi
+  if [[ "$bg" == "$dir/$GRUB_BOOT_BG" && -f "$bg" ]]; then
+    doc_ok "      effective GRUB_BACKGROUND = $bg"
+  else
+    doc_warn "      effective GRUB_BACKGROUND = ${bg:-<empty>} (expected $dir/$GRUB_BOOT_BG; dev-boot --only=grub)"
   fi
   if [[ -f "$GRUB_DROPIN" ]]; then
     doc_ok "      drop-in $GRUB_DROPIN"
@@ -749,6 +777,11 @@ doctor_grub() {
       doc_ok "      grub.cfg loads the theme"
     else
       doc_warn "      grub.cfg doesn't load the theme yet (dev-boot --only=grub)"
+    fi
+    if grep -q "background_image .*/$GRUB_BOOT_BG\"" /boot/grub/grub.cfg; then
+      doc_ok "      grub.cfg uses $GRUB_BOOT_BG behind the boot messages"
+    else
+      doc_warn "      grub.cfg doesn't use $GRUB_BOOT_BG yet (dev-boot --only=grub)"
     fi
   else
     skip "      grub.cfg is only readable by root (not checked)"

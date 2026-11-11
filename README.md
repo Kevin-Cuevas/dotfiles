@@ -418,7 +418,7 @@ and dark variants come in the same sizes.
 
 | Script | What it does |
 | ------ | ------------ |
-| [`n-groups`](plasma/kwin-scripts/n-groups/) | Snap groups: windows tiled together (Meta+T or quick tiling) or linked with `Meta+Space` ×2 share **one Alt+Tab entry** and raise, minimize and restore together. Brings the `n-switcher` Alt+Tab layout, which draws each group as a live mosaic and previews the whole group on screen. Code changes need a re-login: KWin caches scripts for the whole session |
+| [`n-groups`](plasma/kwin-scripts/n-groups/) | Window groups made by hand: `Meta+Space` opens a pick mode (click the windows, Enter to link) and the group then shares **one Alt+Tab entry** and raises, minimizes and restores together; `Meta+Shift+Space` unlinks. Brings the `n-switcher` Alt+Tab layout, which draws each group as a live mosaic and previews the whole group on screen. Code changes need a re-login: KWin caches scripts for the whole session |
 
 Outside KDE Plasma `dev-plasma` does nothing and exits 0, so `--all` is safe
 on servers. `bootstrap --all` skips it (and `dev-boot`): themes are opt-in. A run always ends with the doctor.

@@ -114,7 +114,12 @@ name). It needs two different non-stow mechanisms instead:
 
 - MOTD (`system/motd/`) is installed with a root `cp` into
   `/etc/update-motd.d` via `dev-motd` (bootstrap menu option 6) — it can't be
-  a user symlink since that directory is root-owned.
+  a user symlink since that directory is root-owned. `dev-motd` also creates
+  `~/.hushlogin`, and `zsh/.zshrc` prints the MOTD instead of PAM: once per
+  interactive SSH login, the same over OpenSSH and Tailscale SSH, and never in
+  tmux panes, nested shells or local terminals. (`pam_motd` only prints on the
+  first session of each connection, so with `ControlMaster` a `scp` or `git`
+  that opened the connection swallowed it, and Tailscale SSH has no PAM.)
 - Background jobs (`system/services/`, `system/timers/`) are installed as
   systemd `--user` units by `dev-services` (bootstrap menu option 15) — see
   [Background services](#background-services-systemd---user).

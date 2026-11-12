@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 
-# ── Colores Nord ──
-C_BANNER="\e[38;2;136;192;208m"
-C_SEP="\e[38;2;94;129;172m"
-C_ICON="\e[38;2;129;161;193m"
-C_VAL="\e[38;2;216;222;233m"
-C_DATE="\e[38;2;143;188;187m"
+# ── Nord colors, from the terminal's own palette (slots 0-15), not fixed RGB ──
+# The terminal remaps them when it switches between the dark and the light theme,
+# also over SSH, with nothing to ask or detect (tmux does the same). Fixed
+# #D8DEE9 values were unreadable on the light background. Only these slots read
+# well on both: in the light kitty/Konsole themes the pastel blues (color4
+# #81A1C1, color6 #88C0D0) stay pastel on purpose (they are badge backgrounds),
+# while color12 (#5E81AC) holds on #2E3440 and on #ECEFF4.
+C_BANNER="\e[38;5;12m" # nord10
+C_SEP="\e[38;5;8m"     # grey: nord3 on dark, darker on light
+C_ICON="\e[38;5;12m"
+C_VAL="\e[39m" # the terminal's text color: #D8DEE9 dark, #33374C light
+C_DATE="\e[38;5;12m"
 RESET="\e[0m"
 
 PAD="  "
@@ -28,6 +34,140 @@ else
 fi
 
 p() { echo -e "${PAD}$*${RESET}"; }
+
+# Splash (opt-in: MOTD_ANIMATION=splash in /etc/default/nivek-motd, which
+# dev-motd writes after asking; off by default). On a real terminal, i.e. the
+# SSH login where zsh/.zshrc prints the MOTD (pam_motd writes it to a file and
+# never gets here), the banner sits centered on the alternate screen while a
+# Nord aurora drifts over its letters: waves of the terminal's palette blues
+# (color12 base, color4 / color6 / color14 crests; the "░" fill faint), so it
+# follows the dark/light theme on its own. The first key makes it settle: the
+# waves fade into plain color12, which is how the static MOTD below looks, then
+# the alternate screen closes and the normal screen is back as it was.
+# Any key (Ctrl+C too) only dismisses it: nothing typed reaches the prompt.
+# Returns 1 (no splash) when it can't run or the banner doesn't fit.
+splash() {
+  # Characters, not bytes: the SSH client's locale may not exist here.
+  local LC_ALL=C.UTF-8
+  local -a art=() ch=() rowoff=() rowlen=() rowx=()
+  local -a sint=(50 55 60 65 69 74 78 82 85 89 92 94 96 98 99 100 100 100 99 98
+    96 94 92 89 85 82 78 74 69 65 60 55 50 45 40 35 31 26 22 18 15 11 8 6 4 2 1 0
+    0 0 1 2 4 6 8 11 15 18 22 26 31 35 40 45)
+  local line x r t=0 rows=0 cols=0 top=1 maxw=0 nrows=0 out key code prev
+  local inten settle=-1 done=0 resized=1 cc=0 tty winch hint="press any key" tick=0.08
+  [[ -t 0 && -t 1 && ${TERM:-dumb} != dumb ]] || return 1
+  while IFS= read -r line; do [[ -n $line ]] && art+=("$line"); done <<<"$ASCII"
+  nrows=${#art[@]}
+  ((nrows)) || return 1
+  # Every character in an array once (slicing UTF-8 strings every frame is slow).
+  for line in "${art[@]}"; do
+    ((${#line} > maxw)) && maxw=${#line}
+    rowoff+=(${#ch[@]}) rowlen+=(${#line})
+    for ((x = 0; x < ${#line}; x++)); do ch+=("${line:x:1}"); done
+  done
+  read -r rows cols < <(stty size 2>/dev/null) || return 1
+  ((maxw + 4 <= cols && nrows + 4 <= rows)) || return 1
+
+  layout() {
+    read -r rows cols < <(stty size 2>/dev/null) || return 1
+    ((maxw + 4 <= cols && nrows + 4 <= rows)) || return 1
+    top=$(((rows - nrows - 2) / 2 + 1))
+    rowx=()
+    for ((r = 0; r < nrows; r++)); do rowx+=($(((cols - maxw) / 2 + 1))); done
+  }
+
+  frame() {
+    local o n c
+    out=$'\e[?2026h'
+    if ((resized)); then
+      layout || {
+        done=1
+        return
+      }
+      out+=$'\e[2J'
+      resized=0
+    fi
+    for ((r = 0; r < nrows; r++)); do
+      o=${rowoff[r]} n=${rowlen[r]} prev=""
+      out+=$'\e['"$((top + r));${rowx[r]}H"
+      for ((x = 0; x < n; x++)); do
+        c=${ch[o + x]}
+        if [[ $c == ' ' ]]; then
+          out+=' '
+          continue
+        elif [[ $c == '░' ]]; then
+          code='2;38;5;12'
+          ((settle >= 3)) && code='38;5;12'
+        else
+          # Two sine waves drifting in opposite directions, shifted per row:
+          # where they add up, the blue brightens.
+          inten=$(((sint[(x * 3 + t * 2 + r * 7) & 63] + sint[(x * 5 - t * 3) & 63]) / 2))
+          # Settling: 3/4, 2/4, 1/4, then plain color12 (the static look).
+          ((settle >= 0)) && inten=$((inten * (3 - (settle > 3 ? 3 : settle)) / 4))
+          if ((inten < 45)); then
+            code='38;5;12'
+          elif ((inten < 65)); then
+            code='38;5;4'
+          elif ((inten < 82)); then
+            code='38;5;6'
+          else code='1;38;5;14'; fi
+        fi
+        [[ $code != "$prev" ]] && out+=$'\e[0;'"${code}m" && prev=$code
+        out+=$c
+      done
+      out+=$'\e[0m'
+    done
+    out+=$'\e['"$((top + nrows + 1));1H"$'\e[2K'
+    if ((settle < 0)); then
+      out+=$'\e['"$((top + nrows + 1));$(((cols - ${#hint}) / 2 + 1))H"$'\e[2;39m'"$hint"$'\e[0m'
+    fi
+    printf '%s' "$out"$'\e[?2026l'
+  }
+
+  # Keys one character at a time with a 0.08 s timeout (the animation tick).
+  # `read -N` turns ISIG back on, so Ctrl+C is a signal: the trap just flags it.
+  tty=$(stty -g 2>/dev/null) || return 1
+  winch=$(trap -p WINCH)
+  trap 'resized=1' WINCH
+  trap 'cc=1' INT
+  stty -echo 2>/dev/null
+  printf '\e[?1049h\e[?25l'
+  while ((! done)); do
+    frame
+    ((done)) && break
+    key=""
+    # Faster frames while settling: the whole transition takes ~0.2 s.
+    IFS= read -r -s -N 1 -t "$tick" key
+    if ((cc)) || [[ -n $key ]]; then
+      ((settle < 0)) && settle=0 tick=0.04
+      cc=0
+      # An arrow (ESC [ A...) arrives as several characters: swallow the rest.
+      [[ $key == $'\e' ]] && while IFS= read -r -s -N 1 -t 0.01 key; do :; done
+    fi
+    if ((settle >= 0)); then ((settle++ >= 3)) && done=1; fi
+    t=$((t + 1))
+  done
+  printf '\e[0m\e[?25h\e[?1049l'
+  stty "$tty" 2>/dev/null
+  trap - INT
+  if [[ -n $winch ]]; then eval "$winch"; else trap - WINCH; fi
+  unset -f layout frame
+  return 0
+}
+
+# MOTD_ANIMATION from /etc/default/nivek-motd (NIVEK_MOTD_CONF overrides the
+# path, for tests). Read as KEY=value lines, never sourced. NIVEK_MOTD_ANIM=0
+# turns the splash off for one run.
+MOTD_ANIMATION=off
+CONF=${NIVEK_MOTD_CONF:-/etc/default/nivek-motd}
+if [[ -r $CONF ]]; then
+  while IFS='=' read -r key val; do
+    [[ $key == MOTD_ANIMATION ]] && MOTD_ANIMATION=${val//[\"\' ]/}
+  done <"$CONF"
+fi
+if [[ $MOTD_ANIMATION == splash && ${NIVEK_MOTD_ANIM:-1} != 0 ]]; then
+  splash
+fi
 
 echo
 echo "$ASCII" | sed "s/^/${PAD}/" | while IFS= read -r line; do

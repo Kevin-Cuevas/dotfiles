@@ -284,13 +284,23 @@ ssh_hist_users() { # $1=tailnet  $2=node
 
 # Record the use of a username+port for (tailnet, node) with a timestamp.
 # Format (5 fields): tailnet \t node \t username \t port \t epoch
+# One line per (tailnet, node, username, port): using it again only moves it to
+# the end with a new time, so re-adding the same host (e.g. every
+# `dev-ssh --add-host` from a script) doesn't grow the file. A legacy 4-field
+# line (no port, meaning 22) for the same combination is replaced too.
 ssh_hist_record() { # $1=tailnet  $2=node  $3=username  $4=port
   [[ -z "$3" ]] && return 0
-  local f
+  local f tmp port="${4:-22}"
   f="$(ssh_hist_file)"
   mkdir -p "$(dirname "$f")"
-  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-22}" "$(date +%s)" >>"$f"
-  chmod 600 "$f" 2>/dev/null || true
+  tmp="$(mktemp)"
+  if [[ -f "$f" ]]; then
+    awk -F'\t' -v t="$1" -v n="$2" -v u="$3" -v p="$port" \
+      '!($1 == t && $2 == n && $3 == u && (NF >= 5 ? $4 == p : p == "22"))' "$f" >"$tmp"
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$port" "$(date +%s)" >>"$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$f"
 }
 
 # Most recent port for (tailnet, node); "22" if no record exists.

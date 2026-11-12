@@ -1,100 +1,216 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
-# ------------------------------------------------------------------------------
+# ==============================================================================
+# dev-motd — install the dotfiles' MOTD (system/motd/) on this host
+# ==============================================================================
+# Standalone, like the other dev-* CLIs: system/motd/ is found from this
+# script's own real path, not from $DOTFILES_DIR.
+#
+# What it sets up:
+#   /etc/update-motd.d/<NAME>     the MOTD script (root, 0755). Copied, not linked:
+#                                 the directory is root-owned and pam_motd runs it
+#                                 as root.
+#   /etc/default/nivek-motd       its options (Debian's place for them). For now
+#                                 MOTD_ANIMATION=splash|off: the animated splash
+#                                 (hostname banner with a Nord-blue aurora until a
+#                                 key is pressed) or the usual static MOTD. Off
+#                                 unless you say yes.
+#   ~/.hushlogin                  silences pam_motd for you. zsh/.zshrc prints the
+#                                 MOTD instead, once per interactive SSH login:
+#                                 pam_motd only prints on the first session of each
+#                                 connection (ControlMaster reuses them) and
+#                                 Tailscale SSH has no PAM at all.
+#
+# Usage:
+#   dev-motd                      install; asks whether to turn the animation on
+#   dev-motd --animation=on|off   install with that setting, no question
+#   dev-motd --status             what is installed, drift vs the repo, setting
+#   dev-motd --remove             undo all three
+#   dev-motd -h | --help          this help
+#   (`dev-motd install|remove [NAME]` still works; NAME defaults to 99-nivek-banner)
+#
+# The question is a dialog yes/no that defaults to No. It is skipped, keeping the
+# current setting (off on a first install), when there is no terminal or when
+# bootstrap runs with --all (NONINTERACTIVE=true).
+# ==============================================================================
 
-# Config
-
-# ------------------------------------------------------------------------------
-
-DOTFILES_DIR="${HOME}/dotfiles"
-MOTD_DIR="${DOTFILES_DIR}/system/motd"
+MOTD_SRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../.." && pwd)/system/motd"
 TARGET_DIR="/etc/update-motd.d"
-
-DEFAULT_MOTD="99-nivek-banner"
+CONF="/etc/default/nivek-motd"
+HUSH="${HOME}/.hushlogin"
+NAME="99-nivek-banner"
 
 # ------------------------------------------------------------------------------
+# Look & feel (shared with the other dev-* scripts)
+# ------------------------------------------------------------------------------
+RED='\e[38;2;191;97;106m'
+GRN='\e[38;2;163;190;140m'
+YLW='\e[38;2;235;203;139m'
+BLU='\e[38;2;136;192;208m'
+CYN='\e[38;2;143;188;187m'
+RST='\e[0m'
 
+info() { printf "${BLU}[INFO]${RST}  %s\n" "$*"; }
+ok() { printf "${GRN}[OK]${RST}    %s\n" "$*"; }
+warn() { printf "${YLW}[WARN]${RST}  %s\n" "$*"; }
+err() { printf "${RED}[ERR]${RST}   %s\n" "$*" >&2; }
+skip() { printf "${CYN}[SKIP]${RST}  %s\n" "$*"; }
+die() {
+  err "$*"
+  exit 1
+}
+
+usage() { sed -n '/^# Usage:/,/^# =====/{/^# =====/d;s/^# \{0,1\}//;p}' "$(readlink -f "${BASH_SOURCE[0]}")"; }
+
+# ------------------------------------------------------------------------------
 # Helpers
+# ------------------------------------------------------------------------------
+# Current MOTD_ANIMATION from the config file; empty when not installed yet.
+current_animation() {
+  local key val cur=""
+  [[ -r $CONF ]] || return 0
+  while IFS='=' read -r key val; do
+    [[ $key == MOTD_ANIMATION ]] && cur=${val//[\"\' ]/}
+  done <"$CONF"
+  printf '%s' "$cur"
+}
+
+# Ask on a terminal, default No (or the current setting if there is one).
+ask_animation() {
+  local cur=$1 default_no=--defaultno
+  [[ $cur == splash ]] && default_no=""
+  local text="Turn on the animated MOTD splash?\n\nOn an SSH login the hostname banner shows centered, with a Nord-blue aurora drifting over it, until you press any key; then the usual MOTD.\n\nNo = the usual static MOTD."
+  if command -v dialog &>/dev/null; then
+    # Called as $(ask_animation): stdout is the capture, so dialog draws on the tty.
+    # shellcheck disable=SC2086 # $default_no is empty or one flag
+    if dialog --clear --colors --title " MOTD animation " $default_no --yesno "$text" 13 64 >/dev/tty; then
+      clear >/dev/tty
+      echo splash
+    else
+      clear >/dev/tty
+      echo off
+    fi
+    return
+  fi
+  local r="" hint="[y/N]"
+  [[ $cur == splash ]] && hint="[Y/n]"
+  printf '%b %s ' "${text//\\n/ }" "$hint" >&2
+  read -r r </dev/tty || r=""
+  case $r in
+    [yY]*) echo splash ;;
+    [nN]*) echo off ;;
+    *) if [[ $cur == splash ]]; then echo splash; else echo off; fi ;;
+  esac
+}
+
+write_conf() { # $1 = splash | off
+  local tmp
+  tmp=$(mktemp) || return 1
+  cat >"$tmp" <<EOF
+# Options for /etc/update-motd.d/$NAME. Written by dev-motd (dotfiles);
+# change them with: dev-motd --animation=on|off
+#
+# MOTD_ANIMATION=splash  on an SSH login, the hostname banner with a Nord-blue
+#                        aurora until a key is pressed, then the usual MOTD
+# MOTD_ANIMATION=off     the usual static MOTD
+MOTD_ANIMATION=$1
+EOF
+  sudo install -m 0644 -o root -g root "$tmp" "$CONF"
+  local rc=$?
+  rm -f "$tmp"
+  return $rc
+}
 
 # ------------------------------------------------------------------------------
-
-info() { echo "[INFO] $*"; }
-ok() { echo "[OK]   $*"; }
-err() { echo "[ERR]  $*" >&2; }
-
+# Actions
 # ------------------------------------------------------------------------------
+do_install() { # $1 = splash | off | "" (ask)
+  local want=$1 src="$MOTD_SRC_DIR/$NAME" dst="$TARGET_DIR/$NAME" cur
+  [[ -f $src ]] || die "Source not found: $src"
+  command -v toilet &>/dev/null || warn "toilet is not installed: the banner falls back to plain text"
 
-# Resolve MOTD name
-
-# ------------------------------------------------------------------------------
-
-ACTION="${1:-install}"
-NAME="${2:-$DEFAULT_MOTD}"
-
-SRC="${MOTD_DIR}/${NAME}"
-DST="${TARGET_DIR}/${NAME}"
-
-# ------------------------------------------------------------------------------
-
-# Remove
-
-# ------------------------------------------------------------------------------
-
-if [[ "$ACTION" == "remove" ]]; then
-  info "Removing MOTD: ${NAME}"
-
-  if [[ -e "$DST" ]]; then
-    sudo rm -f "$DST"
-    ok "Removed ${DST}"
-  else
-    err "MOTD not found: ${DST}"
+  cur=$(current_animation)
+  if [[ -z $want ]]; then
+    if [[ ${NONINTERACTIVE:-false} == true || ! -t 0 || ! -t 1 ]]; then
+      want=${cur:-off}
+      skip "Animation question (non-interactive): keeping '$want'"
+    else
+      want=$(ask_animation "$cur")
+    fi
   fi
 
+  info "Installing $NAME -> $dst"
+  # A fresh machine may not have the directory yet.
+  if ! sudo mkdir -p "$TARGET_DIR" || ! sudo install -m 0755 -o root -g root "$src" "$dst"; then
+    die "Couldn't install $dst"
+  fi
+  ok "MOTD installed"
+
+  write_conf "$want" || die "Couldn't write $CONF"
+  ok "Animation: $want ($CONF)"
+
+  touch "$HUSH" && ok "Created ~/.hushlogin (zsh prints the MOTD, PAM stays quiet)"
+  info "Shown on your next SSH login (zsh, outside tmux)"
+}
+
+do_remove() {
+  local dst="$TARGET_DIR/$NAME"
+  if [[ -e $dst ]]; then
+    sudo rm -f "$dst" && ok "Removed $dst"
+  else
+    skip "Not installed: $dst"
+  fi
+  if [[ -e $CONF ]]; then
+    sudo rm -f "$CONF" && ok "Removed $CONF"
+  fi
   # With no MOTD left, let pam_motd speak again (Debian's uname + /etc/motd).
-  rm -f "${HOME}/.hushlogin"
+  rm -f "$HUSH" && ok "Removed ~/.hushlogin"
+}
 
-  exit 0
-fi
-
-# ------------------------------------------------------------------------------
-
-# Install
-
-# ------------------------------------------------------------------------------
-
-if [[ ! -f "$SRC" ]]; then
-  err "Source not found: ${SRC}"
-  exit 1
-fi
-
-info "Installing MOTD: ${NAME}"
-info "Source: ${SRC}"
-info "Target: ${DST}"
-
-sudo rm -f "$DST"
-sudo cp "$SRC" "$DST"
-sudo chmod 755 "$DST"
-sudo chown root:root "$DST"
-
-ok "Installed successfully"
-
-# pam_motd only prints on the first session of each SSH connection (ControlMaster
-# reuses them) and Tailscale SSH has no PAM at all, so the shell prints the MOTD
-# instead (zsh/.zshrc: once per interactive SSH login, never in tmux panes).
-# ~/.hushlogin silences PAM's copy (and sshd's "Last login") so it isn't shown
-# twice. Per user, no root; `dev-motd remove` deletes it.
-touch "${HOME}/.hushlogin"
-ok "Created ~/.hushlogin (the shell prints the MOTD, PAM stays quiet)"
+do_status() {
+  local src="$MOTD_SRC_DIR/$NAME" dst="$TARGET_DIR/$NAME" cur
+  if [[ ! -e $dst ]]; then
+    warn "MOTD: not installed ($dst)"
+  elif cmp -s "$src" "$dst"; then
+    ok "MOTD: installed, same as the repo"
+  else
+    warn "MOTD: installed, differs from the repo (run dev-motd to update)"
+  fi
+  cur=$(current_animation)
+  info "Animation: ${cur:-off (no $CONF)}"
+  if [[ -e $HUSH ]]; then
+    ok "$HUSH: present"
+  else
+    warn "$HUSH: missing (PAM prints the MOTD too)"
+  fi
+  command -v toilet &>/dev/null || warn "toilet: missing (plain-text banner)"
+}
 
 # ------------------------------------------------------------------------------
-
-# Optional: disable other MOTDs (comment if you don't want this)
-
+# Main
 # ------------------------------------------------------------------------------
+ACTION=install WANT=""
+while (($#)); do
+  case $1 in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --status) ACTION=status ;;
+    --remove | remove) ACTION=remove ;;
+    install) ACTION=install ;;
+    --animation=on | --animation=splash) WANT=splash ;;
+    --animation=off) WANT=off ;;
+    --animation=*) die "Unknown animation '${1#*=}' (on or off)" ;;
+    -*) die "Unknown option: $1 (see --help)" ;;
+    *) NAME=$1 ;;
+  esac
+  shift
+done
 
-# info "Disabling other MOTD scripts..."
-
-# sudo find "$TARGET_DIR" -type f ! -name "$NAME" -exec chmod -x {} ;
-
-# ok "Only ${NAME} is active"
+case $ACTION in
+  install) do_install "$WANT" ;;
+  remove) do_remove ;;
+  status) do_status ;;
+esac

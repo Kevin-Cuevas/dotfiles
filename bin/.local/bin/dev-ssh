@@ -11,14 +11,22 @@ set -uo pipefail
 #   dev-ssh                  open the interactive menu
 #   dev-ssh --setup          create ~/.ssh/cm + ensure config.local (no prompts)
 #   dev-ssh --target=DIR     operate against DIR instead of $HOME (bootstrap test)
+#   dev-ssh --add-host=ALIAS [--user=U] [--port=P] [--group=G]
+#                            add/update one host, no prompts (for other scripts).
+#                            Group defaults to the active tailnet, else 'manual'.
 # ==============================================================================
 
 TARGET="$HOME"
 MODE="menu"
+ADD_HOST="" ADD_USER="" ADD_PORT="" ADD_GROUP=""
 for arg in "$@"; do
   case "$arg" in
     --setup) MODE="setup" ;;
     --target=*) TARGET="${arg#--target=}" ;;
+    --add-host=*) MODE="add" ADD_HOST="${arg#--add-host=}" ;;
+    --user=*) ADD_USER="${arg#--user=}" ;;
+    --port=*) ADD_PORT="${arg#--port=}" ;;
+    --group=*) ADD_GROUP="${arg#--group=}" ;;
     *) ;;
   esac
 done
@@ -655,10 +663,40 @@ ssh_menu() {
 # ------------------------------------------------------------------------------
 # Main
 # ------------------------------------------------------------------------------
+# Non-interactive add/update of a single host, the same entry the Tailscale flow
+# writes (HostName = alias, resolved by MagicDNS). Upsert only, never "replace":
+# the rest of the group must survive a scripted add.
+ssh_add_host_cli() {
+  local alias="$ADD_HOST" user="${ADD_USER:-$USER}" port="${ADD_PORT:-22}" group="$ADD_GROUP"
+  [[ "$alias" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid alias: '$alias'"
+  [[ "$user" =~ ^[A-Za-z0-9._][A-Za-z0-9._-]*$ ]] || die "invalid user: '$user'"
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || ((port < 1 || port > 65535)); then
+    die "invalid port: '$port'"
+  fi
+  if [[ -z "$group" ]]; then
+    local active=""
+    if command -v tailscale &>/dev/null; then
+      active="$(tailscale switch --list 2>/dev/null | awk 'NR>1 && index($0,"*"){print $2; exit}')"
+    fi
+    group="${active:+tailnet:$active}"
+    group="${group:-manual}"
+  fi
+  [[ "$group" == manual || "$group" == tailnet:?* ]] || die "invalid group: '$group' (manual or tailnet:<name>)"
+
+  local block="Host $alias"$'\n'"    HostName $alias"$'\n'"    User $user"$'\n'
+  [[ "$port" != "22" ]] && block+="    Port $port"$'\n'
+  printf '%s' "$block" | ssh_upsert_hosts "$group"
+  [[ "$group" == tailnet:* ]] && ssh_hist_record "${group#tailnet:}" "$alias" "$user" "$port"
+  ok "$alias ($user@$alias:$port) saved under group:$group"
+}
+
 main() {
   case "$MODE" in
     setup)
       setup_ssh
+      ;;
+    add)
+      ssh_add_host_cli
       ;;
     menu)
       command -v dialog &>/dev/null || die "dialog not found. Install it: sudo apt install dialog"

@@ -215,6 +215,11 @@ The whole SSH module lives in the standalone helper **`dev-ssh`** (stowed to
 from bootstrap menu option **10 → Configure SSH** (which just launches `dev-ssh`).
 `dev-ssh --setup` does the non-interactive part only (control dir + ensure
 `config.local`), which is what the `--all` bootstrap run uses.
+`dev-ssh --add-host=ALIAS [--user=U] [--port=P] [--group=G]` adds or updates a single
+host with no prompts, for other scripts to call: the same entry the Tailscale flow writes,
+under the active tailnet's group unless `--group` says otherwise (`manual` when there is
+no tailnet), and recorded in the username history. It only upserts that one alias; the
+rest of the group is left alone.
 
 - **Control dir + ensure config.local** — creates `~/.ssh/cm` (700) and, if missing,
   `config.local` with an empty managed block. This is what the non-interactive

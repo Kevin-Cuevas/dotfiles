@@ -127,11 +127,16 @@ name). It needs two different non-stow mechanisms instead:
   (`MOTD_ANIMATION=splash|off`): with it, an SSH login first shows the banner
   centered on the alternate screen with a Nord-blue aurora drifting over it,
   until any key (the key only dismisses it), then it settles (~0.2 s) into the
-  usual MOTD; without it, just the usual MOTD. `bootstrap --all` doesn't ask
-  (keeps the current setting, off on a first install). `dev-motd
-  --animation=on|off` changes it without asking, `--status` shows it and the
-  drift against the repo, `--remove` undoes everything, and `NIVEK_MOTD_ANIM=0`
-  skips the splash for one login.
+  usual MOTD; without it, just the usual MOTD. It also asks the name for the
+  banner (`MOTD_NAME`, prefilled with the host's mesh name when it differs from
+  the hostname), for hosts whose hostname can't be changed, like a cloud
+  default `ip-172-31-18-47`; the MOTD's Host line keeps the real hostname.
+  `toilet` (it draws the banner) is installed with apt if missing.
+  `bootstrap --all` doesn't ask (keeps the current settings: off and the
+  hostname on a first install). `dev-motd --animation=on|off --name=TEXT`
+  changes them without asking, `--status` shows them and the drift against the
+  repo, `--remove` undoes everything, and `NIVEK_MOTD_ANIM=0` skips the splash
+  for one login.
 - Background jobs (`system/services/`, `system/timers/`) are installed as
   systemd `--user` units by `dev-services` (bootstrap menu option 15) — see
   [Background services](#background-services-systemd---user).

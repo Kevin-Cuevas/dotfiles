@@ -51,6 +51,9 @@ if [[ "$ACTION" == "remove" ]]; then
     err "MOTD not found: ${DST}"
   fi
 
+  # With no MOTD left, let pam_motd speak again (Debian's uname + /etc/motd).
+  rm -f "${HOME}/.hushlogin"
+
   exit 0
 fi
 
@@ -75,6 +78,14 @@ sudo chmod 755 "$DST"
 sudo chown root:root "$DST"
 
 ok "Installed successfully"
+
+# pam_motd only prints on the first session of each SSH connection (ControlMaster
+# reuses them) and Tailscale SSH has no PAM at all, so the shell prints the MOTD
+# instead (zsh/.zshrc: once per interactive SSH login, never in tmux panes).
+# ~/.hushlogin silences PAM's copy (and sshd's "Last login") so it isn't shown
+# twice. Per user, no root; `dev-motd remove` deletes it.
+touch "${HOME}/.hushlogin"
+ok "Created ~/.hushlogin (the shell prints the MOTD, PAM stays quiet)"
 
 # ------------------------------------------------------------------------------
 

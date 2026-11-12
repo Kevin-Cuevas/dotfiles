@@ -15,13 +15,19 @@ export LC_TIME="en_US.UTF-8"
 # keep the normal fractional scale.
 unset QT_SCALE_FACTOR_ROUNDING_POLICY
 
-# MOTD Tailscale
-if [[ -d /etc/update-motd.d ]] && [[ -z "$MOTD_SHOWN" ]] && [[ -n "$SSH_CONNECTION" ]]; then
-  local _src_ip="${SSH_CONNECTION%% *}"
-  if [[ "$_src_ip" == 100.* ]]; then
-    export MOTD_SHOWN=1
-    run-parts /etc/update-motd.d 2>/dev/null
-  fi
+# MOTD: once per interactive SSH login, the same over OpenSSH and Tailscale SSH.
+# pam_motd only prints on the first session of each connection (ControlMaster
+# reuses connections, so a scp/git that opened it ate the MOTD) and exports
+# MOTD_SHOWN=pam, which also made this block skip it; Tailscale SSH has no PAM.
+# So the shell prints it and ~/.hushlogin (created by dev-motd) silences PAM.
+# Without ~/.hushlogin, PAM still prints it: then only when PAM didn't.
+# Login shells outside tmux only: no MOTD in new panes/windows, nested shells
+# or local terminals. NIVEK_MOTD_SHOWN is exported so children skip it too.
+if [[ -o login && -n "$SSH_CONNECTION" && -z "$TMUX" && -z "$NIVEK_MOTD_SHOWN" ]] \
+  && [[ -x /etc/update-motd.d/99-nivek-banner ]] \
+  && [[ -e ~/.hushlogin || -z "$MOTD_SHOWN" ]]; then
+  export NIVEK_MOTD_SHOWN=1
+  /etc/update-motd.d/99-nivek-banner
 fi
 
 # -- powerlevel10k instant prompt -------------------------------------------- #

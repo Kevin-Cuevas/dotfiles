@@ -26,11 +26,33 @@ cutv() {
   [ ${#v} -gt $MAX ] && echo "${v:0:$((MAX - 1))}…" || echo "$v"
 }
 
+# Options from /etc/default/nivek-motd, written by dev-motd (NIVEK_MOTD_CONF
+# overrides the path, for tests). Read as KEY=value lines, never sourced.
+#   MOTD_ANIMATION=splash|off   the animated splash (see splash() below)
+#   MOTD_NAME=<text>            name for the banner when the hostname isn't a
+#                               good one and can't be changed (e.g. a cloud
+#                               default like ip-172-31-18-47); empty = hostname.
+#                               The Host line below always shows the real one.
+# NIVEK_MOTD_ANIM=0 turns the splash off for one run.
+MOTD_ANIMATION=off
+MOTD_NAME=""
+CONF=${NIVEK_MOTD_CONF:-/etc/default/nivek-motd}
+if [[ -r $CONF ]]; then
+  while IFS='=' read -r key val; do
+    val=${val#[\"\']} val=${val%[\"\']}
+    case $key in
+      MOTD_ANIMATION) MOTD_ANIMATION=${val// /} ;;
+      MOTD_NAME) MOTD_NAME=$val ;;
+    esac
+  done <"$CONF"
+fi
+BANNER_NAME=${MOTD_NAME:-$HOST}
+
 if command -v toilet >/dev/null 2>&1; then
-  ASCII=$(toilet -f pagga "$HOST" 2>/dev/null)
-  [ -z "$ASCII" ] && ASCII="$HOST"
+  ASCII=$(toilet -f pagga "$BANNER_NAME" 2>/dev/null)
+  [ -z "$ASCII" ] && ASCII="$BANNER_NAME"
 else
-  ASCII="$HOST"
+  ASCII="$BANNER_NAME"
 fi
 
 p() { echo -e "${PAD}$*${RESET}"; }
@@ -155,16 +177,6 @@ splash() {
   return 0
 }
 
-# MOTD_ANIMATION from /etc/default/nivek-motd (NIVEK_MOTD_CONF overrides the
-# path, for tests). Read as KEY=value lines, never sourced. NIVEK_MOTD_ANIM=0
-# turns the splash off for one run.
-MOTD_ANIMATION=off
-CONF=${NIVEK_MOTD_CONF:-/etc/default/nivek-motd}
-if [[ -r $CONF ]]; then
-  while IFS='=' read -r key val; do
-    [[ $key == MOTD_ANIMATION ]] && MOTD_ANIMATION=${val//[\"\' ]/}
-  done <"$CONF"
-fi
 if [[ $MOTD_ANIMATION == splash && ${NIVEK_MOTD_ANIM:-1} != 0 ]]; then
   splash
 fi

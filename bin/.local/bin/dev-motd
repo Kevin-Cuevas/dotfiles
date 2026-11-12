@@ -11,11 +11,18 @@ set -uo pipefail
 #   /etc/update-motd.d/<NAME>     the MOTD script (root, 0755). Copied, not linked:
 #                                 the directory is root-owned and pam_motd runs it
 #                                 as root.
-#   /etc/default/nivek-motd       its options (Debian's place for them). For now
+#   /etc/default/nivek-motd       its options (Debian's place for them):
 #                                 MOTD_ANIMATION=splash|off: the animated splash
 #                                 (hostname banner with a Nord-blue aurora until a
 #                                 key is pressed) or the usual static MOTD. Off
 #                                 unless you say yes.
+#                                 MOTD_NAME=<text>: the name in the banner, for
+#                                 hosts whose hostname can't be changed (a cloud
+#                                 default like ip-172-31-18-47). Empty = hostname;
+#                                 the MOTD's Host line always shows the real one.
+#   toilet (apt)                  draws the banner (pagga font); installed if
+#                                 missing, since without it the banner is plain
+#                                 text.
 #   ~/.hushlogin                  silences pam_motd for you. zsh/.zshrc prints the
 #                                 MOTD instead, once per interactive SSH login:
 #                                 pam_motd only prints on the first session of each
@@ -25,14 +32,18 @@ set -uo pipefail
 # Usage:
 #   dev-motd                      install; asks whether to turn the animation on
 #   dev-motd --animation=on|off   install with that setting, no question
+#   dev-motd --name=TEXT          install with that banner name (--name= = hostname)
 #   dev-motd --status             what is installed, drift vs the repo, setting
 #   dev-motd --remove             undo all three
 #   dev-motd -h | --help          this help
 #   (`dev-motd install|remove [NAME]` still works; NAME defaults to 99-nivek-banner)
 #
-# The question is a dialog yes/no that defaults to No. It is skipped, keeping the
-# current setting (off on a first install), when there is no terminal or when
-# bootstrap runs with --all (NONINTERACTIVE=true).
+# Interactive installs ask two things with dialog: the animation (yes/no,
+# default No) and the banner name (prefilled with the current one, else the
+# host's mesh name when it differs from the hostname, else the hostname). Both
+# are skipped, keeping the current values (animation off and the hostname on a
+# first install), when there is no terminal or when bootstrap runs with --all
+# (NONINTERACTIVE=true).
 # ==============================================================================
 
 MOTD_SRC_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../.." && pwd)/system/motd"
@@ -66,14 +77,42 @@ usage() { sed -n '/^# Usage:/,/^# =====/{/^# =====/d;s/^# \{0,1\}//;p}' "$(readl
 # ------------------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------------------
-# Current MOTD_ANIMATION from the config file; empty when not installed yet.
-current_animation() {
-  local key val cur=""
+# Current options into CUR_ANIM / CUR_NAME; empty when not installed yet.
+CUR_ANIM="" CUR_NAME=""
+read_conf() {
+  local key val
+  CUR_ANIM="" CUR_NAME=""
   [[ -r $CONF ]] || return 0
   while IFS='=' read -r key val; do
-    [[ $key == MOTD_ANIMATION ]] && cur=${val//[\"\' ]/}
+    val=${val#[\"\']} val=${val%[\"\']}
+    case $key in
+      MOTD_ANIMATION) CUR_ANIM=${val// /} ;;
+      MOTD_NAME) CUR_NAME=$val ;;
+    esac
   done <"$CONF"
-  printf '%s' "$cur"
+}
+
+# This host's name on the tailnet/mesh (first label of Self.DNSName), if any.
+mesh_name() {
+  command -v tailscale &>/dev/null || return 0
+  tailscale status --json 2>/dev/null | tr -d '\n' \
+    | sed -n 's/.*"Self": *{[^{}]*"DNSName": *"\([^".]*\)[.\"].*/\1/p'
+}
+
+# Up to 40 characters: letters, digits, space, dot, dash, underscore.
+valid_name() { [[ $1 =~ ^[[:alnum:]\ ._-]{1,40}$ ]]; }
+
+# toilet draws the banner. Mandatory: install it if missing (apt), refreshing
+# the package lists once if the first try fails (stale lists on a cloud image).
+ensure_toilet() {
+  command -v toilet &>/dev/null && return 0
+  command -v apt-get &>/dev/null || die "toilet is required and there is no apt-get here: install it, then rerun"
+  info "Installing toilet (draws the banner)..."
+  if ! sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq toilet; then
+    sudo apt-get update -qq || die "apt-get update failed"
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq toilet || die "Couldn't install toilet"
+  fi
+  ok "toilet installed"
 }
 
 # Ask on a terminal, default No (or the current setting if there is one).
@@ -104,17 +143,40 @@ ask_animation() {
   esac
 }
 
-write_conf() { # $1 = splash | off
+# Ask for the banner name on a terminal; $1 = the prefilled value.
+ask_name() {
+  local def=$1 out text host
+  host=$(hostname)
+  text="Name shown in the MOTD banner.\n\nHostname: $host. Use another name when the hostname can't be changed (e.g. a cloud default). Empty = the hostname."
+  if command -v dialog &>/dev/null; then
+    # dialog's answer goes to fd 3 (captured); it draws on the tty.
+    if out=$(dialog --clear --title " MOTD name " --output-fd 3 --inputbox "$text" 12 64 "$def" 3>&1 >/dev/tty); then
+      clear >/dev/tty
+      printf '%s' "$out"
+    else
+      clear >/dev/tty
+      printf '%s' "$def"
+    fi
+    return
+  fi
+  printf '%b [%s] ' "${text//\\n/ }" "$def" >&2
+  read -r out </dev/tty || out=""
+  printf '%s' "${out:-$def}"
+}
+
+write_conf() { # $1 = splash | off, $2 = banner name ("" = hostname)
   local tmp
   tmp=$(mktemp) || return 1
   cat >"$tmp" <<EOF
 # Options for /etc/update-motd.d/$NAME. Written by dev-motd (dotfiles);
-# change them with: dev-motd --animation=on|off
+# change them with: dev-motd --animation=on|off --name=TEXT
 #
 # MOTD_ANIMATION=splash  on an SSH login, the hostname banner with a Nord-blue
 #                        aurora until a key is pressed, then the usual MOTD
 # MOTD_ANIMATION=off     the usual static MOTD
+# MOTD_NAME=<text>       name in the banner; empty = the hostname
 MOTD_ANIMATION=$1
+MOTD_NAME="$2"
 EOF
   sudo install -m 0644 -o root -g root "$tmp" "$CONF"
   local rc=$?
@@ -125,19 +187,36 @@ EOF
 # ------------------------------------------------------------------------------
 # Actions
 # ------------------------------------------------------------------------------
-do_install() { # $1 = splash | off | "" (ask)
-  local want=$1 src="$MOTD_SRC_DIR/$NAME" dst="$TARGET_DIR/$NAME" cur
+do_install() { # uses WANT / WANT_NAME (+ WANT_NAME_SET) from the flags
+  local want=$WANT name=$WANT_NAME src="$MOTD_SRC_DIR/$NAME" dst="$TARGET_DIR/$NAME"
+  local interactive=true mesh
   [[ -f $src ]] || die "Source not found: $src"
-  command -v toilet &>/dev/null || warn "toilet is not installed: the banner falls back to plain text"
+  [[ ${NONINTERACTIVE:-false} == true || ! -t 0 || ! -t 1 ]] && interactive=false
+  ensure_toilet
 
-  cur=$(current_animation)
+  read_conf
   if [[ -z $want ]]; then
-    if [[ ${NONINTERACTIVE:-false} == true || ! -t 0 || ! -t 1 ]]; then
-      want=${cur:-off}
-      skip "Animation question (non-interactive): keeping '$want'"
+    if [[ $interactive == true ]]; then
+      want=$(ask_animation "$CUR_ANIM")
     else
-      want=$(ask_animation "$cur")
+      want=${CUR_ANIM:-off}
+      skip "Animation question (non-interactive): keeping '$want'"
     fi
+  fi
+  if ((! WANT_NAME_SET)); then
+    if [[ $interactive == true ]]; then
+      mesh=$(mesh_name)
+      [[ $mesh == "$(hostname)" ]] && mesh=""
+      name=$(ask_name "${CUR_NAME:-${mesh:-$(hostname)}}")
+    else
+      name=$CUR_NAME
+    fi
+  fi
+  # Trim; the hostname itself is stored as empty (follows a later rename).
+  name=${name#"${name%%[![:space:]]*}"} name=${name%"${name##*[![:space:]]}"}
+  [[ $name == "$(hostname)" ]] && name=""
+  if [[ -n $name ]] && ! valid_name "$name"; then
+    die "Invalid name '$name': up to 40 letters, digits, spaces, dots, dashes or underscores"
   fi
 
   info "Installing $NAME -> $dst"
@@ -147,8 +226,8 @@ do_install() { # $1 = splash | off | "" (ask)
   fi
   ok "MOTD installed"
 
-  write_conf "$want" || die "Couldn't write $CONF"
-  ok "Animation: $want ($CONF)"
+  write_conf "$want" "$name" || die "Couldn't write $CONF"
+  ok "Animation: $want, banner name: ${name:-$(hostname) (hostname)} ($CONF)"
 
   touch "$HUSH" && ok "Created ~/.hushlogin (zsh prints the MOTD, PAM stays quiet)"
   info "Shown on your next SSH login (zsh, outside tmux)"
@@ -169,7 +248,7 @@ do_remove() {
 }
 
 do_status() {
-  local src="$MOTD_SRC_DIR/$NAME" dst="$TARGET_DIR/$NAME" cur
+  local src="$MOTD_SRC_DIR/$NAME" dst="$TARGET_DIR/$NAME"
   if [[ ! -e $dst ]]; then
     warn "MOTD: not installed ($dst)"
   elif cmp -s "$src" "$dst"; then
@@ -177,20 +256,21 @@ do_status() {
   else
     warn "MOTD: installed, differs from the repo (run dev-motd to update)"
   fi
-  cur=$(current_animation)
-  info "Animation: ${cur:-off (no $CONF)}"
+  read_conf
+  info "Animation: ${CUR_ANIM:-off (no $CONF)}"
+  info "Banner name: ${CUR_NAME:-$(hostname) (hostname)}"
   if [[ -e $HUSH ]]; then
     ok "$HUSH: present"
   else
     warn "$HUSH: missing (PAM prints the MOTD too)"
   fi
-  command -v toilet &>/dev/null || warn "toilet: missing (plain-text banner)"
+  command -v toilet &>/dev/null || warn "toilet: missing (plain-text banner; dev-motd installs it)"
 }
 
 # ------------------------------------------------------------------------------
 # Main
 # ------------------------------------------------------------------------------
-ACTION=install WANT=""
+ACTION=install WANT="" WANT_NAME="" WANT_NAME_SET=0
 while (($#)); do
   case $1 in
     -h | --help)
@@ -203,6 +283,7 @@ while (($#)); do
     --animation=on | --animation=splash) WANT=splash ;;
     --animation=off) WANT=off ;;
     --animation=*) die "Unknown animation '${1#*=}' (on or off)" ;;
+    --name=*) WANT_NAME=${1#--name=} WANT_NAME_SET=1 ;;
     -*) die "Unknown option: $1 (see --help)" ;;
     *) NAME=$1 ;;
   esac
@@ -210,7 +291,7 @@ while (($#)); do
 done
 
 case $ACTION in
-  install) do_install "$WANT" ;;
+  install) do_install ;;
   remove) do_remove ;;
   status) do_status ;;
 esac

@@ -120,6 +120,18 @@ name). It needs two different non-stow mechanisms instead:
   tmux panes, nested shells or local terminals. (`pam_motd` only prints on the
   first session of each connection, so with `ControlMaster` a `scp` or `git`
   that opened the connection swallowed it, and Tailscale SSH has no PAM.)
+  Its colors are the terminal's palette slots (blue `color12`, grey `color8`, the
+  default text color), not fixed RGB, so it follows the dark/light theme on its
+  own, also over SSH. `dev-motd` asks (default **No**) whether to turn on the
+  animated splash and stores the answer in `/etc/default/nivek-motd`
+  (`MOTD_ANIMATION=splash|off`): with it, an SSH login first shows the banner
+  centered on the alternate screen with a Nord-blue aurora drifting over it,
+  until any key (the key only dismisses it), then it settles (~0.2 s) into the
+  usual MOTD; without it, just the usual MOTD. `bootstrap --all` doesn't ask
+  (keeps the current setting, off on a first install). `dev-motd
+  --animation=on|off` changes it without asking, `--status` shows it and the
+  drift against the repo, `--remove` undoes everything, and `NIVEK_MOTD_ANIM=0`
+  skips the splash for one login.
 - Background jobs (`system/services/`, `system/timers/`) are installed as
   systemd `--user` units by `dev-services` (bootstrap menu option 15) — see
   [Background services](#background-services-systemd---user).

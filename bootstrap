@@ -83,6 +83,12 @@ run_all() {
   setup_tw_hook || warn "Timewarrior hook setup failed — check output above"
   install_tpm
   run_dev_ssh --setup || warn "dev-ssh setup encountered errors — check output above"
+  # MagicDNS needs systemd-resolved wherever something else writes /etc/resolv.conf.
+  if [[ "$(apt_profile)" == desktop ]] || tailscale debug prefs 2>/dev/null | grep -q '"CorpDNS": *true'; then
+    run_dev_ssh --setup-dns || warn "dev-ssh DNS setup encountered errors — check output above"
+  else
+    skip "DNS setup (server profile, MagicDNS off) — dev-ssh --setup-dns when you want it"
+  fi
   if [[ "$NONINTERACTIVE" == false ]]; then
     run_dev_ssh || warn "dev-ssh encountered errors — check output above"
   fi

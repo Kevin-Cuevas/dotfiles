@@ -19,6 +19,10 @@ set -uo pipefail
 #                            prompts (exit 3 if it isn't there).
 #   dev-ssh --list-hosts[=GROUP]
 #                            managed hosts as TSV: alias, user, port, group.
+#   dev-ssh --setup-dns      let systemd-resolved own /etc/resolv.conf, so MagicDNS
+#                            and the network manager stop overwriting each other
+#   dev-ssh --dns-status     checks for the above (exit 1 if something is off)
+#   dev-ssh --remove-dns     undo --setup-dns
 # ==============================================================================
 
 TARGET="$HOME"
@@ -32,6 +36,9 @@ for arg in "$@"; do
     --remove-host=*) MODE="remove" RM_HOST="${arg#--remove-host=}" ;;
     --list-hosts) MODE="list" ;;
     --list-hosts=*) MODE="list" LIST_GROUP="${arg#--list-hosts=}" ;;
+    --setup-dns) MODE="setup-dns" ;;
+    --dns-status) MODE="dns-status" ;;
+    --remove-dns) MODE="remove-dns" ;;
     --user=*) ADD_USER="${arg#--user=}" ;;
     --port=*) ADD_PORT="${arg#--port=}" ;;
     --group=*) ADD_GROUP="${arg#--group=}" ;;
@@ -644,6 +651,270 @@ ssh_add_tailscale() {
 
   printf '%s' "$blocks" | ssh_upsert_hosts "tailnet:$tailnet_name" "replace"
   ok "$total host(s) from '$tailnet_name' saved"
+
+  if dns_needed && [[ $TARGET == "$HOME" ]]; then
+    if dialog --clear --colors --backtitle "$BACKTITLE" --title " SSH · DNS " \
+      --yesno "MagicDNS is on, but $(dns_netmgr) also writes /etc/resolv.conf:\nthese hosts stop resolving whenever it rewrites the file.\n\nSet up DNS now (systemd-resolved)?" 10 68; then
+      clear
+      dns_setup
+    else
+      clear
+      warn "later: dev-ssh --setup-dns"
+    fi
+  fi
+}
+
+# ------------------------------------------------------------------------------
+# DNS: systemd-resolved owns /etc/resolv.conf, so tailscaled (MagicDNS) and the
+# network manager stop overwriting each other. The drop-in records how to undo it.
+# ------------------------------------------------------------------------------
+DNS_DROPIN=/etc/systemd/resolved.conf.d/dev-ssh-dns.conf
+DNS_NM_DROPIN=/etc/NetworkManager/conf.d/dev-ssh-dns.conf
+DNS_HAND=(/etc/systemd/resolved.conf.d/10-local.conf /etc/NetworkManager/conf.d/10-dns-resolved.conf)
+DNS_HAND_BACKUP=/etc/resolv.conf.pre-resolved
+
+dns_mode() {
+  if systemctl is-active -q systemd-resolved 2>/dev/null \
+    && [[ $(readlink -f /etc/resolv.conf) == /run/systemd/resolve/* ]]; then
+    echo resolved
+  else
+    echo direct
+  fi
+}
+
+dns_netmgr() {
+  if systemctl is-active -q NetworkManager 2>/dev/null; then echo NetworkManager
+  elif systemctl is-active -q systemd-networkd 2>/dev/null; then echo networkd
+  elif pgrep -x dhclient >/dev/null 2>&1; then echo dhclient
+  elif pgrep -x dhcpcd >/dev/null 2>&1; then echo dhcpcd
+  else echo static; fi
+}
+
+dns_pkg() { [[ $(dpkg-query -W -f='${Status}' "$1" 2>/dev/null) == "install ok installed" ]]; }
+
+dns_magic() { # on | off | none
+  command -v tailscale &>/dev/null || { echo none; return; }
+  case $(tailscale debug prefs 2>/dev/null | sed -n 's/.*"CorpDNS": *\(true\|false\).*/\1/p' | head -1) in
+    true) echo on ;;
+    false) echo off ;;
+    *) echo none ;;
+  esac
+}
+
+dns_needed() { [[ $(dns_magic) == on && $(dns_mode) == direct ]]; }
+
+dns_block() {
+  [[ $(dns_mode) == resolved ]] && return 0
+  local p l
+  for p in resolvconf openresolv; do
+    dns_pkg "$p" && { echo "$p is installed (it conflicts with systemd-resolved)"; return; }
+  done
+  case $(dns_netmgr) in
+    dhcpcd) echo "dhcpcd writes the DNS here and has no systemd-resolved hook"; return ;;
+    dhclient)
+      compgen -G '/etc/dhcp/dhclient-enter-hooks.d/*resolved*' >/dev/null \
+        || { echo "dhclient has no systemd-resolved hook"; return; } ;;
+  esac
+  l=$(ss -Hlntu 'sport = :53' 2>/dev/null | awk '{print $5}' \
+    | grep -E '^(0\.0\.0\.0|\*|\[::\]|127\.0\.0\.5[34])(%[^:]+)?:53$' | head -1)
+  [[ -n $l ]] && echo "something else listens on $l"
+}
+
+dns_resolves() { # $1 = name; a few tries
+  local i
+  for ((i = 0; i < ${2:-10}; i++)); do
+    getent ahosts "$1" >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+
+dns_nm_reload() {
+  sudo nmcli general reload conf,dns-rc >/dev/null 2>&1 || sudo systemctl reload NetworkManager
+}
+
+dns_owner() {
+  if [[ -e $DNS_DROPIN ]]; then echo dev-ssh
+  elif [[ -e ${DNS_HAND[0]} || -e ${DNS_HAND[1]} ]]; then echo "by hand"
+  elif compgen -G '/etc/systemd/resolved.conf.d/*infra-mesh*' >/dev/null; then echo infra-mesh
+  else echo system; fi
+}
+
+dns_status() {
+  local bad=0 peer=""
+  sep
+  info "DNS on $(hostname)"
+  if [[ $(dns_mode) == resolved ]]; then
+    ok "/etc/resolv.conf -> $(readlink /etc/resolv.conf) (systemd-resolved, set up: $(dns_owner))"
+  else
+    warn "/etc/resolv.conf is written by $(dns_netmgr), not systemd-resolved"
+    [[ $(dns_magic) == on ]] && bad=1
+  fi
+  if [[ $(dns_netmgr) == NetworkManager ]]; then
+    if NetworkManager --print-config 2>/dev/null | grep -qx 'dns=systemd-resolved' \
+      || grep -rqsx 'dns=systemd-resolved' /etc/NetworkManager/conf.d/ /etc/NetworkManager/NetworkManager.conf; then
+      ok "NetworkManager hands its DNS to systemd-resolved"
+    elif [[ $(dns_mode) == resolved ]]; then
+      warn "NetworkManager has no dns=systemd-resolved (it detects the link, but may write the file again)"
+    fi
+  fi
+  case $(dns_magic) in
+    on)
+      if resolvectl dns tailscale0 2>/dev/null | grep -q '100\.100\.100\.100'; then
+        ok "MagicDNS: tailscale0 answers $(resolvectl domain tailscale0 2>/dev/null | tr ' ' '\n' | grep -v '^~' | grep -m1 '\.')"
+      else
+        err "MagicDNS is on, but tailscale0 has no DNS in systemd-resolved"
+        bad=1
+      fi
+      command -v jq &>/dev/null \
+        && peer=$(tailscale status --json 2>/dev/null | jq -r '[.Peer[]? | select(.Online) | .DNSName | split(".")[0]][0] // empty')
+      if [[ -n $peer ]]; then
+        if dns_resolves "$peer" 3; then ok "a mesh name resolves ($peer)"
+        else err "a mesh name does not resolve ($peer)"; bad=1; fi
+      fi
+      if tailscale status 2>/dev/null | grep -q 'dns-fight'; then
+        err "tailscale reports a DNS fight (/etc/resolv.conf overwritten)"
+        bad=1
+      fi
+      ;;
+    off) info "MagicDNS is off on this machine (tailscale set --accept-dns to use it)" ;;
+    none) info "Tailscale is not installed or not running" ;;
+  esac
+  if dns_resolves deb.debian.org 3; then ok "a public name resolves (deb.debian.org)"
+  else err "a public name does not resolve (deb.debian.org)"; bad=1; fi
+  [[ $(dns_mode) == direct && -n $(dns_block) ]] && warn "setup blocked here: $(dns_block)"
+  return "$bad"
+}
+
+dns_write_dropin() { # pkg was prev lines ns dom
+  {
+    echo "# Written by dev-ssh --setup-dns. Undo with: dev-ssh --remove-dns"
+    echo "# dev-ssh-installed-package: $1"
+    echo "# dev-ssh-was-enabled: $2"
+    echo "# dev-ssh-previous: $3"
+    [[ -n $4 ]] && sed 's/^/# dev-ssh-prev: /' <<<"$4"
+    echo "[Resolve]"
+    echo "LLMNR=no"
+    dns_pkg avahi-daemon && echo "MulticastDNS=no"
+    [[ -n $5 ]] && echo "DNS=$5"
+    [[ -n $6 ]] && echo "Domains=$6"
+  } | sudo tee "$DNS_DROPIN" >/dev/null
+  sudo chmod 644 "$DNS_DROPIN"
+}
+
+dns_adopt() {
+  local lines=""
+  [[ -r $DNS_HAND_BACKUP ]] && lines=$(grep -vE '^\s*(#|$)' "$DNS_HAND_BACKUP")
+  sudo install -d -m 755 /etc/systemd/resolved.conf.d
+  dns_write_dropin no no file "$lines" "" ""
+  if [[ -e ${DNS_HAND[1]} ]]; then
+    printf '[main]\ndns=systemd-resolved\n' | sudo tee "$DNS_NM_DROPIN" >/dev/null
+    sudo chmod 644 "$DNS_NM_DROPIN"
+  fi
+  sudo rm -f "${DNS_HAND[@]}" "$DNS_HAND_BACKUP"
+  sudo systemctl restart systemd-resolved
+  systemctl is-active -q NetworkManager 2>/dev/null && dns_nm_reload
+  ok "hand-made setup adopted: now $DNS_DROPIN${lines:+ (it keeps the old resolv.conf for --remove-dns)}"
+}
+
+dns_setup() {
+  [[ $TARGET == "$HOME" ]] || { skip "DNS setup changes the system: not with --target"; return 0; }
+  sep
+  if [[ $(dns_mode) == resolved ]]; then
+    case $(dns_owner) in
+      dev-ssh) skip "systemd-resolved already owns /etc/resolv.conf (dev-ssh)" ;;
+      "by hand") info "adopting the hand-made systemd-resolved setup"; sudo -v && dns_adopt ;;
+      *) skip "systemd-resolved already owns /etc/resolv.conf ($(dns_owner))" ;;
+    esac
+    return 0
+  fi
+  local why nm pkg=no was=no prev=file lines="" ns="" dom="" r=""
+  why=$(dns_block)
+  [[ -z $why ]] || { err "DNS setup blocked: $why"; return 1; }
+  nm=$(dns_netmgr)
+  info "systemd-resolved will own /etc/resolv.conf ($nm writes it today)"
+  if [[ ${NONINTERACTIVE:-false} != true && -t 0 ]]; then
+    read -rp "  Continue? [y/N] " r
+    [[ $r == [yY]* ]] || { skip "Cancelled."; return 0; }
+  fi
+  sudo -v || return 1
+  systemctl is-enabled -q systemd-resolved 2>/dev/null && was=yes
+  if [[ -L /etc/resolv.conf ]]; then prev="link:$(readlink /etc/resolv.conf)"
+  else lines=$(grep -vE '^\s*(#|$)' /etc/resolv.conf 2>/dev/null); fi
+  if [[ $nm != NetworkManager && $nm != networkd ]]; then
+    ns=$(awk '$1=="nameserver" && $2 !~ /^(127\.|::1$|100\.100\.100\.100$)/ {printf "%s ", $2}' /etc/resolv.conf 2>/dev/null)
+    dom=$(awk '$1=="search" || $1=="domain" {for (i=2; i<=NF; i++) printf "%s ", $i}' /etc/resolv.conf 2>/dev/null)
+  fi
+  if [[ ! -x /usr/lib/systemd/systemd-resolved && ! -x /lib/systemd/systemd-resolved ]]; then
+    info "Installing systemd-resolved..."
+    sudo apt-get install -y -qq systemd-resolved >/dev/null || { err "apt-get install systemd-resolved failed"; return 1; }
+    pkg=yes
+  fi
+  sudo install -d -m 755 /etc/systemd/resolved.conf.d
+  dns_write_dropin "$pkg" "$was" "$prev" "$lines" "${ns% }" "${dom% }"
+  sudo systemctl unmask -q systemd-resolved 2>/dev/null
+  if ! sudo systemctl enable -q --now systemd-resolved; then
+    dns_undo
+    err "systemd-resolved did not start; rolled back"
+    return 1
+  fi
+  sudo systemctl restart systemd-resolved
+  [[ $(readlink -f /etc/resolv.conf) == /run/systemd/resolve/* ]] \
+    || sudo ln -sfn ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+  case $nm in
+    NetworkManager)
+      printf '[main]\ndns=systemd-resolved\n' | sudo tee "$DNS_NM_DROPIN" >/dev/null
+      sudo chmod 644 "$DNS_NM_DROPIN"
+      dns_nm_reload
+      ;;
+    networkd) sudo networkctl reload >/dev/null 2>&1 ;;
+  esac
+  if ! dns_resolves deb.debian.org; then
+    [[ $nm == NetworkManager ]] && sudo systemctl restart NetworkManager && sleep 3
+    if ! dns_resolves deb.debian.org; then
+      dns_undo
+      err "names stopped resolving after the switch; rolled back"
+      return 1
+    fi
+  fi
+  systemctl is-active -q tailscaled 2>/dev/null && sudo systemctl restart tailscaled
+  ok "systemd-resolved owns /etc/resolv.conf ($nm hands it its DNS)"
+}
+
+dns_undo() {
+  local pkg was prev lines
+  pkg=$(sed -n 's/^# dev-ssh-installed-package: //p' "$DNS_DROPIN")
+  was=$(sed -n 's/^# dev-ssh-was-enabled: //p' "$DNS_DROPIN")
+  prev=$(sed -n 's/^# dev-ssh-previous: //p' "$DNS_DROPIN")
+  lines=$(sed -n 's/^# dev-ssh-prev: //p' "$DNS_DROPIN")
+  sudo rm -f "$DNS_DROPIN" "$DNS_NM_DROPIN"
+  if [[ $pkg == yes ]]; then
+    sudo apt-get purge -y -qq systemd-resolved >/dev/null 2>&1
+  elif [[ $was != yes ]]; then
+    sudo systemctl disable -q --now systemd-resolved 2>/dev/null
+  else
+    sudo systemctl restart systemd-resolved
+  fi
+  sudo rm -f /etc/resolv.conf
+  case $prev in
+    link:*) sudo ln -sfn "${prev#link:}" /etc/resolv.conf ;;
+    *) { echo "# restored by dev-ssh"; [[ -n $lines ]] && printf '%s\n' "$lines"; } | sudo tee /etc/resolv.conf >/dev/null ;;
+  esac
+  systemctl is-active -q NetworkManager 2>/dev/null && dns_nm_reload
+  systemctl is-active -q tailscaled 2>/dev/null && sudo systemctl restart tailscaled
+}
+
+dns_remove() {
+  [[ $TARGET == "$HOME" ]] || { skip "DNS setup changes the system: not with --target"; return 0; }
+  sep
+  if [[ ! -e $DNS_DROPIN ]]; then
+    skip "no dev-ssh DNS setup here ($(dns_owner))"
+    exit 3
+  fi
+  [[ $(dns_magic) == on ]] && warn "MagicDNS is on: without systemd-resolved, tailscaled and $(dns_netmgr) fight over /etc/resolv.conf again"
+  sudo -v || return 1
+  dns_undo
+  ok "DNS setup removed: /etc/resolv.conf is as before"
 }
 
 # ------------------------------------------------------------------------------
@@ -661,6 +932,7 @@ ssh_menu() {
       "1" "Control dir (~/.ssh/cm) + ensure config.local" \
       "2" "Add server — Manual" \
       "3" "Add servers — Autocomplete (Tailscale)" \
+      "4" "Setup DNS (MagicDNS via systemd-resolved)" \
       "b" "Back" \
       3>&1 1>&2 2>&3) || break
 
@@ -669,6 +941,7 @@ ssh_menu() {
       1) (setup_ssh) || true ;;
       2) (ssh_add_manual) || true ;;
       3) (ssh_add_tailscale) || true ;;
+      4) (dns_setup && dns_status) || true ;;
       b | B) break ;;
     esac
 
@@ -767,6 +1040,15 @@ main() {
       ;;
     list)
       ssh_list_hosts_cli "$LIST_GROUP"
+      ;;
+    setup-dns)
+      dns_setup
+      ;;
+    dns-status)
+      dns_status
+      ;;
+    remove-dns)
+      dns_remove
       ;;
     menu)
       command -v dialog &>/dev/null || die "dialog not found. Install it: sudo apt install dialog"

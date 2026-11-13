@@ -242,6 +242,10 @@ host with no prompts, for other scripts to call: the same entry the Tailscale fl
 under the active tailnet's group unless `--group` says otherwise (`manual` when there is
 no tailnet), and recorded in the username history. It only upserts that one alias; the
 rest of the group is left alone.
+`dev-ssh --remove-host=ALIAS` removes one host from whatever group holds it (exit 3 if
+it isn't there), the same way unticking a node in the Tailscale checklist does; the
+username history is kept. `dev-ssh --list-hosts[=GROUP]` prints the managed hosts as
+TSV (`alias`, `user`, `port`, `group`), for scripts that rename or sync hosts.
 
 - **Control dir + ensure config.local** — creates `~/.ssh/cm` (700) and, if missing,
   `config.local` with an empty managed block. This is what the non-interactive

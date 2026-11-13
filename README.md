@@ -246,6 +246,8 @@ rest of the group is left alone.
 it isn't there), the same way unticking a node in the Tailscale checklist does; the
 username history is kept. `dev-ssh --list-hosts[=GROUP]` prints the managed hosts as
 TSV (`alias`, `user`, `port`, `group`), for scripts that rename or sync hosts.
+`dev-ssh --setup-dns`, `--dns-status` and `--remove-dns` manage the MagicDNS setup
+described below.
 
 - **Control dir + ensure config.local** — creates `~/.ssh/cm` (700) and, if missing,
   `config.local` with an empty managed block. This is what the non-interactive
@@ -258,10 +260,41 @@ TSV (`alias`, `user`, `port`, `group`), for scripts that rename or sync hosts.
   if it isn't the active profile, bootstrap runs `tailscale switch <id>` (and stays on
   it). Then it lists that tailnet's peers (MagicDNS labels, **self excluded**) and you
   check one or many. Finally it asks the `User` **per node** (see _Username history_
-  below). Saved under `group:tailnet:<name>`.
+  below). Saved under `group:tailnet:<name>`. If MagicDNS is on but something else
+  writes `/etc/resolv.conf`, it offers **Setup DNS** right away.
+- **Setup DNS** — see _MagicDNS and /etc/resolv.conf_ below.
 
 Entries are upserted by alias, **globally deduped** — re-adding a host updates it and
 moves it to the new group instead of duplicating.
+
+### MagicDNS and /etc/resolv.conf
+
+The Tailscale entries use `HostName <node>`, so they need MagicDNS. Without
+`systemd-resolved`, tailscaled and NetworkManager (or dhclient) both rewrite
+`/etc/resolv.conf` and the last writer wins: after a Wi-Fi reconnect or a DHCP
+renewal, `ssh <node>` fails with "Could not resolve hostname" and `tailscale status`
+warns about a DNS fight. **Setup DNS** (menu option 4, or `dev-ssh --setup-dns`)
+makes `systemd-resolved` the owner of the file, so each side registers its own
+servers instead (Tailscale only for the mesh domain):
+
+- installs `systemd-resolved` if missing, links `/etc/resolv.conf` to its stub and
+  writes `/etc/systemd/resolved.conf.d/dev-ssh-dns.conf` (`LLMNR=no`, plus
+  `MulticastDNS=no` when avahi is installed) and, with NetworkManager,
+  `/etc/NetworkManager/conf.d/dev-ssh-dns.conf` (`dns=systemd-resolved`);
+- checks that names still resolve, and rolls everything back if they don't;
+- restarts tailscaled, so it switches to systemd-resolved as well.
+
+The drop-in records what was there before (package, service state, old
+`resolv.conf`), so `dev-ssh --remove-dns` puts it all back with nothing else kept
+on disk. `dev-ssh --dns-status` checks the result (exit 1 if MagicDNS is on and
+something is off). A setup done by hand with `10-local.conf` /
+`10-dns-resolved.conf` is adopted under the `dev-ssh-dns.conf` names. It refuses
+(and changes nothing) where `resolvconf`/`openresolv`, dhcpcd, dhclient without its
+resolved hook, or another DNS server on port 53 are in the way. Never with
+`--target`.
+
+`bootstrap --all` runs it on the `desktop` profile, and on `server` only when
+Tailscale already has MagicDNS on.
 
 ### Username history (Tailscale flow only)
 

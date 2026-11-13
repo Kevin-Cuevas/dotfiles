@@ -14,16 +14,24 @@ set -uo pipefail
 #   dev-ssh --add-host=ALIAS [--user=U] [--port=P] [--group=G]
 #                            add/update one host, no prompts (for other scripts).
 #                            Group defaults to the active tailnet, else 'manual'.
+#   dev-ssh --remove-host=ALIAS
+#                            remove one host from whatever group holds it, no
+#                            prompts (exit 3 if it isn't there).
+#   dev-ssh --list-hosts[=GROUP]
+#                            managed hosts as TSV: alias, user, port, group.
 # ==============================================================================
 
 TARGET="$HOME"
 MODE="menu"
-ADD_HOST="" ADD_USER="" ADD_PORT="" ADD_GROUP=""
+ADD_HOST="" ADD_USER="" ADD_PORT="" ADD_GROUP="" RM_HOST="" LIST_GROUP=""
 for arg in "$@"; do
   case "$arg" in
     --setup) MODE="setup" ;;
     --target=*) TARGET="${arg#--target=}" ;;
     --add-host=*) MODE="add" ADD_HOST="${arg#--add-host=}" ;;
+    --remove-host=*) MODE="remove" RM_HOST="${arg#--remove-host=}" ;;
+    --list-hosts) MODE="list" ;;
+    --list-hosts=*) MODE="list" LIST_GROUP="${arg#--list-hosts=}" ;;
     --user=*) ADD_USER="${arg#--user=}" ;;
     --port=*) ADD_PORT="${arg#--port=}" ;;
     --group=*) ADD_GROUP="${arg#--group=}" ;;
@@ -700,6 +708,52 @@ ssh_add_host_cli() {
   ok "$alias ($user@$alias:$port) saved under group:$group"
 }
 
+ssh_list_hosts_cli() {
+  local cfg="$TARGET/.ssh/config.local"
+  [[ -f "$cfg" ]] || return 0
+  awk -v B="$SSH_MARK_BEGIN" -v E="$SSH_MARK_END" -v G="${1:-}" '
+    function flush() { if (a != "" && (G == "" || cg == G)) printf "%s\t%s\t%s\t%s\n", a, u, p, cg; a="" }
+    $0==B { inman=1; cg=""; next }
+    $0==E { flush(); inman=0; next }
+    !inman { next }
+    /^#@ group:/ { flush(); cg=substr($0, length("#@ group:")+1); next }
+    /^Host / { flush(); a=$2; u=""; p="22"; next }
+    $1=="User" { u=$2 }
+    $1=="Port" { p=$2 }
+  ' "$cfg"
+}
+
+ssh_group_blocks() { # $1=group
+  local cfg="$TARGET/.ssh/config.local"
+  [[ -f "$cfg" ]] || return 0
+  awk -v B="$SSH_MARK_BEGIN" -v E="$SSH_MARK_END" -v G="$1" '
+    $0==B { inman=1; cg=""; next }
+    $0==E { inman=0; next }
+    !inman { next }
+    /^#@ group:/ { cg=substr($0, length("#@ group:")+1); on=0; next }
+    /^Host / { on=(cg==G) }
+    on { print }
+  ' "$cfg"
+}
+
+# Remove one host. Same path the Tailscale checklist takes when a node is
+# unticked: the group is rewritten in "replace" mode with every block but this
+# one, so the awk in ssh_upsert_hosts stays the only writer of config.local.
+ssh_remove_host_cli() {
+  local alias="$RM_HOST" row group blocks
+  [[ "$alias" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid alias: '$alias'"
+  row="$(ssh_list_hosts_cli | awk -F'\t' -v a="$alias" '$1==a {print; exit}')"
+  if [[ -z "$row" ]]; then
+    skip "$alias is not in config.local"
+    exit 3
+  fi
+  group="${row##*$'\t'}"
+  [[ -n "$group" ]] || die "$alias has no group in config.local; remove it from the dev-ssh menu"
+  blocks="$(ssh_group_blocks "$group" | awk -v a="$alias" '/^Host / {on=($2!=a)} on')"
+  printf '%s' "$blocks" | ssh_upsert_hosts "$group" replace
+  ok "$alias removed from config.local${group:+ (group:$group)}"
+}
+
 main() {
   case "$MODE" in
     setup)
@@ -707,6 +761,12 @@ main() {
       ;;
     add)
       ssh_add_host_cli
+      ;;
+    remove)
+      ssh_remove_host_cli
+      ;;
+    list)
+      ssh_list_hosts_cli "$LIST_GROUP"
       ;;
     menu)
       command -v dialog &>/dev/null || die "dialog not found. Install it: sudo apt install dialog"

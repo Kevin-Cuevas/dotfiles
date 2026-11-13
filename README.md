@@ -222,9 +222,9 @@ Host my-box
     HostName 10.0.0.5
     User root
 #@ group:tailnet:you@example.com
-Host nivek-lab
-    HostName nivek-lab
-    User nivek
+Host my-node
+    HostName my-node
+    User me
 # <<< dotfiles:ssh-hosts <<<
 ```
 
